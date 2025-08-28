@@ -25,7 +25,7 @@ You may have to install the following tools to use this repository:
 Install dependencies:
 
 ```bash
-npm i
+yarn i
 ```
 
 ### Env
@@ -63,7 +63,7 @@ open coverage/index.html
 To run all tests:
 
 ```bash
-npm test
+yarn test
 ```
 
 Run test that matches a test contract:
