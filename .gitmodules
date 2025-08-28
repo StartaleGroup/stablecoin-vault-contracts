@@ -2,3 +2,33 @@
 	path = lib/forge-std
 	url = https://github.com/foundry-rs/forge-std
 	branch = v1
+[submodule "lib/solady"]
+	path = lib/solady
+	url = https://github.com/vectorized/solady
+[submodule "lib/common"]
+	path = lib/common
+	url = https://github.com/m0-foundation/common
+	branch = release-v1.3.0
+[submodule "lib/openzeppelin-foundry-upgrades"]
+	path = lib/openzeppelin-foundry-upgrades
+	url = https://github.com/OpenZeppelin/openzeppelin-foundry-upgrades
+[submodule "lib/openzeppelin-contracts"]
+	path = lib/openzeppelin-contracts
+	url = https://github.com/OpenZeppelin/openzeppelin-contracts
+[submodule "lib/openzeppelin-contracts-upgradeable"]
+	path = lib/openzeppelin-contracts-upgradeable
+	url = https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable
+[submodule "lib/uniswap-v4-periphery"]
+	path = lib/uniswap-v4-periphery
+	url = https://github.com/Uniswap/v4-periphery.git
+[submodule "lib/wrapped-m-token"]
+	path = lib/wrapped-m-token
+	url = https://github.com/m0-foundation/wrapped-m-token.git
+	branch = feat/swap-facility-support
+[submodule "lib/v4-periphery"]
+	path = lib/v4-periphery
+	url = https://github.com/Uniswap/v4-periphery
+[submodule "lib/evm-m-extensions"]
+	path = lib/evm-m-extensions
+	url = https://github.com/m0-foundation/evm-m-extensions.git
+	branch = linea-deployment

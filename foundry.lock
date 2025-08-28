@@ -1,0 +1,53 @@
+{
+  "lib/common": {
+    "branch": {
+      "name": "release-v1.3.0",
+      "rev": "66657d984bb77ba83863dd4607704594a6c610bc"
+    }
+  },
+  "lib/evm-m-extensions": {
+    "branch": {
+      "name": "linea-deployment",
+      "rev": "55c41d9baaa9d46db9f658c34c84e9b4e030c570"
+    }
+  },
+  "lib/forge-std": {
+    "branch": {
+      "name": "v1",
+      "rev": "ff47d4052a6018d9e5419e5cf013b16ff8006aae"
+    }
+  },
+  "lib/openzeppelin-contracts": {
+    "tag": {
+      "name": "v5.4.0",
+      "rev": "c64a1edb67b6e3f4a15cca8909c9482ad33a02b0"
+    }
+  },
+  "lib/openzeppelin-contracts-upgradeable": {
+    "tag": {
+      "name": "v5.4.0",
+      "rev": "e725abddf1e01cf05ace496e950fc8e243cc7cab"
+    }
+  },
+  "lib/openzeppelin-foundry-upgrades": {
+    "tag": {
+      "name": "v0.4.0",
+      "rev": "cbce1e00305e943aa1661d43f41e5ac72c662b07"
+    }
+  },
+  "lib/solady": {
+    "tag": {
+      "name": "v0.1.26",
+      "rev": "acd959aa4bd04720d640bf4e6a5c71037510cc4b"
+    }
+  },
+  "lib/v4-periphery": {
+    "rev": "60cd93803ac2b7fa65fd6cd351fd5fd4cc8c9db5"
+  },
+  "lib/wrapped-m-token": {
+    "branch": {
+      "name": "feat/swap-facility-support",
+      "rev": "49b88215911d52a47b0da94177fb6f647d90301a"
+    }
+  }
+}

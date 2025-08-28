@@ -21,7 +21,7 @@
     "deploy-sepolia": "make -B deploy-sepolia",
     "doc": "forge doc --serve --port 4000",
     "lint-staged": "lint-staged",
-    "prepack": "npm run clean && npm run build",
+    "prepack": "yarn run clean && yarn run build",
     "prepare": "husky",
     "prettier": "prettier --write 'script/**/*.sol' 'src/**/*.sol' 'test/**/*.sol'",
     "slither": "forge build --build-info --skip '*/test/**' --skip '*/script/**' --force && slither --compile-force-framework foundry --ignore-compile --config-file slither.config.json --fail-high .",
