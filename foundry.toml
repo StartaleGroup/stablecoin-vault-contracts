@@ -45,7 +45,7 @@ gas_reports_ignore = []
 ignored_error_codes = []
 optimizer = true
 optimizer_runs = 999999
-solc_version = "0.8.30"
+solc_version = "0.8.26"
 libs = ['node_modules', 'lib']
 verbosity = 3
 
