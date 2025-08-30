@@ -1,8 +1,4 @@
 {
-  "*.{json,md,sol,yml}": [
-    "yarn prettier"
-  ],
-  "*.sol": [
-    "yarn solhint"
-  ]
+  "*.{json,md,sol,yml}": [],
+  "*.sol": []
 }

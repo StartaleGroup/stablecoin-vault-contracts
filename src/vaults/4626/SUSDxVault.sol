@@ -9,6 +9,8 @@ import { Pausable } from "@openzeppelin/contracts/utils/Pausable.sol";
 import { ReentrancyGuard } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 // Note: Placeholder init
+// Note: non-upgradeable version
+// Note: We could have some admin actions
 
 /// @title sUSDxVault — ERC-4626: deposit USDx → mint sUSDx; external asset inflows lift PPS
 contract SUSDxVault is ERC20, ERC4626, AccessControl, Pausable, ReentrancyGuard {

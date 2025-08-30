@@ -280,6 +280,8 @@ contract ForkTestBase is TaskBase, ConfigureBase, DeployBase, Test {
         vm.stopPrank();
 
         // // Deploy Soneium - Spoke
+        // // Note: Getting unsupported chain id 1868
+
         // _soneiumForkId = vm.createSelectFork({ urlOrAlias: "soneium", blockNumber: _SONEIUM_FORK_BLOCK });
         // _forkIds[3] = _soneiumForkId;
 
