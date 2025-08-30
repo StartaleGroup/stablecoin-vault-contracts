@@ -25,7 +25,7 @@ You may have to install the following tools to use this repository:
 Install dependencies:
 
 ```bash
-yarn i
+yarn install
 ```
 
 ### Env
