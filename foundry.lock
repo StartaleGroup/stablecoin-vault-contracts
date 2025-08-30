@@ -68,6 +68,12 @@
   "lib/v4-periphery": {
     "rev": "60cd93803ac2b7fa65fd6cd351fd5fd4cc8c9db5"
   },
+  "lib/wormhole-solidity-sdk": {
+    "tag": {
+      "name": "v0.1.0",
+      "rev": "b9e129e65d34827d92fceeed8c87d3ecdfc801d0"
+    }
+  },
   "lib/wrapped-m-token": {
     "branch": {
       "name": "feat/swap-facility-support",

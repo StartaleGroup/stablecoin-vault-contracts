@@ -54,3 +54,7 @@
 	path = lib/ttg
 	url = https://github.com/m0-foundation/ttg
 	branch = spoke
+[submodule "lib/wormhole-solidity-sdk"]
+	path = lib/wormhole-solidity-sdk
+	url = https://github.com/wormhole-foundation/wormhole-solidity-sdk
+	tag = v0.1.0
