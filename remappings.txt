@@ -1,3 +1,5 @@
+lib/m-portal/lib/forge-std/src/mocks/=lib/forge-std-mocks/mocks/
+lib/wormhole-solidity-sdk/lib/forge-std/src/mocks/=lib/forge-std-mocks/mocks/
 lib/m-portal/lib/forge-std/src/=lib/forge-std/src/
 lib/wormhole-solidity-sdk/lib/forge-std/src/=lib/forge-std/src/
 forge-std/=lib/forge-std/src/
