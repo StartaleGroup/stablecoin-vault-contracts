@@ -9,3 +9,5 @@ m-portal/=lib/m-portal/src/
 m-portal-scripts/=lib/m-portal/script/
 protocol/=lib/protocol/src/
 ttg/=lib/ttg/src/
+native-token-transfers/=lib/native-token-transfers/
+wormhole-solidity-sdk/=lib/native-token-transfers/evm/lib/wormhole-solidity-sdk/src/

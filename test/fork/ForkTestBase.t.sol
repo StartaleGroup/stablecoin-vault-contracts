@@ -9,13 +9,13 @@ import {WrappedMToken} from '../../lib/wrapped-m-token/src/WrappedMToken.sol';
 import {IERC20} from '@openzeppelin/contracts/interfaces/IERC20.sol';
 
 import {IWormholeRelayer} from
-  '../../lib/native-token-transfers/evm/lib/wormhole-solidity-sdk/src/interfaces/IWormholeRelayer.sol';
+  'wormhole-solidity-sdk/interfaces/IWormholeRelayer.sol';
 import {WormholeSimulator} from
-  '../../lib/native-token-transfers/evm/lib/wormhole-solidity-sdk/src/testing/helpers/WormholeSimulator.sol';
+  'wormhole-solidity-sdk/testing/helpers/WormholeSimulator.sol';
 
-import {INttManager} from '../../lib/native-token-transfers/evm/src/interfaces/INttManager.sol';
-import {IWormholeTransceiver} from '../../lib/native-token-transfers/evm/src/interfaces/IWormholeTransceiver.sol';
-import {TransceiverStructs} from '../../lib/native-token-transfers/evm/src/libraries/TransceiverStructs.sol';
+import {INttManager} from 'native-token-transfers/evm/src/interfaces/INttManager.sol';
+import {IWormholeTransceiver} from 'native-token-transfers/evm/src/interfaces/IWormholeTransceiver.sol';
+import {TransceiverStructs} from 'native-token-transfers/evm/src/libraries/TransceiverStructs.sol';
 
 import {Chains} from 'm-portal-scripts/config/Chains.sol';
 
