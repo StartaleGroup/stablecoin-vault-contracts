@@ -1,6 +1,5 @@
-lib/m-portal/lib/forge-std/src/=lib/forge-std/src/
-lib/wormhole-solidity-sdk/lib/forge-std/src/=lib/forge-std/src/
 forge-std/=lib/forge-std/src/
+lib/wormhole-solidity-sdk/lib/forge-std/src/=lib/forge-std/src/
 @openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/
 @openzeppelin/contracts-upgradeable/=lib/openzeppelin-contracts-upgradeable/contracts/
 openzeppelin-contracts/contracts/=lib/native-token-transfers/evm/lib/openzeppelin-contracts/contracts/
