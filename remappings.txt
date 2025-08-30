@@ -9,3 +9,4 @@ m-portal/=lib/m-portal/src/
 m-portal-scripts/=lib/m-portal/script/
 protocol/=lib/protocol/src/
 ttg/=lib/ttg/src/
+native-token-transfers/evm/lib/wormhole-solidity-sdk/src/TokenBase.sol=src/external/wormhole-solidity-sdk/TokenBase.sol
