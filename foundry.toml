@@ -6,7 +6,22 @@ ignored_error_codes = []
 optimizer = true
 optimizer_runs = 999999
 solc_version = "0.8.26"
+libs = ['node_modules', 'lib']
 verbosity = 3
+
+[fmt]
+line_length = 120
+tab_width = 2
+bracket_spacing = false
+int_types = 'long'
+quote_style = 'single'
+number_underscore = 'thousands'
+multiline_func_header = 'params_first_multi'
+sort_imports = true
+
+[profile.optimized]
+via_ir = true
+out = 'out-via-ir'
 
 [lint]
 lint_on_build = false
@@ -33,7 +48,10 @@ depth = 250
 [rpc_endpoints]
 localhost = "${LOCALHOST_RPC_URL}"
 mainnet = "${MAINNET_RPC_URL}"
+arbitrum = "${ARBITRUM_RPC_URL}"
+optimism = "${OPTIMISM_RPC_URL}"
 sepolia = "${SEPOLIA_RPC_URL}"
+soneium = "${SONEIUM_RPC_URL}"
 
 [etherscan]
 mainnet = { key = "${ETHERSCAN_API_KEY}", url = "https://api.etherscan.io/api" }

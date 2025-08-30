@@ -3,7 +3,7 @@ pragma solidity ^0.8.26;
 
 import "forge-std/Test.sol";
 
-import { Foo } from "../src/Foo.sol";
+import { Foo } from "../../src/mock/Foo.sol";
 
 interface IERC20 {
     function balanceOf(address account) external view returns (uint256);

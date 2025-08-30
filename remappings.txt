@@ -1,6 +1,11 @@
-@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts
-@openzeppelin/contracts-upgradeable/=lib/openzeppelin-contracts-upgradeable/contracts/
 forge-std/=lib/forge-std/src/
+@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/
+@openzeppelin/contracts-upgradeable/=lib/openzeppelin-contracts-upgradeable/contracts/
+openzeppelin-contracts/contracts/=lib/native-token-transfers/evm/lib/openzeppelin-contracts/contracts/
 solady/=lib/solady/src/
-openzeppelin-contracts/=lib/openzeppelin-contracts/
+openzeppelin-contracts/=lib/native-token-transfers/evm/lib/openzeppelin-contracts/
 m-extensions/=lib/evm-m-extensions/src/
+m-portal/=lib/m-portal/src/
+m-portal-scripts/=lib/m-portal/script/
+protocol/=lib/protocol/src/
+ttg/=lib/ttg/src/

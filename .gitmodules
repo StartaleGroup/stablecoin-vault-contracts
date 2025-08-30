@@ -32,3 +32,18 @@
 	path = lib/evm-m-extensions
 	url = https://github.com/m0-foundation/evm-m-extensions.git
 	branch = linea-deployment
+[submodule "lib/m-portal"]
+	path = lib/m-portal
+	url = https://github.com/m0-foundation/m-portal
+[submodule "lib/native-token-transfers"]
+	path = lib/native-token-transfers
+	url = https://github.com/m0-foundation/native-token-transfers
+	branch = m0
+[submodule "lib/protocol"]
+	path = lib/protocol
+	url = https://github.com/m0-foundation/protocol
+	branch = spoke
+[submodule "lib/ttg"]
+	path = lib/ttg
+	url = https://github.com/m0-foundation/ttg
+	branch = spoke

@@ -1,17 +1,17 @@
 {
-  "name": "@mzero-labs/foundry-template",
+  "name": "@startale/stablecoin-contracts",
   "version": "1.0.0",
-  "description": "Template to kickstart a Foundry project",
+  "description": "Startale stablecoin and related contracts",
   "main": "index.js",
-  "author": "M^0 Labs <contact@m0.xyz>",
+  "author": "Startale Labs",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/MZero-Labs/foundry-template.git"
+    "url": "git+https://github.com/StartaleGroup/stablecoin-contracts.git"
   },
   "bugs": {
-    "url": "https://github.com/MZero-Labs/foundry-template/issues"
+    "url": "https://github.com/StartaleGroup/stablecoin-contracts/issues"
   },
-  "homepage": "https://github.com/MZero-Labs/foundry-template#readme",
+  "homepage": "https://github.com/StartaleGroup/stablecoin-contracts/#readme",
   "scripts": {
     "build": "make -B build",
     "clean": "make -B clean",
@@ -34,6 +34,8 @@
     "test-invariant": "make -B invariant"
   },
   "devDependencies": {
+    "@commitlint/cli": "19.3.0",
+    "@commitlint/config-conventional": "19.2.2",
     "husky": "^9.1.7",
     "lint-staged": "^16.1.2",
     "prettier": "^3.6.2",

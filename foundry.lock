@@ -17,6 +17,18 @@
       "rev": "ff47d4052a6018d9e5419e5cf013b16ff8006aae"
     }
   },
+  "lib/m-portal": {
+    "tag": {
+      "name": "v1.0.0",
+      "rev": "dbe93da561c94dfc04beec8a144b11b287957b7a"
+    }
+  },
+  "lib/native-token-transfers": {
+    "branch": {
+      "name": "m0",
+      "rev": "2b94d37d90655b8c47b7f6e13a9441379958d826"
+    }
+  },
   "lib/openzeppelin-contracts": {
     "tag": {
       "name": "v5.4.0",
@@ -35,10 +47,22 @@
       "rev": "cbce1e00305e943aa1661d43f41e5ac72c662b07"
     }
   },
+  "lib/protocol": {
+    "branch": {
+      "name": "spoke",
+      "rev": "c8d6ac8244bf31a301e5744fa4ffa8ee8f1d5d7b"
+    }
+  },
   "lib/solady": {
     "tag": {
       "name": "v0.1.26",
       "rev": "acd959aa4bd04720d640bf4e6a5c71037510cc4b"
+    }
+  },
+  "lib/ttg": {
+    "branch": {
+      "name": "spoke",
+      "rev": "2a11c24f88f4b0b31e376dc61b73ab8a9a67190a"
     }
   },
   "lib/v4-periphery": {

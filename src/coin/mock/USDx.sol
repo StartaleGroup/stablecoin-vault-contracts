@@ -3,7 +3,10 @@ pragma solidity ^0.8.26;
 
 import { MYieldToOne } from "m-extensions/projects/yieldToOne/MYieldToOne.sol";
 
-// placeholder
+// simple placeholder
+// upgradeable from start because MYieldToOne base is upgradeable
+// can add PausableUpgradeable later if needed
+// can add ForcedTransferManager features later if needed
 
 // is IMYieldToOne, MYieldToOneStorageLayout, MExtension, Freezable
 contract USDx is MYieldToOne {
