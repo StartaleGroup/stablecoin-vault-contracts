@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.26;
 
-import { MYieldToOne } from "m-extensions/projects/yieldToOne/MYieldToOne.sol";
+import {MYieldToOne} from 'm-extensions/projects/yieldToOne/MYieldToOne.sol';
 
 // simple placeholder
 // upgradeable from start because MYieldToOne base is upgradeable
@@ -10,16 +10,16 @@ import { MYieldToOne } from "m-extensions/projects/yieldToOne/MYieldToOne.sol";
 
 // is IMYieldToOne, MYieldToOneStorageLayout, MExtension, Freezable
 contract USDx is MYieldToOne {
-    constructor(address mToken, address swapFacility) MYieldToOne(mToken, swapFacility) {}
+  constructor(address mToken, address swapFacility) MYieldToOne(mToken, swapFacility) {}
 
-    // Remaining args
-    /* address yieldRecipient_,
+  // Remaining args
+  /* address yieldRecipient_,
         address admin,
         address freezeManager,
         address yieldRecipientManager
         */
 
-    function initialize(string memory name, string memory symbol) external {
-        __MYieldToOne_init(name, symbol, msg.sender, msg.sender, msg.sender, msg.sender);
-    }
+  function initialize(string memory name, string memory symbol) external {
+    __MYieldToOne_init(name, symbol, msg.sender, msg.sender, msg.sender, msg.sender);
+  }
 }

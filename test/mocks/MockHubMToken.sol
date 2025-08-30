@@ -2,6 +2,6 @@
 
 pragma solidity 0.8.26;
 
-import { MockMToken } from "./MockMToken.sol";
+import {MockMToken} from './MockMToken.sol';
 
 contract MockHubMToken is MockMToken {}

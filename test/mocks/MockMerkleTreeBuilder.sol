@@ -3,5 +3,5 @@
 pragma solidity 0.8.26;
 
 contract MockMerkleTreeBuilder {
-    function getRoot(bytes32 list) external view returns (bytes32) {}
+  function getRoot(bytes32 list) external view returns (bytes32) {}
 }

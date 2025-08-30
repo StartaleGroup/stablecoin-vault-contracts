@@ -2,6 +2,6 @@
 pragma solidity ^0.8.26;
 
 contract EarnVault {
-    /*is IEarnVault*/
-    // To be implemented
+/*is IEarnVault*/
+// To be implemented
 }
