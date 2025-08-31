@@ -26,7 +26,3 @@
 	path = lib/evm-m-extensions
 	url = https://github.com/m0-foundation/evm-m-extensions.git
 	branch = linea-deployment
-[submodule "lib/m-portal"]
-	path = lib/m-portal
-	url = https://github.com/m0-foundation/m-portal
-	branch = main
