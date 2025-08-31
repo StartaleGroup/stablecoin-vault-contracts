@@ -2,13 +2,13 @@
 
 pragma solidity 0.8.26;
 
-import {Test} from 'forge-std/Test.sol';
+import {Test} from 'forge-std/Test.sol'; // Inherited through MyForkTestBase
 // import { console } from "forge-std/console.sol";
 
-import {ContractHelper} from '../../lib/protocol/lib/common/src/libs/ContractHelper.sol';
+import {ContractHelper} from 'm-portal/protocol/lib/common/src/libs/ContractHelper.sol';
 
-import {MToken as SpokeMToken} from '../../lib/protocol/src/MToken.sol';
-import {Registrar as SpokeRegistrar} from '../../lib/ttg/src/Registrar.sol';
+import {MToken as SpokeMToken} from 'm-portal/protocol/src/MToken.sol';
+import {Registrar as SpokeRegistrar} from 'm-portal/ttg/src/Registrar.sol';
 
 import {Chains} from 'm-portal-scripts/config/Chains.sol';
 
