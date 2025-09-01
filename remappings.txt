@@ -3,3 +3,4 @@ forge-std/=lib/forge-std/src/
 @openzeppelin/contracts-upgradeable/=lib/openzeppelin-contracts-upgradeable/contracts/
 solady/=lib/solady/src/
 m-extensions/=lib/evm-m-extensions/src/
+m-extensions-test/=lib/evm-m-extensions/test/

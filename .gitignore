@@ -28,3 +28,9 @@ soljson-latest.js
 
 # Gas report
 gasreport.ansi
+
+# Broadcast
+broadcast/
+
+# Deployments
+deployments/

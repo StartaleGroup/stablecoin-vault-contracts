@@ -16,8 +16,9 @@ contract UnitGreeter is Test {
   event GreetingSet(string _greeting);
 
   function setUp() external {
-    vm.prank(_owner);
+    vm.startPrank(_owner);
     _greeter = new Greeter(_initialGreeting, _token);
+    vm.stopPrank();
 
     vm.etch(address(_token), new bytes(0x1));
   }
