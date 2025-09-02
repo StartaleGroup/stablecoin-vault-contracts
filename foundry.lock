@@ -1,0 +1,44 @@
+{
+  "lib/erc4626-tests": {
+    "tag": {
+      "name": "v0.1.1",
+      "rev": "232ff9ba8194e406967f52ecc5cb52ed764209e9"
+    }
+  },
+  "lib/evm-m-extensions": {
+    "branch": {
+      "name": "linea-deployment",
+      "rev": "55c41d9baaa9d46db9f658c34c84e9b4e030c570"
+    }
+  },
+  "lib/forge-std": {
+    "branch": {
+      "name": "v1",
+      "rev": "77041d2ce690e692d6e03cc812b57d1ddaa4d505"
+    }
+  },
+  "lib/openzeppelin-contracts": {
+    "branch": {
+      "name": "v5.1.0",
+      "rev": "c64a1edb67b6e3f4a15cca8909c9482ad33a02b0"
+    }
+  },
+  "lib/openzeppelin-contracts-upgradeable": {
+    "branch": {
+      "name": "v5.1.0",
+      "rev": "e725abddf1e01cf05ace496e950fc8e243cc7cab"
+    }
+  },
+  "lib/openzeppelin-foundry-upgrades": {
+    "branch": {
+      "name": "main",
+      "rev": "cbce1e00305e943aa1661d43f41e5ac72c662b07"
+    }
+  },
+  "lib/solady": {
+    "branch": {
+      "name": "main",
+      "rev": "acd959aa4bd04720d640bf4e6a5c71037510cc4b"
+    }
+  }
+}

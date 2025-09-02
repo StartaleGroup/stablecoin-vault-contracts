@@ -8,7 +8,6 @@ import {ERC4626} from '@openzeppelin/contracts/token/ERC20/extensions/ERC4626.so
 import {Pausable} from '@openzeppelin/contracts/utils/Pausable.sol';
 import {ReentrancyGuard} from '@openzeppelin/contracts/utils/ReentrancyGuard.sol';
 
-// Note: Placeholder init
 // Note: non-upgradeable version
 // Note: We could have some admin actions
 
@@ -56,6 +55,6 @@ contract SUSDxVault is ERC20, ERC4626, AccessControl, Pausable, ReentrancyGuard 
 
   // Override function that exists in multiple base contracts
   function decimals() public view override(ERC20, ERC4626) returns (uint8) {
-    return super.decimals();
+    return ERC4626.decimals();
   }
 }
