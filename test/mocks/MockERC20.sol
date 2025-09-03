@@ -2,7 +2,7 @@
 pragma solidity ^0.8.26;
 
 /// @author Modified from Solmate (https://github.com/transmissions11/solmate/blob/main/src/tokens/ERC20.sol)
-abstract contract MockERC20 {
+contract MockERC20 {
   event Transfer(address indexed from, address indexed to, uint256 amount);
   event Approval(address indexed owner, address indexed spender, uint256 amount);
 
