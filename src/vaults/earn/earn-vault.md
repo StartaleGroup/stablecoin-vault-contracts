@@ -259,9 +259,26 @@ The global index pattern provides significant gas savings:
 ## Security Features
 
 ### Access Control
-- **Owner**: Can pause, set distributor, emergency sweep
+- **Owner**: Can pause, set distributor, manage blacklist, emergency sweep
 - **Distributor**: Can call `onYield()` and `applyParkedYield()`
-- **Users**: Can only interact with their own deposits/claims
+- **Users**: Can interact with their own deposits/claims (unless blacklisted)
+
+### Blacklist System
+The vault includes an optional blacklist system for compliance and security:
+
+```solidity
+// Enable/disable blacklist mode
+function setBlacklistMode(bool enabled) external onlyOwner;
+
+// Add/remove addresses from blacklist
+function setBlacklisted(address who, bool blacklisted) external onlyOwner;
+```
+
+**Benefits of Blacklist vs Allowlist:**
+- ✅ **Open by default**: Anyone can use the vault
+- ✅ **Scalable**: No need to approve every user
+- ✅ **Targeted control**: Only block problematic addresses
+- ✅ **Compliance ready**: Meet regulatory requirements when needed
 
 ### Invariant Protection
 ```solidity
@@ -290,6 +307,7 @@ event YieldParked(uint256 amount, uint256 totalParked);
 - `NothingToClaim()`: Claiming when no yield is available
 - `NotDistributor()`: Unauthorized yield distribution calls
 - `InvariantFunding()`: Insufficient vault balance for operations
+- `AddressBlacklisted()`: Blacklisted address attempting deposit
 
 ## Integration Guide
 

@@ -595,6 +595,68 @@ contract EarnVaultTest is Test {
         vault.pause();
     }
     
+    /// @notice Test blacklist functionality
+    function test_BlacklistFunctionality() public {
+        // Initially blacklist is disabled - everyone can deposit
+        vm.prank(alice);
+        vault.deposit(1000e18);
+        assertEq(vault.principal(alice), 1000e18, "Alice should be able to deposit when blacklist disabled");
+        
+        // Owner enables blacklist mode
+        vm.prank(owner);
+        vault.setBlacklistMode(true);
+        
+        // Blacklist Bob
+        vm.prank(owner);
+        vault.setBlacklisted(bob, true);
+        
+        // Bob should be blocked from depositing
+        vm.prank(bob);
+        vm.expectRevert(EarnVault.AddressBlacklisted.selector);
+        vault.deposit(1000e18);
+        
+        // Alice (not blacklisted) should still be able to deposit
+        vm.prank(alice);
+        vault.deposit(500e18);
+        assertEq(vault.principal(alice), 1500e18, "Alice should still be able to deposit");
+        
+        // Remove Bob from blacklist
+        vm.prank(owner);
+        vault.setBlacklisted(bob, false);
+        
+        // Bob should now be able to deposit
+        vm.prank(bob);
+        vault.deposit(1000e18);
+        assertEq(vault.principal(bob), 1000e18, "Bob should be able to deposit after removal from blacklist");
+    }
+    
+    /// @notice Test only owner can manage blacklist
+    function test_OnlyOwnerCanManageBlacklist() public {
+        // Non-owner cannot enable blacklist
+        vm.prank(alice);
+        vm.expectRevert();
+        vault.setBlacklistMode(true);
+        
+        // Non-owner cannot blacklist addresses
+        vm.prank(alice);
+        vm.expectRevert();
+        vault.setBlacklisted(bob, true);
+    }
+    
+    /// @notice Test blacklist blocks depositWithPermit as well
+    function test_BlacklistBlocksDepositWithPermit() public {
+        // Enable blacklist and blacklist Alice
+        vm.prank(owner);
+        vault.setBlacklistMode(true);
+        vm.prank(owner);
+        vault.setBlacklisted(alice, true);
+        
+        // Alice cannot use depositWithPermit when blacklisted
+        vm.prank(alice);
+        vm.expectRevert(EarnVault.AddressBlacklisted.selector);
+        vault.depositWithPermit(1000e18, block.timestamp + 1 hours, 0, bytes32(0), bytes32(0));
+    }
+    
     /// @notice Test distributor role management
     function test_DistributorManagement() public {
         address newDistributor = makeAddr("newDistributor");

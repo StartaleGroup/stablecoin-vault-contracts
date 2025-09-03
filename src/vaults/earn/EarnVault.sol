@@ -3,6 +3,7 @@ pragma solidity ^0.8.26;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Permit} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol";
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
@@ -32,9 +33,9 @@ contract EarnVault is IEarnVault, Ownable2Step, Pausable, ReentrancyGuard {
     address public distributor;   // allowed to call onYieldReceived/applyParkedYield
     address public treasury;      // sink for admin sweeps / optional parked handling
 
-    // -------- Optional allowlist --------
-    bool public allowlistEnabled;
-    mapping(address => bool) public isAllowed;
+    // -------- Optional blacklist --------
+    bool public blacklistEnabled;
+    mapping(address => bool) public isBlacklisted;
 
     // -------- Vault accounting --------
     uint256 public totalPrincipal;       // sum of user principals
@@ -49,8 +50,8 @@ contract EarnVault is IEarnVault, Ownable2Step, Pausable, ReentrancyGuard {
     // -------- Events --------
     event SetDistributor(address indexed who);
     event SetTreasury(address indexed who);
-    event AllowlistModeSet(bool enabled);
-    event AllowlistUpdated(address indexed who, bool allowed);
+    event BlacklistModeSet(bool enabled);
+    event BlacklistUpdated(address indexed who, bool blacklisted);
 
     event Deposit(address indexed user, uint256 amount);
     event Withdraw(address indexed user, uint256 amount);
@@ -65,7 +66,7 @@ contract EarnVault is IEarnVault, Ownable2Step, Pausable, ReentrancyGuard {
 
     // -------- Errors --------
     error NotDistributor();
-    error NotAllowed();
+    error AddressBlacklisted();
     error ZeroAmount();
     error InsufficientPrincipal();
     error BadAddress();
@@ -96,14 +97,14 @@ contract EarnVault is IEarnVault, Ownable2Step, Pausable, ReentrancyGuard {
         emit SetTreasury(who);
     }
 
-    function setAllowlistMode(bool enabled) external onlyOwner {
-        allowlistEnabled = enabled;
-        emit AllowlistModeSet(enabled);
+    function setBlacklistMode(bool enabled) external onlyOwner {
+        blacklistEnabled = enabled;
+        emit BlacklistModeSet(enabled);
     }
 
-    function setAllowed(address who, bool allowed) external onlyOwner {
-        isAllowed[who] = allowed;
-        emit AllowlistUpdated(who, allowed);
+    function setBlacklisted(address who, bool blacklisted) external onlyOwner {
+        isBlacklisted[who] = blacklisted;
+        emit BlacklistUpdated(who, blacklisted);
     }
 
     function pause() external onlyOwner { _pause(); }
@@ -134,7 +135,7 @@ contract EarnVault is IEarnVault, Ownable2Step, Pausable, ReentrancyGuard {
     // =========================
 
     function deposit(uint256 amount) external whenNotPaused nonReentrant {
-        _checkAllow(msg.sender);
+        _checkNotBlacklisted(msg.sender);
         if (amount == 0) revert ZeroAmount();
 
         _settle(msg.sender);
@@ -151,7 +152,7 @@ contract EarnVault is IEarnVault, Ownable2Step, Pausable, ReentrancyGuard {
         uint256 deadline,
         uint8 v, bytes32 r, bytes32 s
     ) external whenNotPaused nonReentrant {
-        _checkAllow(msg.sender);
+        _checkNotBlacklisted(msg.sender);
         if (amount == 0) revert ZeroAmount();
 
         IERC20Permit(address(USDR)).permit(msg.sender, address(this), amount, deadline, v, r, s);
@@ -276,8 +277,8 @@ contract EarnVault is IEarnVault, Ownable2Step, Pausable, ReentrancyGuard {
         }
     }
 
-    function _checkAllow(address user) internal view {
-        if (allowlistEnabled && !isAllowed[user]) revert NotAllowed();
+    function _checkNotBlacklisted(address user) internal view {
+        if (blacklistEnabled && isBlacklisted[user]) revert AddressBlacklisted();
     }
 
     // =========================
