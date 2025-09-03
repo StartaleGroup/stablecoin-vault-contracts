@@ -1,368 +1,165 @@
-# EarnVault - Claimable Yield Vault Documentation
+# EarnVault - Claimable Yield Vault
 
 ## Overview
 
-The **EarnVault** is a smart contract that allows users to deposit USDR tokens and earn claimable yield over time. Users maintain full control over their principal and can claim accrued interest separately or automatically on full withdrawal.
+Users deposit USDR tokens and earn claimable yield over time. Users maintain full control over their principal and can claim accrued interest separately or automatically on full withdrawal.
 
 ## Key Features
 
-- **Principal Protection**: Users can withdraw their original deposit anytime
-- **Claimable Yield**: Interest accrues continuously and can be claimed separately
-- **Auto-Claim on Full Withdrawal**: Complete withdrawals automatically claim all accrued interest
-- **Proportional Distribution**: Yield is distributed proportionally based on deposit amounts
-- **Global Index Accounting**: Efficient gas usage through mathematical index-based calculations
-- **Yield Parking**: Handles yield distribution even when no deposits exist
-
-## Architecture
-
-### State Variables
-
-```solidity
-// Core accounting
-uint256 public totalPrincipal;       // Sum of all user deposits
-uint256 public globalIndex = 1e18;   // Global yield index (1e18 precision)
-uint256 public claimReserve;         // Total assets available for claims/withdrawals
-uint256 public parkedYield;          // Yield received when no deposits exist
-
-// User state mappings
-mapping(address => uint256) public principal;   // User's deposited amount
-mapping(address => uint256) public userIndex;  // User's last settled index
-mapping(address => uint256) public accrued;    // User's claimable interest
-```
-
-### Global Index Mechanism
-
-The vault uses a **global index pattern** for efficient yield distribution:
-
-1. **Global Index**: Tracks cumulative yield per unit deposited
-2. **User Index**: Records the global index when user last settled
-3. **Settlement**: Calculates owed yield as `principal × (globalIndex - userIndex)`
+- **Principal Protection**: Withdraw original deposit anytime
+- **Claimable Yield**: Interest accrues continuously, claim separately
+- **Auto-Claim on Full Withdrawal**: Complete withdrawals automatically claim all interest
+- **Proportional Distribution**: Yield distributed based on deposit amounts
+- **RAY Precision**: 1e27 precision for zero yield loss (MakerDAO standard)
+- **Blacklist Support**: Optional compliance controls
 
 ## Core Functions
 
-### Deposit Functions
-
-#### `deposit(uint256 amount)`
-Deposits USDR tokens into the vault.
-
-**Process:**
-1. Settles any pending yield for the user
-2. Transfers USDR from user to vault
-3. Updates user's principal and total principal
-4. Adds amount to claim reserve (1:1 backing)
-
-#### `depositWithPermit(...)`
-Same as deposit but uses EIP-2612 permit for gasless approvals.
-
-### Withdrawal Functions
-
-#### `withdraw(uint256 amount)`
-Withdraws principal (and auto-claims interest on full withdrawal).
-
-**Partial Withdrawal:**
-- Withdraws specified amount of principal
-- Interest remains claimable separately
-
-**Full Withdrawal (amount == user's total principal):**
-- Withdraws all principal
-- **Automatically claims all accrued interest**
-- User receives `principal + interest` in one transaction
-
-### Claim Functions
-
-#### `claim()`
-Claims all accrued interest to `msg.sender`.
-
-#### `claimTo(address to)`
-Claims all accrued interest to specified address.
-
-### Yield Distribution
-
-#### `onYield(uint256 amount)`
-Called by authorized distributor after transferring yield to the vault.
-
-**With Active Deposits:**
+### User Functions
 ```solidity
-// Calculate index increase
-uint256 delta = (amount * 1e18) / totalPrincipal;
-globalIndex += delta;
-claimReserve += amount;
+// Write functions
+deposit(uint256 amount)                    // Deposit USDR
+withdraw(uint256 amount)                   // Withdraw principal (auto-claims on full withdrawal)
+claim()                                    // Claim all accrued interest
+claimTo(address to)                        // Claim interest to specific address
+
+// Read functions
+claimable(address user) → uint256          // View claimable interest amount
+totalValue(address user) → uint256         // View total value (principal + claimable)
+getUserInfo(address user) → (uint256 principal, uint256 claimable, uint256 total, uint256 lastIndex)
 ```
 
-**No Active Deposits (Parking):**
+### Admin Functions
 ```solidity
-// Park yield until deposits exist
-claimReserve += amount;
-// globalIndex remains unchanged
+// Yield distribution
+onYield(uint256 amount)                    // Distribute yield (distributor only)
+applyParkedYield()                         // Apply previously parked yield (distributor only)
+
+// Access control
+setBlacklisted(address who, bool status)   // Manage blacklist (owner only)
+pause() / unpause()                        // Emergency controls (owner only)
+
+// Vault statistics
+getVaultStats() → (uint256 totalPrincipal, uint256 claimReserve, uint256 parkedYield, uint256 globalIndex, uint256 balance)
 ```
 
-#### `applyParkedYield()`
-Applies previously parked yield once deposits exist.
+## How It Works
 
-## Mathematical Examples
+### Global Index Accounting
+The vault uses a **global index pattern** for gas-efficient yield distribution:
 
-### Example 1: Basic Yield Distribution
+1. **Global Index**: Tracks cumulative yield per unit deposited (RAY precision)
+2. **User Index**: Records when user last settled
+3. **Settlement Formula**: `owed = principal × (globalIndex - userIndex) / RAY`
 
-**Setup:**
-- Alice deposits 1,000 USDR
-- `totalPrincipal = 1,000`
-- `globalIndex = 1e18`
-- `userIndex[Alice] = 1e18`
+### Yield Parking
+When yield arrives with no deposits (`totalPrincipal = 0`):
+- Yield is "parked" until deposits exist
+- Use `applyParkedYield()` to distribute to depositors
+- Prevents first depositor from getting free yield
 
-**Yield Event:**
-- 100 USDR yield arrives
-- `delta = (100 * 1e18) / 1,000 = 0.1e18`
-- `globalIndex = 1e18 + 0.1e18 = 1.1e18`
+### Security Features
+- **Funding Verification**: All yield functions verify actual token balance
+- **Overflow Protection**: Safe arithmetic on all index operations  
+- **Complete Blacklist**: All user functions respect blacklist
+- **Reentrancy Protection**: All state-changing functions protected
+- **Pause Mechanism**: Emergency stop for all operations
 
-**Alice's Settlement:**
+## Examples
+
+### Example 1: Basic User Flow
 ```solidity
-owed = (1,000 * (1.1e18 - 1e18)) / 1e18 = 100 USDR
-accrued[Alice] += 100
-userIndex[Alice] = 1.1e18
-```
-
-**Result:** Alice has 100 USDR claimable
-
-### Example 2: Proportional Distribution
-
-**Setup:**
-- Alice deposits 1,000 USDR (25% of total)
-- Bob deposits 3,000 USDR (75% of total)
-- `totalPrincipal = 4,000`
-
-**Yield Event:**
-- 400 USDR yield arrives
-- `delta = (400 * 1e18) / 4,000 = 0.1e18`
-- `globalIndex = 1e18 + 0.1e18 = 1.1e18`
-
-**Settlement:**
-- **Alice:** `(1,000 * 0.1e18) / 1e18 = 100 USDR` (25% of yield)
-- **Bob:** `(3,000 * 0.1e18) / 1e18 = 300 USDR` (75% of yield)
-
-**Result:** Yield distributed proportionally to deposit amounts
-
-### Example 3: Dynamic Principal Changes
-
-**Timeline:**
-
-**Week 1:**
-- Alice deposits 1,000 USDR
-- `principal[Alice] = 1,000`, `userIndex[Alice] = 1e18`
-
-**Week 1 Yield:**
-- 100 USDR yield on 1,000 total
-- `globalIndex = 1.1e18`
-- Alice has 100 USDR claimable (not yet settled)
-
-**Week 2 - Alice Deposits More:**
-```solidity
-// _settle() is called first:
-owed = (1,000 * (1.1e18 - 1e18)) / 1e18 = 100 USDR
-accrued[Alice] = 100  // Previous yield credited
-userIndex[Alice] = 1.1e18  // Index updated
-
-// Then deposit continues:
-principal[Alice] = 1,000 + 1,000 = 2,000
-```
-
-**Week 2 Yield:**
-- 200 USDR yield on 2,000 total
-- `globalIndex = 1.1e18 + 0.1e18 = 1.2e18`
-
-**Alice's New Claimable:**
-```solidity
-settled = 100  // From week 1
-new = (2,000 * (1.2e18 - 1.1e18)) / 1e18 = 200 USDR
-total = 100 + 200 = 300 USDR
-```
-
-## User Journey Examples
-
-### Journey 1: Simple Deposit → Yield → Claim
-
-```solidity
-// 1. Alice deposits 1,000 USDR
+// Alice deposits 1000 USDR
 vault.deposit(1000e18);
-// principal[Alice] = 1000, userIndex[Alice] = 1e18
+// Result: principal[alice] = 1000, userIndex[alice] = 1e27
 
-// 2. 100 USDR yield distributed
-// globalIndex becomes 1.1e18
+// 100 USDR yield is distributed
+distributor.transfer(address(vault), 100e18);
+vault.onYield(100e18);
+// Result: globalIndex = 1.1e27
 
-// 3. Alice checks claimable
-vault.claimable(Alice); // Returns 100e18
-
-// 4. Alice claims
+// Alice checks and claims her yield
+uint256 claimable = vault.claimable(alice);  // Returns 100e18
 vault.claim();
-// Alice receives 100 USDR, accrued[Alice] = 0
+// Result: Alice receives 100 USDR, principal stays 1000
 ```
 
-### Journey 2: Multiple Users with Different Timings
-
+### Example 2: Multiple Users
 ```solidity
-// 1. Alice deposits early
-vault.deposit(1000e18);  // Alice: 1000 USDR
+// Alice deposits 1000 USDR (25%), Bob deposits 3000 USDR (75%)
+vault.deposit(1000e18);  // Alice
+vault.deposit(3000e18);  // Bob
 
-// 2. First yield (Alice gets all)
-// 100 USDR yield → Alice gets 100 USDR claimable
+// 400 USDR yield arrives
+vault.onYield(400e18);
 
-// 3. Bob joins later
-vault.deposit(1000e18);  // Bob: 1000 USDR, total: 2000
-
-// 4. Second yield (Alice and Bob split 50/50)
-// 200 USDR yield → Alice gets +100, Bob gets +100
-// Alice total: 200 USDR, Bob total: 100 USDR
+// Proportional distribution:
+vault.claimable(alice);  // Returns 100e18 (25% of 400)
+vault.claimable(bob);    // Returns 300e18 (75% of 400)
 ```
 
-### Journey 3: Full Withdrawal with Auto-Claim
-
+### Example 3: Full Withdrawal (Auto-Claim)
 ```solidity
-// 1. Setup: Alice has 1000 principal + 150 claimable
+// Alice has 1000 principal + 50 claimable
+vault.principal(alice);   // 1000e18
+vault.claimable(alice);   // 50e18
 
-// 2. Alice withdraws all principal
-vault.withdraw(1000e18);
-
-// Result: Alice receives 1150 USDR (1000 + 150)
-// Events: Withdraw(1000) + InterestClaimed(150)
+// Full withdrawal automatically claims interest
+vault.withdraw(1000e18);  
+// Result: Alice receives 1050 USDR (1000 + 50)
 ```
 
-## Yield Parking Example
-
-**Scenario:** Yield arrives when no one has deposited
-
+### Example 4: Yield Parking
 ```solidity
-// 1. No deposits exist (totalPrincipal = 0)
+// Yield arrives when no one has deposited
+vault.onYield(500e18);    // Yield gets parked
+vault.parkedYield();      // Returns 500e18
 
-// 2. 500 USDR yield arrives
-vault.onYield(500e18);
-// globalIndex remains 1e18 (no change)
-// claimReserve += 500 (yield is parked)
+// Later, Alice deposits
+vault.deposit(1000e18);   
+vault.claimable(alice);   // Returns 0 (doesn't get parked yield)
 
-// 3. Alice deposits 1000 USDR later
-vault.deposit(1000e18);
-// Alice gets no immediate benefit from parked yield
-// claimReserve = 500 + 1000 = 1500
-
-// 4. Apply parked yield (optional)
+// Admin applies parked yield
 vault.applyParkedYield();
-// globalIndex = 1e18 + (500 * 1e18) / 1000 = 1.5e18
-// Alice now has 500 USDR claimable
+vault.claimable(alice);   // Returns 500e18 (gets the parked yield)
 ```
 
-## Gas Optimization
+## Integration
 
-The global index pattern provides significant gas savings:
-
-- **O(1) yield distribution**: Single storage update regardless of user count
-- **Lazy settlement**: Users only pay gas when they interact
-- **Batch operations**: Multiple yield events update same storage slot
-
-## Security Features
-
-### Access Control
-- **Owner**: Can pause, set distributor, manage blacklist, emergency sweep
-- **Distributor**: Can call `onYield()` and `applyParkedYield()`
-- **Users**: Can interact with their own deposits/claims (unless blacklisted)
-
-### Blacklist System
-The vault includes an optional blacklist system for compliance and security:
-
-```solidity
-// Enable/disable blacklist mode
-function setBlacklistMode(bool enabled) external onlyOwner;
-
-// Add/remove addresses from blacklist
-function setBlacklisted(address who, bool blacklisted) external onlyOwner;
-```
-
-**Benefits of Blacklist vs Allowlist:**
-- ✅ **Open by default**: Anyone can use the vault
-- ✅ **Scalable**: No need to approve every user
-- ✅ **Targeted control**: Only block problematic addresses
-- ✅ **Compliance ready**: Meet regulatory requirements when needed
-
-### Invariant Protection
-```solidity
-// Funding invariant
-USDR.balanceOf(vault) >= claimReserve + parkedYield
-```
-
-### Pause Mechanism
-- Owner can pause all user operations during emergencies
-- Admin functions remain available for recovery
-
-## Events
-
-```solidity
-event Deposit(address indexed user, uint256 amount);
-event Withdraw(address indexed user, uint256 amount);
-event InterestClaimed(address indexed user, uint256 amount);
-event YieldIndexed(uint256 amount, uint256 newGlobalIndex, uint256 newClaimReserve);
-event YieldParked(uint256 amount, uint256 totalParked);
-```
-
-## Error Conditions
-
-- `ZeroAmount()`: Attempting operations with zero amounts
-- `InsufficientPrincipal()`: Withdrawing more than deposited
-- `NothingToClaim()`: Claiming when no yield is available
-- `NotDistributor()`: Unauthorized yield distribution calls
-- `InvariantFunding()`: Insufficient vault balance for operations
-- `AddressBlacklisted()`: Blacklisted address attempting deposit
-
-## Integration Guide
-
-### For Distributors
-
+### For Yield Distributors
 ```solidity
 // 1. Transfer yield to vault
 USDR.transfer(vault, yieldAmount);
 
-// 2. Notify vault of yield
+// 2. Notify vault
 vault.onYield(yieldAmount);
 ```
 
-### For Frontend Integration
-
+### For Frontend
 ```solidity
-// Check user's claimable amount
-uint256 claimable = vault.claimable(user);
+// Get all user info in one call (gas efficient)
+(uint256 principal, uint256 claimable, uint256 total, uint256 lastIndex) = vault.getUserInfo(user);
 
-// Check user's principal
-uint256 deposited = vault.principal(user);
+// Or individual calls
+uint256 claimable = vault.claimable(user);           // Interest only
+uint256 total = vault.totalValue(user);             // Principal + interest
+uint256 deposited = vault.principal(user);          // Principal only
+bool blocked = vault.isBlacklisted(user);           // Blacklist status
 
-// Check if user has settled recent yield
-uint256 userLastIndex = vault.userIndex(user);
-uint256 currentIndex = vault.globalIndex();
-bool hasUnsettledYield = currentIndex > userLastIndex && deposited > 0;
+// Get vault statistics
+(uint256 tvl, uint256 reserves, uint256 parked, uint256 index, uint256 balance) = vault.getVaultStats();
 ```
 
-## Comparison with Traditional Vaults
+## Error Conditions
 
-| Feature | EarnVault | Traditional Vault |
-|---------|-----------|-------------------|
-| **Principal Control** | ✅ Withdraw anytime | ❌ Often locked |
-| **Yield Access** | ✅ Claim separately | ❌ Compound only |
-| **Gas Efficiency** | ✅ O(1) distribution | ❌ O(n) loops |
-| **Flexibility** | ✅ Partial operations | ❌ All-or-nothing |
-| **Auto-compound** | ❌ Manual claims | ✅ Automatic |
+- `ZeroAmount()`: Zero amount operations
+- `InsufficientPrincipal()`: Withdrawing more than deposited  
+- `NothingToClaim()`: No yield available to claim
+- `AddressBlacklisted()`: Blacklisted address attempting deposit
+- `InvariantFunding()`: Insufficient vault balance
+- `ArithmeticOverflow()`: Integer overflow in calculations
 
-## Best Practices
+## Technical Notes
 
-### For Users
-1. **Monitor claimable**: Check `claimable()` regularly
-2. **Gas optimization**: Batch operations when possible
-3. **Full withdrawals**: Use for automatic interest claiming
-
-### For Integrators
-1. **Settlement aware**: UI should reflect unsettled yield
-2. **Event monitoring**: Track user activities via events
-3. **Error handling**: Handle all custom errors gracefully
-
-### For Distributors
-1. **Funding first**: Always transfer before calling `onYield()`
-2. **Batch yields**: Combine multiple distributions when possible
-3. **Parking awareness**: Use `applyParkedYield()` when appropriate
-
-## Conclusion
-
-The EarnVault provides a flexible, gas-efficient solution for yield-bearing deposits with user-controlled principal and claimable interest. Its global index mechanism ensures fair distribution while maintaining excellent performance characteristics even with large user bases.
+- **Gas Cost**: ~200k for yield distribution regardless of user count
+- **Compatibility**: ERC20-compliant M^0 USDR token required

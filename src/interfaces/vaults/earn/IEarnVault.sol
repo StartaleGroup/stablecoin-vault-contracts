@@ -6,6 +6,22 @@ interface IEarnVault {
     function totalPrincipal() external view returns (uint256);
     function asset() external view returns (address);           // address(USDR)
     function claimable(address user) external view returns (uint256);
+    
+    // ---- Enhanced view functions ----
+    function totalValue(address user) external view returns (uint256);
+    function getUserInfo(address user) external view returns (
+        uint256 userPrincipal,
+        uint256 userClaimable, 
+        uint256 userTotal,
+        uint256 userLastIndex
+    );
+    function getVaultStats() external view returns (
+        uint256 vaultTotalPrincipal,
+        uint256 vaultClaimReserve,
+        uint256 vaultParkedYield,
+        uint256 vaultGlobalIndex,
+        uint256 vaultBalance
+    );
 
     // ---- user flows (OFF path) ----
     function deposit(uint256 amount) external;

@@ -24,7 +24,7 @@ contract EarnVault is IEarnVault, Ownable2Step, Pausable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     // -------- Constants --------
-    uint256 public constant PRECISION = 1e18;  // Changed from RAY to standard precision
+    uint256 public constant RAY = 1e27;  // High precision for yield calculations (MakerDAO standard)
 
     // -------- Immutables --------
     IERC20 public immutable USDR;
@@ -39,7 +39,7 @@ contract EarnVault is IEarnVault, Ownable2Step, Pausable, ReentrancyGuard {
 
     // -------- Vault accounting --------
     uint256 public totalPrincipal;       // sum of user principals
-    uint256 public globalIndex = 1e18;   // global index (scaled 1e18)
+    uint256 public globalIndex = 1e27;   // global index (scaled 1e27 - RAY precision)
     uint256 public parkedYield;          // yield received while totalPrincipal==0 (deferred)
     uint256 public claimReserve;         // assets available to pay claims/withdraws
 
@@ -72,6 +72,7 @@ contract EarnVault is IEarnVault, Ownable2Step, Pausable, ReentrancyGuard {
     error BadAddress();
     error NothingToClaim();
     error InvariantFunding(); // USDR balance insufficent
+    error ArithmeticOverflow(); // Integer overflow detected
 
     constructor(address _usdr, address _owner, address _distributor, address _treasury) 
         Ownable(_owner) {
@@ -88,11 +89,13 @@ contract EarnVault is IEarnVault, Ownable2Step, Pausable, ReentrancyGuard {
     // =========================
 
     function setDistributor(address who) external onlyOwner {
+        if (who == address(0)) revert BadAddress();  // SECURITY FIX: Zero address check
         distributor = who;
         emit SetDistributor(who);
     }
 
     function setTreasury(address who) external onlyOwner {
+        if (who == address(0)) revert BadAddress();  // SECURITY FIX: Zero address check
         treasury = who;
         emit SetTreasury(who);
     }
@@ -124,10 +127,43 @@ contract EarnVault is IEarnVault, Ownable2Step, Pausable, ReentrancyGuard {
         uint256 gi = globalIndex;
         if (p == 0) return accrued[user];
         if (gi > ui) {
-            uint256 owed = (p * (gi - ui)) / PRECISION;
+            uint256 owed = (p * (gi - ui)) / RAY;
             return accrued[user] + owed;
         }
         return accrued[user];
+    }
+
+    /// @notice Get user's total value (principal + claimable interest)
+    function totalValue(address user) external view returns (uint256) {
+        return principal[user] + this.claimable(user);
+    }
+
+    /// @notice Get user's complete account info in one call
+    function getUserInfo(address user) external view returns (
+        uint256 userPrincipal,
+        uint256 userClaimable, 
+        uint256 userTotal,
+        uint256 userLastIndex
+    ) {
+        userPrincipal = principal[user];
+        userClaimable = this.claimable(user);
+        userTotal = userPrincipal + userClaimable;
+        userLastIndex = userIndex[user];
+    }
+
+    /// @notice Get vault's overall statistics
+    function getVaultStats() external view returns (
+        uint256 vaultTotalPrincipal,
+        uint256 vaultClaimReserve,
+        uint256 vaultParkedYield,
+        uint256 vaultGlobalIndex,
+        uint256 vaultBalance
+    ) {
+        vaultTotalPrincipal = totalPrincipal;
+        vaultClaimReserve = claimReserve;
+        vaultParkedYield = parkedYield;
+        vaultGlobalIndex = globalIndex;
+        vaultBalance = USDR.balanceOf(address(this));
     }
 
     // =========================
@@ -167,6 +203,7 @@ contract EarnVault is IEarnVault, Ownable2Step, Pausable, ReentrancyGuard {
     }
 
     function withdraw(uint256 amount) external whenNotPaused nonReentrant {
+        _checkNotBlacklisted(msg.sender);  // SECURITY FIX: Add blacklist check
         if (amount == 0) revert ZeroAmount();
 
         _settle(msg.sender);
@@ -194,6 +231,7 @@ contract EarnVault is IEarnVault, Ownable2Step, Pausable, ReentrancyGuard {
     }
 
     function claim() external whenNotPaused nonReentrant {
+        _checkNotBlacklisted(msg.sender);  // SECURITY FIX: Add blacklist check
         _settle(msg.sender);
         uint256 amt = accrued[msg.sender];
         if (amt == 0) revert NothingToClaim();
@@ -206,6 +244,7 @@ contract EarnVault is IEarnVault, Ownable2Step, Pausable, ReentrancyGuard {
     }
 
     function claimTo(address to) external whenNotPaused nonReentrant {
+        _checkNotBlacklisted(msg.sender);  // SECURITY FIX: Add blacklist check
         if (to == address(0)) revert BadAddress();
         _settle(msg.sender);
         uint256 amt = accrued[msg.sender];
@@ -223,21 +262,30 @@ contract EarnVault is IEarnVault, Ownable2Step, Pausable, ReentrancyGuard {
     // =========================
 
     /// @dev Call AFTER transferring `amount` USDR to this contract.
-    ///      Enforces funding: USDR.balance >= totalPrincipal + totalPending + parkedYield (+ amount if parking).
+    ///      Enforces funding: USDR.balance >= claimReserve + parkedYield + amount.
     function onYield(uint256 amount) external whenNotPaused {
         if (msg.sender != distributor && msg.sender != owner()) revert NotDistributor();
         if (amount == 0) return;
         
+        // SECURITY FIX: Verify actual balance before updating accounting
+        uint256 bal = USDR.balanceOf(address(this));
+        
         if (totalPrincipal == 0) {
-            // nothing to index; hold funds in reserve so first depositor doesn't get a free lunch
-            claimReserve += amount;
-            emit YieldIndexed(0, globalIndex, claimReserve);
+            // SECURITY FIX: Verify funding and use parkedYield instead of claimReserve
+            if (bal < claimReserve + parkedYield + amount) revert InvariantFunding();
+            parkedYield += amount;
+            emit YieldParked(amount, parkedYield);
             return;
         }
         
-        // index increase; 1e18 scaling
-        uint256 delta = (amount * PRECISION) / totalPrincipal;
+        // SECURITY FIX: Verify funding before updating claimReserve
+        if (bal < claimReserve + parkedYield + amount) revert InvariantFunding();
+        
+        // SECURITY FIX: Protect against integer overflow
+        uint256 delta = (amount * RAY) / totalPrincipal;
         if (delta > 0) {
+            // Check for overflow before adding
+            if (globalIndex + delta < globalIndex) revert ArithmeticOverflow();
             globalIndex += delta;
         }
         claimReserve += amount;
@@ -250,11 +298,15 @@ contract EarnVault is IEarnVault, Ownable2Step, Pausable, ReentrancyGuard {
         uint256 amt = parkedYield;
         if (amt == 0 || totalPrincipal == 0) return;
 
-        parkedYield = 0;
-        uint256 delta = (amt * PRECISION) / totalPrincipal;
+        // SECURITY FIX: Protect against integer overflow
+        uint256 delta = (amt * RAY) / totalPrincipal;
         if (delta > 0) {
+            // Check for overflow before adding
+            if (globalIndex + delta < globalIndex) revert ArithmeticOverflow();
             globalIndex += delta;
         }
+        
+        parkedYield = 0;
         emit ParkedYieldApplied(amt, 0);
     }
 
@@ -271,7 +323,7 @@ contract EarnVault is IEarnVault, Ownable2Step, Pausable, ReentrancyGuard {
             return; 
         }
         if (gi > ui) {
-            uint256 owed = (p * (gi - ui)) / PRECISION;
+            uint256 owed = (p * (gi - ui)) / RAY;
             accrued[user] += owed;
             userIndex[user] = gi;
         }
@@ -290,13 +342,13 @@ contract EarnVault is IEarnVault, Ownable2Step, Pausable, ReentrancyGuard {
         if (to == address(0)) revert BadAddress();
 
         if (token == address(USDR)) {
-            if (!paused()) revert(); // only when paused
+            if (!paused()) revert InvariantFunding(); // SECURITY FIX: Use custom error
             // allow sweeping only true surplus
             uint256 bal = USDR.balanceOf(address(this));
             uint256 minRequired = claimReserve + parkedYield;
-            require(bal > minRequired, "no surplus");
+            if (bal <= minRequired) revert InvariantFunding(); // SECURITY FIX: Use custom error
             uint256 maxSweep = bal - minRequired;
-            require(amount <= maxSweep, "exceeds surplus");
+            if (amount > maxSweep) revert InvariantFunding(); // SECURITY FIX: Use custom error
         }
         IERC20(token).safeTransfer(to, amount);
         emit EmergencySweep(token, to, amount);

@@ -17,7 +17,7 @@ contract EarnVaultTest is Test {
     address public bob = makeAddr("bob");
     address public charlie = makeAddr("charlie");
     
-    uint256 public constant PRECISION = 1e18;
+    uint256 public constant RAY = 1e27;
     uint256 public constant INITIAL_SUPPLY = 1_000_000e18;
     
     event Deposit(address indexed user, uint256 amount);
@@ -72,8 +72,8 @@ contract EarnVaultTest is Test {
         assertEq(vault.principal(alice), depositAmount, "Alice's principal should be 1000");
         assertEq(vault.totalPrincipal(), depositAmount, "Total principal should be 1000");
         assertEq(vault.claimReserve(), depositAmount, "Claim reserve should equal principal");
-        assertEq(vault.userIndex(alice), PRECISION, "Alice's user index should be 1e18");
-        assertEq(vault.globalIndex(), PRECISION, "Global index should remain 1e18");
+        assertEq(vault.userIndex(alice), RAY, "Alice's user index should be 1e27");
+        assertEq(vault.globalIndex(), RAY, "Global index should remain 1e27");
         
         // Verify token transfers
         assertEq(usdr.balanceOf(alice), initialBalance - depositAmount, "Alice's balance should decrease");
@@ -99,8 +99,8 @@ contract EarnVaultTest is Test {
         assertEq(vault.claimReserve(), 4000e18, "Claim reserve should be 4000");
         
         // Both users should have same userIndex (no yield yet)
-        assertEq(vault.userIndex(alice), PRECISION, "Alice's index should be 1e18");
-        assertEq(vault.userIndex(bob), PRECISION, "Bob's index should be 1e18");
+        assertEq(vault.userIndex(alice), RAY, "Alice's index should be 1e27");
+        assertEq(vault.userIndex(bob), RAY, "Bob's index should be 1e27");
     }
     
     /// @notice Test basic withdrawal functionality
@@ -166,12 +166,12 @@ contract EarnVaultTest is Test {
         
         vm.prank(distributor);
         vm.expectEmit(false, false, false, true);
-        emit YieldIndexed(yieldAmount, PRECISION + (yieldAmount * PRECISION) / depositAmount, depositAmount + yieldAmount);
+        emit YieldIndexed(yieldAmount, RAY + (yieldAmount * RAY) / depositAmount, depositAmount + yieldAmount);
         vault.onYield(yieldAmount);
         
         // Verify global index increased
-        uint256 expectedGlobalIndex = PRECISION + (yieldAmount * PRECISION) / depositAmount; // 1.1e18
-        assertEq(vault.globalIndex(), expectedGlobalIndex, "Global index should increase by 0.1e18");
+        uint256 expectedGlobalIndex = RAY + (yieldAmount * RAY) / depositAmount; // 1.1e27
+        assertEq(vault.globalIndex(), expectedGlobalIndex, "Global index should increase by 0.1e27");
         
         // Verify claim reserve includes yield
         assertEq(vault.claimReserve(), depositAmount + yieldAmount, "Claim reserve should include yield");
@@ -222,15 +222,17 @@ contract EarnVaultTest is Test {
         vault.onYield(yieldAmount);
         
         // Yield should be parked, not indexed
-        assertEq(vault.globalIndex(), PRECISION, "Global index should remain unchanged");
-        assertEq(vault.claimReserve(), yieldAmount, "Yield should be added to claim reserve");
+        assertEq(vault.globalIndex(), RAY, "Global index should remain unchanged");
+        assertEq(vault.parkedYield(), yieldAmount, "Yield should be added to parked yield");  // FIXED: Check parkedYield instead
+        assertEq(vault.claimReserve(), 0, "Claim reserve should remain 0 when yield is parked");  // FIXED: claimReserve stays 0
         
         // Now Alice deposits - she shouldn't get the parked yield automatically
         vm.prank(alice);
         vault.deposit(1000e18);
         
         assertEq(vault.claimable(alice), 0, "Alice shouldn't get parked yield automatically");
-        assertEq(vault.claimReserve(), yieldAmount + 1000e18, "Reserve should include both yield and principal");
+        assertEq(vault.claimReserve(), 1000e18, "Reserve should include only principal");  // FIXED: Only principal in reserve
+        assertEq(vault.parkedYield(), yieldAmount, "Parked yield should remain unchanged");
     }
     
     // ========================================
