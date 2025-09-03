@@ -23,7 +23,7 @@ contract EarnVault is IEarnVault, Ownable2Step, Pausable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     // -------- Constants --------
-    uint256 public constant RAY = 1e27;
+    uint256 public constant PRECISION = 1e18;  // Changed from RAY to standard precision
 
     // -------- Immutables --------
     IERC20 public immutable USDR;
@@ -38,16 +38,13 @@ contract EarnVault is IEarnVault, Ownable2Step, Pausable, ReentrancyGuard {
 
     // -------- Vault accounting --------
     uint256 public totalPrincipal;       // sum of user principals
-    uint256 public accUSDRPerShare;      // global index in RAY
+    uint256 public globalIndex = 1e18;   // global index (scaled 1e18)
     uint256 public parkedYield;          // yield received while totalPrincipal==0 (deferred)
-    uint256 public totalPending;         // global sum of all users' pending
+    uint256 public claimReserve;         // assets available to pay claims/withdraws
 
-    struct User {
-        uint256 principal;   // deposited principal
-        uint256 rewardDebt;  // principal * accUSDRPerShare / RAY
-        uint256 pending;     // accrued but unclaimed USDR
-    }
-    mapping(address => User) public users;
+    mapping(address => uint256) public principal;
+    mapping(address => uint256) public userIndex;
+    mapping(address => uint256) public accrued;
 
     // -------- Events --------
     event SetDistributor(address indexed who);
@@ -59,9 +56,10 @@ contract EarnVault is IEarnVault, Ownable2Step, Pausable, ReentrancyGuard {
     event Withdraw(address indexed user, uint256 amount);
     event Claim(address indexed user, address indexed to, uint256 amount);
 
-    event YieldApplied(uint256 amount, uint256 newAccPerShare);
+    event YieldIndexed(uint256 amount, uint256 newGlobalIndex, uint256 newClaimReserve);
     event YieldParked(uint256 amount, uint256 totalParked);
     event ParkedYieldApplied(uint256 amountApplied, uint256 remainingParked);
+    event InterestClaimed(address indexed user, uint256 amount);
 
     event EmergencySweep(address indexed token, address indexed to, uint256 amount);
 
@@ -120,10 +118,15 @@ contract EarnVault is IEarnVault, Ownable2Step, Pausable, ReentrancyGuard {
     }
 
     function claimable(address user) external view returns (uint256) {
-        User memory u = users[user];
-        uint256 accumulated = (u.principal * accUSDRPerShare) / RAY;
-        if (accumulated < u.rewardDebt) return u.pending; // guard (should not happen)
-        return u.pending + (accumulated - u.rewardDebt);
+        uint256 p = principal[user];
+        uint256 ui = userIndex[user];
+        uint256 gi = globalIndex;
+        if (p == 0) return accrued[user];
+        if (gi > ui) {
+            uint256 owed = (p * (gi - ui)) / PRECISION;
+            return accrued[user] + owed;
+        }
+        return accrued[user];
     }
 
     // =========================
@@ -135,10 +138,11 @@ contract EarnVault is IEarnVault, Ownable2Step, Pausable, ReentrancyGuard {
         if (amount == 0) revert ZeroAmount();
 
         _settle(msg.sender);
-        users[msg.sender].principal += amount;
-        totalPrincipal += amount;
-
         USDR.safeTransferFrom(msg.sender, address(this), amount);
+        principal[msg.sender] += amount;
+        totalPrincipal += amount;
+        claimReserve += amount;  // reserve principal 1:1
+
         emit Deposit(msg.sender, amount);
     }
 
@@ -153,10 +157,11 @@ contract EarnVault is IEarnVault, Ownable2Step, Pausable, ReentrancyGuard {
         IERC20Permit(address(USDR)).permit(msg.sender, address(this), amount, deadline, v, r, s);
 
         _settle(msg.sender);
-        users[msg.sender].principal += amount;
-        totalPrincipal += amount;
-
         USDR.safeTransferFrom(msg.sender, address(this), amount);
+        principal[msg.sender] += amount;
+        totalPrincipal += amount;
+        claimReserve += amount;  // reserve principal 1:1
+
         emit Deposit(msg.sender, amount);
     }
 
@@ -164,33 +169,52 @@ contract EarnVault is IEarnVault, Ownable2Step, Pausable, ReentrancyGuard {
         if (amount == 0) revert ZeroAmount();
 
         _settle(msg.sender);
-        User storage u = users[msg.sender];
-        if (amount > u.principal) revert InsufficientPrincipal();
+        uint256 p = principal[msg.sender];
+        if (amount > p) revert InsufficientPrincipal();
 
-        u.principal -= amount;
+        uint256 interestOut = 0;
+        if (amount == p) {
+            // Full withdrawal: auto-claim all accrued interest
+            interestOut = accrued[msg.sender];
+            accrued[msg.sender] = 0;
+            if (claimReserve < interestOut) revert InvariantFunding();
+            claimReserve -= interestOut;
+        }
+
+        principal[msg.sender] = p - amount;
         totalPrincipal -= amount;
+        claimReserve -= amount;
 
-        USDR.safeTransfer(msg.sender, amount);
+        USDR.safeTransfer(msg.sender, amount + interestOut);
         emit Withdraw(msg.sender, amount);
+        if (interestOut > 0) {
+            emit InterestClaimed(msg.sender, interestOut);
+        }
     }
 
     function claim() external whenNotPaused nonReentrant {
-        uint256 amt = _settle(msg.sender);
+        _settle(msg.sender);
+        uint256 amt = accrued[msg.sender];
         if (amt == 0) revert NothingToClaim();
-        users[msg.sender].pending = 0;
-        totalPending -= amt;
+        if (claimReserve < amt) revert InvariantFunding();
+        
+        accrued[msg.sender] = 0;
+        claimReserve -= amt;
         USDR.safeTransfer(msg.sender, amt);
-        emit Claim(msg.sender, msg.sender, amt);
+        emit InterestClaimed(msg.sender, amt);
     }
 
     function claimTo(address to) external whenNotPaused nonReentrant {
         if (to == address(0)) revert BadAddress();
-        uint256 amt = _settle(msg.sender);
+        _settle(msg.sender);
+        uint256 amt = accrued[msg.sender];
         if (amt == 0) revert NothingToClaim();
-        users[msg.sender].pending = 0;
-        totalPending -= amt;
+        if (claimReserve < amt) revert InvariantFunding();
+        
+        accrued[msg.sender] = 0;
+        claimReserve -= amt;
         USDR.safeTransfer(to, amt);
-        emit Claim(msg.sender, to, amt);
+        emit InterestClaimed(msg.sender, amt);
     }
 
     // =========================
@@ -201,23 +225,22 @@ contract EarnVault is IEarnVault, Ownable2Step, Pausable, ReentrancyGuard {
     ///      Enforces funding: USDR.balance >= totalPrincipal + totalPending + parkedYield (+ amount if parking).
     function onYield(uint256 amount) external whenNotPaused {
         if (msg.sender != distributor && msg.sender != owner()) revert NotDistributor();
-        if (amount == 0) revert ZeroAmount();
-
-        uint256 bal = USDR.balanceOf(address(this));
-
+        if (amount == 0) return;
+        
         if (totalPrincipal == 0) {
-            // parking: liabilities rise by `amount`
-            if (bal < totalPrincipal + totalPending + parkedYield + amount) revert InvariantFunding();
-            parkedYield += amount;
-            emit YieldParked(amount, parkedYield);
+            // nothing to index; hold funds in reserve so first depositor doesn't get a free lunch
+            claimReserve += amount;
+            emit YieldIndexed(0, globalIndex, claimReserve);
             return;
         }
-
-        // normal credit: liabilities rise exactly by `amount`
-        if (bal < totalPrincipal + totalPending + parkedYield + amount) revert InvariantFunding();
-
-        accUSDRPerShare += (amount * RAY) / totalPrincipal;
-        emit YieldApplied(amount, accUSDRPerShare);
+        
+        // index increase; 1e18 scaling
+        uint256 delta = (amount * PRECISION) / totalPrincipal;
+        if (delta > 0) {
+            globalIndex += delta;
+        }
+        claimReserve += amount;
+        emit YieldIndexed(amount, globalIndex, claimReserve);
     }
 
     /// @dev Apply previously parked yield once deposits exist.
@@ -226,9 +249,11 @@ contract EarnVault is IEarnVault, Ownable2Step, Pausable, ReentrancyGuard {
         uint256 amt = parkedYield;
         if (amt == 0 || totalPrincipal == 0) return;
 
-        // No extra funding check needed: funds were verified at park time and are held in balance.
         parkedYield = 0;
-        accUSDRPerShare += (amt * RAY) / totalPrincipal;
+        uint256 delta = (amt * PRECISION) / totalPrincipal;
+        if (delta > 0) {
+            globalIndex += delta;
+        }
         emit ParkedYieldApplied(amt, 0);
     }
 
@@ -236,20 +261,19 @@ contract EarnVault is IEarnVault, Ownable2Step, Pausable, ReentrancyGuard {
     // Internal helpers
     // =========================
 
-    // Settles user pending with current index; returns new pending balance.
-    function _settle(address user) internal returns (uint256 newlyClaimable) {
-        User storage u = users[user];
-        uint256 accumulated = (u.principal * accUSDRPerShare) / RAY;
-
-        if (accumulated >= u.rewardDebt) {
-            uint256 delta = accumulated - u.rewardDebt;
-            if (delta > 0) {
-                u.pending += delta;
-                totalPending += delta;
-            }
+    function _settle(address user) internal {
+        uint256 p = principal[user];
+        uint256 ui = userIndex[user];
+        uint256 gi = globalIndex;
+        if (p == 0) { 
+            userIndex[user] = gi; 
+            return; 
         }
-        u.rewardDebt = (u.principal * accUSDRPerShare) / RAY;
-        return u.pending;
+        if (gi > ui) {
+            uint256 owed = (p * (gi - ui)) / PRECISION;
+            accrued[user] += owed;
+            userIndex[user] = gi;
+        }
     }
 
     function _checkAllow(address user) internal view {
@@ -268,7 +292,7 @@ contract EarnVault is IEarnVault, Ownable2Step, Pausable, ReentrancyGuard {
             if (!paused()) revert(); // only when paused
             // allow sweeping only true surplus
             uint256 bal = USDR.balanceOf(address(this));
-            uint256 minRequired = totalPrincipal + totalPending + parkedYield;
+            uint256 minRequired = claimReserve + parkedYield;
             require(bal > minRequired, "no surplus");
             uint256 maxSweep = bal - minRequired;
             require(amount <= maxSweep, "exceeds surplus");
