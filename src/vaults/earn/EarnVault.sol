@@ -1,25 +1,24 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.26;
 
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {IERC20Permit} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol";
-import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
-import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
-import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {IERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
+import {IERC20Permit} from "lib/openzeppelin-contracts/contracts/token/ERC20/extensions/IERC20Permit.sol";
+import {SafeERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
+import {Ownable} from "lib/openzeppelin-contracts/contracts/access/Ownable.sol";
+import {Ownable2Step} from "lib/openzeppelin-contracts/contracts/access/Ownable2Step.sol";
+import {Pausable} from "lib/openzeppelin-contracts/contracts/utils/Pausable.sol";
+import {ReentrancyGuard} from "lib/openzeppelin-contracts/contracts/utils/ReentrancyGuard.sol";
 import {IEarnVault} from "../../interfaces/vaults/earn/IEarnVault.sol";
 
 /// @title EarnVault (OFF path, claimable yield)
 /// @notice Users deposit USDR, accrue claimable USDR via index accounting, and can claim/withdraw anytime.
 ///         A distributor pushes yield: transfer USDR to this contract, then call onYieldReceived(amount).
 /// Accounting:
-///   - accUSDRPerShare is in RAY (1e27) for precision.
-///   - User state: principal, rewardDebt, pending.
-///   - When yield arrives and totalPrincipal>0: acc += amount*RAY/totalPrincipal.
+///   - globalIndex is in RAY (1e27) for precision.
+///   - User state: principal, userIndex, accrued.
+///   - When yield arrives and totalPrincipal>0: globalIndex += amount*RAY/totalPrincipal.
 ///   - If totalPrincipal==0 at yield time: amount is parked until deposits exist (applyParkedYield()).
-/// Invariant (funding): USDR balance >= totalPrincipal + totalPending + parkedYield.
+/// Invariant (funding): USDR balance >= claimReserve + parkedYield.
 contract EarnVault is IEarnVault, Ownable2Step, Pausable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
@@ -74,14 +73,14 @@ contract EarnVault is IEarnVault, Ownable2Step, Pausable, ReentrancyGuard {
     error InvariantFunding(); // USDR balance insufficent
     error ArithmeticOverflow(); // Integer overflow detected
 
-    constructor(address _usdr, address _owner, address _distributor, address _treasury) 
-        Ownable(_owner) {
-        if (_usdr == address(0) || _owner == address(0)) revert BadAddress();
-        USDR = IERC20(_usdr);
-        distributor = _distributor;
-        treasury = _treasury;
-        emit SetDistributor(_distributor);
-        emit SetTreasury(_treasury);
+    constructor(address usdr, address owner, address distributorAddr, address treasuryAddr) 
+        Ownable(owner) {
+        if (usdr == address(0) || owner == address(0)) revert BadAddress();
+        USDR = IERC20(usdr);
+        distributor = distributorAddr;
+        treasury = treasuryAddr;
+        emit SetDistributor(distributorAddr);
+        emit SetTreasury(treasuryAddr);
     }
 
     // =========================
@@ -89,13 +88,13 @@ contract EarnVault is IEarnVault, Ownable2Step, Pausable, ReentrancyGuard {
     // =========================
 
     function setDistributor(address who) external onlyOwner {
-        if (who == address(0)) revert BadAddress();  // SECURITY FIX: Zero address check
+        if (who == address(0)) revert BadAddress();  //   Zero address check
         distributor = who;
         emit SetDistributor(who);
     }
 
     function setTreasury(address who) external onlyOwner {
-        if (who == address(0)) revert BadAddress();  // SECURITY FIX: Zero address check
+        if (who == address(0)) revert BadAddress();  //   Zero address check
         treasury = who;
         emit SetTreasury(who);
     }
@@ -203,7 +202,7 @@ contract EarnVault is IEarnVault, Ownable2Step, Pausable, ReentrancyGuard {
     }
 
     function withdraw(uint256 amount) external whenNotPaused nonReentrant {
-        _checkNotBlacklisted(msg.sender);  // SECURITY FIX: Add blacklist check
+        _checkNotBlacklisted(msg.sender);  //   Add blacklist check
         if (amount == 0) revert ZeroAmount();
 
         _settle(msg.sender);
@@ -231,7 +230,7 @@ contract EarnVault is IEarnVault, Ownable2Step, Pausable, ReentrancyGuard {
     }
 
     function claim() external whenNotPaused nonReentrant {
-        _checkNotBlacklisted(msg.sender);  // SECURITY FIX: Add blacklist check
+        _checkNotBlacklisted(msg.sender);  //   Add blacklist check
         _settle(msg.sender);
         uint256 amt = accrued[msg.sender];
         if (amt == 0) revert NothingToClaim();
@@ -244,7 +243,7 @@ contract EarnVault is IEarnVault, Ownable2Step, Pausable, ReentrancyGuard {
     }
 
     function claimTo(address to) external whenNotPaused nonReentrant {
-        _checkNotBlacklisted(msg.sender);  // SECURITY FIX: Add blacklist check
+        _checkNotBlacklisted(msg.sender);  //   Add blacklist check
         if (to == address(0)) revert BadAddress();
         _settle(msg.sender);
         uint256 amt = accrued[msg.sender];
@@ -267,21 +266,21 @@ contract EarnVault is IEarnVault, Ownable2Step, Pausable, ReentrancyGuard {
         if (msg.sender != distributor && msg.sender != owner()) revert NotDistributor();
         if (amount == 0) return;
         
-        // SECURITY FIX: Verify actual balance before updating accounting
+        //   Verify actual balance before updating accounting
         uint256 bal = USDR.balanceOf(address(this));
         
         if (totalPrincipal == 0) {
-            // SECURITY FIX: Verify funding and use parkedYield instead of claimReserve
+            //   Verify funding and use parkedYield instead of claimReserve
             if (bal < claimReserve + parkedYield + amount) revert InvariantFunding();
             parkedYield += amount;
             emit YieldParked(amount, parkedYield);
             return;
         }
         
-        // SECURITY FIX: Verify funding before updating claimReserve
+        //   Verify funding before updating claimReserve
         if (bal < claimReserve + parkedYield + amount) revert InvariantFunding();
         
-        // SECURITY FIX: Protect against integer overflow
+        //   Protect against integer overflow
         uint256 delta = (amount * RAY) / totalPrincipal;
         if (delta > 0) {
             // Check for overflow before adding
@@ -298,7 +297,7 @@ contract EarnVault is IEarnVault, Ownable2Step, Pausable, ReentrancyGuard {
         uint256 amt = parkedYield;
         if (amt == 0 || totalPrincipal == 0) return;
 
-        // SECURITY FIX: Protect against integer overflow
+        //   Protect against integer overflow
         uint256 delta = (amt * RAY) / totalPrincipal;
         if (delta > 0) {
             // Check for overflow before adding
@@ -342,13 +341,13 @@ contract EarnVault is IEarnVault, Ownable2Step, Pausable, ReentrancyGuard {
         if (to == address(0)) revert BadAddress();
 
         if (token == address(USDR)) {
-            if (!paused()) revert InvariantFunding(); // SECURITY FIX: Use custom error
+            if (!paused()) revert InvariantFunding(); //   Use custom error
             // allow sweeping only true surplus
             uint256 bal = USDR.balanceOf(address(this));
             uint256 minRequired = claimReserve + parkedYield;
-            if (bal <= minRequired) revert InvariantFunding(); // SECURITY FIX: Use custom error
+            if (bal <= minRequired) revert InvariantFunding(); //   Use custom error
             uint256 maxSweep = bal - minRequired;
-            if (amount > maxSweep) revert InvariantFunding(); // SECURITY FIX: Use custom error
+            if (amount > maxSweep) revert InvariantFunding(); //   Use custom error
         }
         IERC20(token).safeTransfer(to, amount);
         emit EmergencySweep(token, to, amount);
