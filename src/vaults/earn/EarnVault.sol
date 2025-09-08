@@ -306,6 +306,7 @@ contract EarnVault is IEarnVault, Ownable2Step, Pausable, ReentrancyGuard {
         }
         
         parkedYield = 0;
+        claimReserve += amt;  // Must increase claimReserve to maintain funding invariant
         emit ParkedYieldApplied(amt, 0);
     }
 
