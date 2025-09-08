@@ -4,7 +4,7 @@ pragma solidity ^0.8.26;
 interface IEarnVault {
   // TVL for pro-rata split
   function totalPrincipal() external view returns (uint256);
-  // asset this vault uses (USDx)
+  // asset this vault uses (USDR)
   function asset() external view returns (address);
 
   // TODO // Review

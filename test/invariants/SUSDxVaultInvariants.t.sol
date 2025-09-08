@@ -4,8 +4,8 @@ pragma solidity ^0.8.26;
 import {Test} from 'forge-std/Test.sol';
 import {StdInvariant} from 'forge-std/StdInvariant.sol';
 import {console2} from 'forge-std/console2.sol';
-import {SUSDxVault} from '../../src/vaults/4626/SUSDxVault.sol';
-import {USDx} from '../../src/coin/mock/USDx.sol';
+import {SUSDRVault} from '../../src/vaults/4626/SUSDRVault.sol';
+import {USDR} from '../../src/coin/mock/USDR.sol';
 import {MockMToken} from '../mocks/MockMToken.sol';
 import {MockSwapFacility} from 'm-extensions-test/utils/Mocks.sol';
 import {MockM} from 'm-extensions-test/utils/Mocks.sol';
@@ -13,9 +13,9 @@ import {ProxyAdmin} from '@openzeppelin/contracts/proxy/transparent/ProxyAdmin.s
 import {TransparentUpgradeableProxy} from '@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol';
 import {IERC20} from '@openzeppelin/contracts/token/ERC20/IERC20.sol';
 
-contract SUSDxVaultHandler is Test {
-    SUSDxVault public vault;
-    USDx public usdx;
+contract SUSDRVaultHandler is Test {
+    SUSDRVault public vault;
+    USDR public usdr;
     
     address[] public users;
     uint256 public constant MAX_USERS = 20;
@@ -24,25 +24,25 @@ contract SUSDxVaultHandler is Test {
     mapping(address => uint256) public userShares;
     uint256 public totalUserShares;
     
-    constructor(SUSDxVault _vault, USDx _usdx) {
+    constructor(SUSDRVault _vault, USDR _usdr) {
         vault = _vault;
-        usdx = _usdx;
+        usdr = _usdr;
         
         for (uint i = 0; i < MAX_USERS; i++) {
             address user = makeAddr(string(abi.encodePacked("user", i)));
             users.push(user);
-            deal(address(usdx), user, MAX_AMOUNT);
+            deal(address(usdr), user, MAX_AMOUNT);
         }
     }
     
     function deposit(uint256 userIndex, uint256 assets) external {
         userIndex = bound(userIndex, 0, users.length - 1);
-        assets = bound(assets, 1, _min(MAX_AMOUNT / 10, usdx.balanceOf(users[userIndex])));
+        assets = bound(assets, 1, _min(MAX_AMOUNT / 10, usdr.balanceOf(users[userIndex])));
         
         address user = users[userIndex];
         
         vm.startPrank(user);
-        usdx.approve(address(vault), assets);
+        usdr.approve(address(vault), assets);
         uint256 shares = vault.deposit(assets, user);
         vm.stopPrank();
         
@@ -57,10 +57,10 @@ contract SUSDxVaultHandler is Test {
         address user = users[userIndex];
         uint256 assets = vault.previewMint(shares);
         
-        if (assets > usdx.balanceOf(user)) return;
+        if (assets > usdr.balanceOf(user)) return;
         
         vm.startPrank(user);
-        usdx.approve(address(vault), assets);
+        usdr.approve(address(vault), assets);
         vault.mint(shares, user);
         vm.stopPrank();
         
@@ -114,10 +114,10 @@ contract SUSDxVaultHandler is Test {
         yieldAmount = bound(yieldAmount, 1 ether, maxYield);
         
         address yieldDistributor = makeAddr('yieldDistributor');
-        deal(address(usdx), yieldDistributor, yieldAmount);
+        deal(address(usdr), yieldDistributor, yieldAmount);
         
         vm.startPrank(yieldDistributor);
-        usdx.transfer(address(vault), yieldAmount);
+        usdr.transfer(address(vault), yieldAmount);
         vm.stopPrank();
     }
     
@@ -126,12 +126,12 @@ contract SUSDxVaultHandler is Test {
     }
 }
 
-contract SUSDxVaultInvariants is StdInvariant, Test {
-    SUSDxVault internal vault;
-    USDx internal usdx;
+contract SUSDRVaultInvariants is StdInvariant, Test {
+    SUSDRVault internal vault;
+    USDR internal usdr;
     MockM internal mToken;
     MockSwapFacility internal swapFacility;
-    SUSDxVaultHandler internal handler;
+    SUSDRVaultHandler internal handler;
     
     address internal admin = makeAddr('admin');
     address internal pauser = makeAddr('pauser');
@@ -147,33 +147,33 @@ contract SUSDxVaultInvariants is StdInvariant, Test {
         swapFacility = new MockSwapFacility();
         ProxyAdmin proxyAdmin = new ProxyAdmin(admin);
 
-        USDx implementation = new USDx(address(mToken), address(swapFacility));
+        USDR implementation = new USDR(address(mToken), address(swapFacility));
         TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(
             address(implementation),
             address(proxyAdmin),
-            abi.encodeWithSelector(USDx.initialize.selector, 'USDx', 'USDx', admin, yieldRecipient)
+            abi.encodeWithSelector(USDR.initialize.selector, 'USDR', 'USDR', admin, yieldRecipient)
         );
-        usdx = USDx(address(proxy));
+        usdr = USDR(address(proxy));
 
-        vault = new SUSDxVault(IERC20(address(usdx)), admin, pauser);
+        vault = new SUSDRVault(IERC20(address(usdr)), admin, pauser);
     }
     
     function _setupHandler() internal {
-        handler = new SUSDxVaultHandler(vault, usdx);
+        handler = new SUSDRVaultHandler(vault, usdr);
         
         bytes4[] memory selectors = new bytes4[](5);
-        selectors[0] = SUSDxVaultHandler.deposit.selector;
-        selectors[1] = SUSDxVaultHandler.mint.selector;
-        selectors[2] = SUSDxVaultHandler.redeem.selector;
-        selectors[3] = SUSDxVaultHandler.withdraw.selector;
-        selectors[4] = SUSDxVaultHandler.addYield.selector;
+        selectors[0] = SUSDRVaultHandler.deposit.selector;
+        selectors[1] = SUSDRVaultHandler.mint.selector;
+        selectors[2] = SUSDRVaultHandler.redeem.selector;
+        selectors[3] = SUSDRVaultHandler.withdraw.selector;
+        selectors[4] = SUSDRVaultHandler.addYield.selector;
         
         targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
         targetContract(address(handler));
     }
     
     function invariant_assetConservation() external view {
-        assertEq(vault.totalAssets(), usdx.balanceOf(address(vault)));
+        assertEq(vault.totalAssets(), usdr.balanceOf(address(vault)));
     }
     
     function invariant_shareSupplyConsistency() external view {
@@ -268,12 +268,12 @@ contract SUSDxVaultInvariants is StdInvariant, Test {
     function invariant_noNegativeBalances() external view {
         assertGe(vault.totalSupply(), 0);
         assertGe(vault.totalAssets(), 0);
-        assertGe(usdx.balanceOf(address(vault)), 0);
+        assertGe(usdr.balanceOf(address(vault)), 0);
         
         for (uint i = 0; i < handler.MAX_USERS(); i++) {
             address user = handler.users(i);
             assertGe(vault.balanceOf(user), 0);
-            assertGe(usdx.balanceOf(user), 0);
+            assertGe(usdr.balanceOf(user), 0);
         }
     }
     
@@ -326,8 +326,8 @@ contract SUSDxVaultInvariants is StdInvariant, Test {
     }
     
     function invariant_assetIntegrity() external view {
-        assertEq(address(vault.asset()), address(usdx));
-        assertEq(vault.decimals(), usdx.decimals());
+        assertEq(address(vault.asset()), address(usdr));
+        assertEq(vault.decimals(), usdr.decimals());
     }
     
     function invariant_erc4626Compliance() external view {
@@ -358,7 +358,7 @@ contract SUSDxVaultInvariants is StdInvariant, Test {
     }
     
     function invariant_noArbitraryMinting() external view {
-        uint256 vaultBalance = usdx.balanceOf(address(vault));
+        uint256 vaultBalance = usdr.balanceOf(address(vault));
         uint256 totalAssets = vault.totalAssets();
         
         assertEq(vaultBalance, totalAssets);

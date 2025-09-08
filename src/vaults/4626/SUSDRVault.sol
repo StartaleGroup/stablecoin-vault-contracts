@@ -11,11 +11,11 @@ import {ReentrancyGuard} from '@openzeppelin/contracts/utils/ReentrancyGuard.sol
 // Note: non-upgradeable version
 // Note: We could have some admin actions
 
-/// @title sUSDxVault — ERC-4626: deposit USDx → mint sUSDx; external asset inflows lift PPS
-contract SUSDxVault is ERC20, ERC4626, AccessControl, Pausable, ReentrancyGuard {
+/// @title sUSDRVault — ERC-4626: deposit USDR → mint sUSDR; external asset inflows lift PPS
+contract SUSDRVault is ERC20, ERC4626, AccessControl, Pausable, ReentrancyGuard {
   bytes32 public constant PAUSER_ROLE = keccak256('PAUSER_ROLE');
 
-  constructor(IERC20 usdx, address admin, address pauser) ERC20('Staked USDx', 'sUSDx') ERC4626(usdx) {
+  constructor(IERC20 usdr, address admin, address pauser) ERC20('Staked USDR', 'sUSDR') ERC4626(usdr) {
     _grantRole(DEFAULT_ADMIN_ROLE, admin);
     _grantRole(PAUSER_ROLE, pauser);
   }
