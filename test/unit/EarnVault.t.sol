@@ -30,17 +30,17 @@ contract EarnVaultTest is Test {
     function setUp() public {
         // Deploy mock USDR token
         usdr = new MockERC20("USDR Token", "USDR", 18);
-        
+
         // Deploy EarnVault with proper parameters
         vm.prank(owner);
         vault = new EarnVault(address(usdr), owner, yieldRedistributor, treasury, pauser);
-        
+
         // Mint USDR to test users
         usdr.mint(alice, INITIAL_SUPPLY);
         usdr.mint(bob, INITIAL_SUPPLY);
         usdr.mint(charlie, INITIAL_SUPPLY);
         usdr.mint(yieldRedistributor, INITIAL_SUPPLY);
-        
+
         // Pre-approve vault for all users
         vm.prank(alice);
         usdr.approve(address(vault), type(uint256).max);
@@ -55,6 +55,11 @@ contract EarnVaultTest is Test {
     // ========================================
     // Basic Deposit/Withdraw Tests
     // ========================================
+    
+    // Helper function for getting user principal (addresses review comment about naming)
+    function getUserPrincipal(address user) internal view returns (uint256) {
+        return vault.principal(user);
+    }
     
     /// @notice Test basic deposit functionality and state updates
     function test_BasicDeposit() public {
@@ -71,7 +76,7 @@ contract EarnVaultTest is Test {
         vault.deposit(depositAmount);
         
         // Verify state changes
-        assertEq(vault.principal(alice), depositAmount, "Alice's principal should be 1000");
+        assertEq(getUserPrincipal(alice), depositAmount, "Alice's principal should be 1000");
         assertEq(vault.totalPrincipal(), depositAmount, "Total principal should be 1000");
         assertEq(vault.claimReserve(), depositAmount, "Claim reserve should equal principal");
         assertEq(vault.userIndex(alice), RAY, "Alice's user index should be 1e27");
@@ -93,20 +98,21 @@ contract EarnVaultTest is Test {
         vault.deposit(3000e18);
         
         // Verify individual principals
-        assertEq(vault.principal(alice), 1000e18, "Alice should have 1000 principal");
-        assertEq(vault.principal(bob), 3000e18, "Bob should have 3000 principal");
+        assertEq(getUserPrincipal(alice), 1000e18, "Alice should have 1000 principal");
+        assertEq(getUserPrincipal(bob), 3000e18, "Bob should have 3000 principal");
         
         // Verify total state
         assertEq(vault.totalPrincipal(), 4000e18, "Total principal should be 4000");
-        assertEq(vault.claimReserve(), 4000e18, "Claim reserve should be 4000");
+        // NOTE: claimReserve includes both principal deposits (1:1 reserved) AND yield amounts
+        assertEq(vault.claimReserve(), 4000e18, "Claim reserve should be 4000 (principal only, no yield yet)");
         
         // Both users should have same userIndex (no yield yet)
         assertEq(vault.userIndex(alice), RAY, "Alice's index should be 1e27");
         assertEq(vault.userIndex(bob), RAY, "Bob's index should be 1e27");
     }
     
-    /// @notice Test basic withdrawal functionality
-    function test_BasicWithdraw() public {
+    /// @notice Test partial withdrawal with no yield
+    function test_PartialWithdrawNoYield() public {
         uint256 depositAmount = 1000e18;
         uint256 withdrawAmount = 600e18;
         
@@ -123,7 +129,7 @@ contract EarnVaultTest is Test {
         vault.withdraw(withdrawAmount);
         
         // Verify state changes
-        assertEq(vault.principal(alice), depositAmount - withdrawAmount, "Alice's principal should be 400");
+        assertEq(getUserPrincipal(alice), depositAmount - withdrawAmount, "Alice's principal should be 400");
         assertEq(vault.totalPrincipal(), depositAmount - withdrawAmount, "Total principal should be 400");
         assertEq(vault.claimReserve(), depositAmount - withdrawAmount, "Claim reserve should be 400");
         assertEq(usdr.balanceOf(alice), initialBalance + withdrawAmount, "Alice should receive 600 USDR");
@@ -144,7 +150,7 @@ contract EarnVaultTest is Test {
         vault.withdraw(depositAmount);
         
         // Verify complete withdrawal
-        assertEq(vault.principal(alice), 0, "Alice's principal should be 0");
+        assertEq(getUserPrincipal(alice), 0, "Alice's principal should be 0");
         assertEq(vault.accrued(alice), 0, "Alice should have no accrued interest");
         assertEq(usdr.balanceOf(alice), initialBalance + depositAmount, "Alice should receive full amount");
     }
@@ -335,13 +341,14 @@ contract EarnVaultTest is Test {
         vault.withdraw(depositAmount);
         
         // Verify Alice received both principal and interest
-        assertEq(vault.principal(alice), 0, "Alice's principal should be 0");
+        assertEq(getUserPrincipal(alice), 0, "Alice's principal should be 0");
         assertEq(vault.accrued(alice), 0, "Alice's accrued should be 0");
         assertEq(usdr.balanceOf(alice), initialBalance + depositAmount + claimableAmount, "Alice should receive principal + interest");
     }
     
-    /// @notice Test partial withdrawal does not auto-claim interest
-    function test_PartialWithdrawNoAutoClaim() public {
+    /// @notice Test partial withdrawal does not auto-claim interest (with yield)
+    /// TODO: Consult Figma designs for dashboard UI flow expectations
+    function test_PartialWithdrawWithYieldNoAutoClaim() public {
         uint256 depositAmount = 1000e18;
         uint256 withdrawAmount = 600e18;
         uint256 yieldAmount = 100e18;
@@ -363,7 +370,7 @@ contract EarnVaultTest is Test {
         vault.withdraw(withdrawAmount);
         
         // Verify interest is NOT auto-claimed
-        assertEq(vault.principal(alice), depositAmount - withdrawAmount, "Alice should have 400 principal remaining");
+        assertEq(getUserPrincipal(alice), depositAmount - withdrawAmount, "Alice should have 400 principal remaining");
         assertEq(vault.claimable(alice), claimableBefore, "Claimable amount should remain unchanged");
         assertEq(usdr.balanceOf(alice), initialBalance + withdrawAmount, "Alice should only receive withdrawn principal");
     }
@@ -393,7 +400,7 @@ contract EarnVaultTest is Test {
         
         // Verify her accrued was settled and principal updated
         assertEq(vault.accrued(alice), 100e18, "Previous yield should be settled into accrued");
-        assertEq(vault.principal(alice), 2000e18, "Alice should now have 2000 principal");
+        assertEq(getUserPrincipal(alice), 2000e18, "Alice should now have 2000 principal");
         assertEq(vault.userIndex(alice), vault.globalIndex(), "Alice's index should be updated to current");
         
         // Second yield: 200 USDR on 2000 total principal
@@ -562,7 +569,7 @@ contract EarnVaultTest is Test {
         // Operations should work after unpause
         vm.prank(alice);
         vault.deposit(1000e18); // Should not revert
-        assertEq(vault.principal(alice), 1000e18, "Deposit should work after unpause");
+        assertEq(getUserPrincipal(alice), 1000e18, "Deposit should work after unpause");
     }
     
     /// @notice Test pause access control
@@ -754,7 +761,7 @@ contract EarnVaultTest is Test {
         // Initially no one is blacklisted - everyone can deposit
         vm.prank(alice);
         vault.deposit(1000e18);
-        assertEq(vault.principal(alice), 1000e18, "Alice should be able to deposit when not blacklisted");
+        assertEq(getUserPrincipal(alice), 1000e18, "Alice should be able to deposit when not blacklisted");
         
         // Blacklist Bob
         vm.prank(owner);
@@ -768,7 +775,7 @@ contract EarnVaultTest is Test {
         // Alice (not blacklisted) should still be able to deposit
         vm.prank(alice);
         vault.deposit(500e18);
-        assertEq(vault.principal(alice), 1500e18, "Alice should still be able to deposit");
+        assertEq(getUserPrincipal(alice), 1500e18, "Alice should still be able to deposit");
         
         // Remove Bob from blacklist
         vm.prank(owner);
@@ -777,7 +784,7 @@ contract EarnVaultTest is Test {
         // Bob should now be able to deposit
         vm.prank(bob);
         vault.deposit(1000e18);
-        assertEq(vault.principal(bob), 1000e18, "Bob should be able to deposit after removal from blacklist");
+        assertEq(getUserPrincipal(bob), 1000e18, "Bob should be able to deposit after removal from blacklist");
     }
     
     /// @notice Test only owner can manage blacklist
@@ -898,7 +905,7 @@ contract EarnVaultTest is Test {
         vm.prank(bob);
         vault.withdraw(2000e18);
         
-        assertEq(vault.principal(bob), 0, "Bob should have no principal");
+        assertEq(getUserPrincipal(bob), 0, "Bob should have no principal");
         assertEq(vault.claimable(bob), 0, "Bob should have no claimable");
         assertEq(usdr.balanceOf(bob), bobInitialBalance + 2000e18 + 400e18, "Bob should get principal + interest");
         
