@@ -4,6 +4,7 @@ pragma solidity ^0.8.26;
 import {Test} from "forge-std/Test.sol";
 import {console2} from "forge-std/console2.sol";
 import {EarnVault} from "../../src/vaults/earn/EarnVault.sol";
+import {IEarnVaultEventsAndErrors} from "../../src/interfaces/vaults/earn/IEarnVaultEventsAndErrors.sol";
 import {MockERC20} from "../mocks/MockERC20.sol";
 
 contract EarnVaultTest is Test {
@@ -11,7 +12,7 @@ contract EarnVaultTest is Test {
     MockERC20 public usdr;
     
     address public owner = makeAddr("owner");
-    address public distributor = makeAddr("distributor");
+    address public yieldRedistributor = makeAddr("yieldRedistributor");
     address public treasury = makeAddr("treasury");
     address public alice = makeAddr("alice");
     address public bob = makeAddr("bob");
@@ -31,13 +32,13 @@ contract EarnVaultTest is Test {
         
         // Deploy EarnVault with proper parameters
         vm.prank(owner);
-        vault = new EarnVault(address(usdr), owner, distributor, treasury);
+        vault = new EarnVault(address(usdr), owner, yieldRedistributor, treasury);
         
         // Mint USDR to test users
         usdr.mint(alice, INITIAL_SUPPLY);
         usdr.mint(bob, INITIAL_SUPPLY);
         usdr.mint(charlie, INITIAL_SUPPLY);
-        usdr.mint(distributor, INITIAL_SUPPLY);
+        usdr.mint(yieldRedistributor, INITIAL_SUPPLY);
         
         // Pre-approve vault for all users
         vm.prank(alice);
@@ -46,7 +47,7 @@ contract EarnVaultTest is Test {
         usdr.approve(address(vault), type(uint256).max);
         vm.prank(charlie);
         usdr.approve(address(vault), type(uint256).max);
-        vm.prank(distributor);
+        vm.prank(yieldRedistributor);
         usdr.approve(address(vault), type(uint256).max);
     }
     
@@ -161,10 +162,10 @@ contract EarnVaultTest is Test {
         vault.deposit(depositAmount);
         
         // Distributor sends yield
-        vm.prank(distributor);
+        vm.prank(yieldRedistributor);
         usdr.transfer(address(vault), yieldAmount);
         
-        vm.prank(distributor);
+        vm.prank(yieldRedistributor);
         vm.expectEmit(false, false, false, true);
         emit YieldIndexed(yieldAmount, RAY + (yieldAmount * RAY) / depositAmount, depositAmount + yieldAmount);
         vault.onYield(yieldAmount);
@@ -193,10 +194,10 @@ contract EarnVaultTest is Test {
         uint256 yieldAmount = 400e18;
         
         // Distributor sends yield
-        vm.prank(distributor);
+        vm.prank(yieldRedistributor);
         usdr.transfer(address(vault), yieldAmount);
         
-        vm.prank(distributor);
+        vm.prank(yieldRedistributor);
         vault.onYield(yieldAmount);
         
         // Calculate expected claimable amounts (proportional to deposits)
@@ -215,10 +216,10 @@ contract EarnVaultTest is Test {
         uint256 yieldAmount = 500e18;
         
         // Send yield when no one has deposited (totalPrincipal = 0)
-        vm.prank(distributor);
+        vm.prank(yieldRedistributor);
         usdr.transfer(address(vault), yieldAmount);
         
-        vm.prank(distributor);
+        vm.prank(yieldRedistributor);
         vault.onYield(yieldAmount);
         
         // Yield should be parked, not indexed
@@ -226,13 +227,13 @@ contract EarnVaultTest is Test {
         assertEq(vault.parkedYield(), yieldAmount, "Yield should be added to parked yield");  // FIXED: Check parkedYield instead
         assertEq(vault.claimReserve(), 0, "Claim reserve should remain 0 when yield is parked");  // FIXED: claimReserve stays 0
         
-        // Now Alice deposits - she shouldn't get the parked yield automatically
+        // Now Alice deposits - she SHOULD get the parked yield automatically (FIXED BEHAVIOR)
         vm.prank(alice);
         vault.deposit(1000e18);
         
-        assertEq(vault.claimable(alice), 0, "Alice shouldn't get parked yield automatically");
-        assertEq(vault.claimReserve(), 1000e18, "Reserve should include only principal");  // FIXED: Only principal in reserve
-        assertEq(vault.parkedYield(), yieldAmount, "Parked yield should remain unchanged");
+        assertEq(vault.claimable(alice), yieldAmount, "Alice should get parked yield automatically");
+        assertEq(vault.claimReserve(), 1000e18 + yieldAmount, "Reserve should include principal + applied yield");
+        assertEq(vault.parkedYield(), 0, "Parked yield should be applied and reset to 0");
     }
     
     // ========================================
@@ -248,9 +249,9 @@ contract EarnVaultTest is Test {
         vm.prank(alice);
         vault.deposit(depositAmount);
         
-        vm.prank(distributor);
+        vm.prank(yieldRedistributor);
         usdr.transfer(address(vault), yieldAmount);
-        vm.prank(distributor);
+        vm.prank(yieldRedistributor);
         vault.onYield(yieldAmount);
         
         uint256 initialBalance = usdr.balanceOf(alice);
@@ -279,9 +280,9 @@ contract EarnVaultTest is Test {
         vm.prank(alice);
         vault.deposit(depositAmount);
         
-        vm.prank(distributor);
+        vm.prank(yieldRedistributor);
         usdr.transfer(address(vault), yieldAmount);
-        vm.prank(distributor);
+        vm.prank(yieldRedistributor);
         vault.onYield(yieldAmount);
         
         uint256 initialRecipientBalance = usdr.balanceOf(recipient);
@@ -305,9 +306,9 @@ contract EarnVaultTest is Test {
         vault.deposit(depositAmount);
         
         // First yield distribution: 100 USDR
-        vm.prank(distributor);
+        vm.prank(yieldRedistributor);
         usdr.transfer(address(vault), 100e18);
-        vm.prank(distributor);
+        vm.prank(yieldRedistributor);
         vault.onYield(100e18);
         
         // Alice claims first yield
@@ -316,9 +317,9 @@ contract EarnVaultTest is Test {
         assertEq(vault.claimable(alice), 0, "Alice should have no claimable after first claim");
         
         // Second yield distribution: 50 USDR
-        vm.prank(distributor);
+        vm.prank(yieldRedistributor);
         usdr.transfer(address(vault), 50e18);
-        vm.prank(distributor);
+        vm.prank(yieldRedistributor);
         vault.onYield(50e18);
         
         // Alice should now have new claimable amount
@@ -343,9 +344,9 @@ contract EarnVaultTest is Test {
         vm.prank(alice);
         vault.deposit(depositAmount);
         
-        vm.prank(distributor);
+        vm.prank(yieldRedistributor);
         usdr.transfer(address(vault), yieldAmount);
-        vm.prank(distributor);
+        vm.prank(yieldRedistributor);
         vault.onYield(yieldAmount);
         
         uint256 initialBalance = usdr.balanceOf(alice);
@@ -375,9 +376,9 @@ contract EarnVaultTest is Test {
         vm.prank(alice);
         vault.deposit(depositAmount);
         
-        vm.prank(distributor);
+        vm.prank(yieldRedistributor);
         usdr.transfer(address(vault), yieldAmount);
-        vm.prank(distributor);
+        vm.prank(yieldRedistributor);
         vault.onYield(yieldAmount);
         
         uint256 initialBalance = usdr.balanceOf(alice);
@@ -404,9 +405,9 @@ contract EarnVaultTest is Test {
         vault.deposit(1000e18);
         
         // First yield: 100 USDR on 1000 principal
-        vm.prank(distributor);
+        vm.prank(yieldRedistributor);
         usdr.transfer(address(vault), 100e18);
-        vm.prank(distributor);
+        vm.prank(yieldRedistributor);
         vault.onYield(100e18);
         
         // Alice should have 100 USDR claimable
@@ -422,9 +423,9 @@ contract EarnVaultTest is Test {
         assertEq(vault.userIndex(alice), vault.globalIndex(), "Alice's index should be updated to current");
         
         // Second yield: 200 USDR on 2000 total principal
-        vm.prank(distributor);
+        vm.prank(yieldRedistributor);
         usdr.transfer(address(vault), 200e18);
-        vm.prank(distributor);
+        vm.prank(yieldRedistributor);
         vault.onYield(200e18);
         
         // Alice should have 100 (settled) + 200 (new) = 300 USDR claimable
@@ -438,9 +439,9 @@ contract EarnVaultTest is Test {
         vault.deposit(1000e18);
         
         // First yield: 100 USDR (Alice gets all)
-        vm.prank(distributor);
+        vm.prank(yieldRedistributor);
         usdr.transfer(address(vault), 100e18);
-        vm.prank(distributor);
+        vm.prank(yieldRedistributor);
         vault.onYield(100e18);
         
         assertEq(vault.claimable(alice), 100e18, "Alice should get all first yield");
@@ -450,9 +451,9 @@ contract EarnVaultTest is Test {
         vault.deposit(1000e18);
         
         // Second yield: 200 USDR (Alice and Bob should split 50/50)
-        vm.prank(distributor);
+        vm.prank(yieldRedistributor);
         usdr.transfer(address(vault), 200e18);
-        vm.prank(distributor);
+        vm.prank(yieldRedistributor);
         vault.onYield(200e18);
         
         assertEq(vault.claimable(alice), 200e18, "Alice: 100 (first) + 100 (half of second)");
@@ -470,7 +471,7 @@ contract EarnVaultTest is Test {
         
         // Try to withdraw more than deposited
         vm.prank(alice);
-        vm.expectRevert(EarnVault.InsufficientPrincipal.selector);
+        vm.expectRevert(IEarnVaultEventsAndErrors.InsufficientPrincipal.selector);
         vault.withdraw(1500e18);
     }
     
@@ -481,7 +482,7 @@ contract EarnVaultTest is Test {
         
         // Try to claim with no yield distributed
         vm.prank(alice);
-        vm.expectRevert(EarnVault.NothingToClaim.selector);
+        vm.expectRevert(IEarnVaultEventsAndErrors.NothingToClaim.selector);
         vault.claim();
     }
     
@@ -489,7 +490,7 @@ contract EarnVaultTest is Test {
     function test_ZeroAmountOperations() public {
         // Zero deposit should revert
         vm.prank(alice);
-        vm.expectRevert(EarnVault.ZeroAmount.selector);
+        vm.expectRevert(IEarnVaultEventsAndErrors.ZeroAmount.selector);
         vault.deposit(0);
         
         // Zero withdrawal should revert  
@@ -497,11 +498,11 @@ contract EarnVaultTest is Test {
         vault.deposit(1000e18);
         
         vm.prank(alice);
-        vm.expectRevert(EarnVault.ZeroAmount.selector);
+        vm.expectRevert(IEarnVaultEventsAndErrors.ZeroAmount.selector);
         vault.withdraw(0);
         
         // Zero yield should be handled gracefully (no revert)
-        vm.prank(distributor);
+        vm.prank(yieldRedistributor);
         vault.onYield(0); // Should not revert
     }
     
@@ -509,7 +510,7 @@ contract EarnVaultTest is Test {
     function test_UnauthorizedYieldCall() public {
         // Random user cannot call onYield
         vm.prank(alice);
-        vm.expectRevert(EarnVault.NotDistributor.selector);
+        vm.expectRevert(IEarnVaultEventsAndErrors.NotYieldRedistributor.selector);
         vault.onYield(100e18);
     }
     
@@ -527,9 +528,9 @@ contract EarnVaultTest is Test {
         assertEq(vault.claimable(alice), 0, "Initially no claimable");
         
         // Distribute yield
-        vm.prank(distributor);
+        vm.prank(yieldRedistributor);
         usdr.transfer(address(vault), 100e18);
-        vm.prank(distributor);
+        vm.prank(yieldRedistributor);
         vault.onYield(100e18);
         
         // Check claimable before settlement
@@ -599,14 +600,10 @@ contract EarnVaultTest is Test {
     
     /// @notice Test blacklist functionality
     function test_BlacklistFunctionality() public {
-        // Initially blacklist is disabled - everyone can deposit
+        // Initially no one is blacklisted - everyone can deposit
         vm.prank(alice);
         vault.deposit(1000e18);
-        assertEq(vault.principal(alice), 1000e18, "Alice should be able to deposit when blacklist disabled");
-        
-        // Owner enables blacklist mode
-        vm.prank(owner);
-        vault.setBlacklistMode(true);
+        assertEq(vault.principal(alice), 1000e18, "Alice should be able to deposit when not blacklisted");
         
         // Blacklist Bob
         vm.prank(owner);
@@ -614,7 +611,7 @@ contract EarnVaultTest is Test {
         
         // Bob should be blocked from depositing
         vm.prank(bob);
-        vm.expectRevert(EarnVault.AddressBlacklisted.selector);
+        vm.expectRevert(IEarnVaultEventsAndErrors.AddressBlacklisted.selector);
         vault.deposit(1000e18);
         
         // Alice (not blacklisted) should still be able to deposit
@@ -634,11 +631,6 @@ contract EarnVaultTest is Test {
     
     /// @notice Test only owner can manage blacklist
     function test_OnlyOwnerCanManageBlacklist() public {
-        // Non-owner cannot enable blacklist
-        vm.prank(alice);
-        vm.expectRevert();
-        vault.setBlacklistMode(true);
-        
         // Non-owner cannot blacklist addresses
         vm.prank(alice);
         vm.expectRevert();
@@ -647,38 +639,36 @@ contract EarnVaultTest is Test {
     
     /// @notice Test blacklist blocks depositWithPermit as well
     function test_BlacklistBlocksDepositWithPermit() public {
-        // Enable blacklist and blacklist Alice
-        vm.prank(owner);
-        vault.setBlacklistMode(true);
+        // Blacklist Alice
         vm.prank(owner);
         vault.setBlacklisted(alice, true);
         
         // Alice cannot use depositWithPermit when blacklisted
         vm.prank(alice);
-        vm.expectRevert(EarnVault.AddressBlacklisted.selector);
+        vm.expectRevert(IEarnVaultEventsAndErrors.AddressBlacklisted.selector);
         vault.depositWithPermit(1000e18, block.timestamp + 1 hours, 0, bytes32(0), bytes32(0));
     }
     
-    /// @notice Test distributor role management
+    /// @notice Test yield redistributor role management
     function test_DistributorManagement() public {
         address newDistributor = makeAddr("newDistributor");
         
-        // Only owner can change distributor
+        // Only owner can change yield redistributor
         vm.prank(alice);
         vm.expectRevert();
-        vault.setDistributor(newDistributor);
+        vault.setYieldRedistributor(newDistributor);
         
         // Owner can change distributor
         vm.prank(owner);
-        vault.setDistributor(newDistributor);
-        assertEq(vault.distributor(), newDistributor, "Distributor should be updated");
+        vault.setYieldRedistributor(newDistributor);
+        assertEq(vault.yieldRedistributor(), newDistributor, "YieldRedistributor should be updated");
         
-        // Old distributor should no longer work
-        vm.prank(distributor);
-        vm.expectRevert(EarnVault.NotDistributor.selector);
+        // Old yield redistributor should no longer work
+        vm.prank(yieldRedistributor);
+        vm.expectRevert(IEarnVaultEventsAndErrors.NotYieldRedistributor.selector);
         vault.onYield(100e18);
         
-        // New distributor should work
+        // New yield redistributor should work
         usdr.mint(newDistributor, 1000e18);
         vm.prank(newDistributor);
         usdr.approve(address(vault), type(uint256).max);
@@ -708,9 +698,9 @@ contract EarnVaultTest is Test {
         assertEq(vault.totalPrincipal(), 3000e18, "Total principal should be 3000");
         
         // === Phase 2: First yield distribution ===
-        vm.prank(distributor);
+        vm.prank(yieldRedistributor);
         usdr.transfer(address(vault), 300e18);
-        vm.prank(distributor);
+        vm.prank(yieldRedistributor);
         vault.onYield(300e18);
         
         // Alice should get 1/3, Bob should get 2/3
@@ -731,9 +721,9 @@ contract EarnVaultTest is Test {
         assertEq(vault.totalPrincipal(), 6000e18, "Total should be 6000 after Charlie joins");
         
         // === Phase 5: Second yield distribution ===
-        vm.prank(distributor);
+        vm.prank(yieldRedistributor);
         usdr.transfer(address(vault), 600e18);
-        vm.prank(distributor);
+        vm.prank(yieldRedistributor);
         vault.onYield(600e18);
         
         // Distribution: Alice 1000/6000, Bob 2000/6000, Charlie 3000/6000

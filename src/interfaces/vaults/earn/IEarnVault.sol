@@ -20,6 +20,7 @@ interface IEarnVault {
         uint256 vaultClaimReserve,
         uint256 vaultParkedYield,
         uint256 vaultGlobalIndex,
+        uint256 vaultPendingDelta,
         uint256 vaultBalance
     );
 
@@ -40,11 +41,15 @@ interface IEarnVault {
     /// @param to        Receiver of the claimed USDR.
     function claimTo(address to) external;
 
-    // ---- splitter / redistributor hook ----
+    // ---- yield redistributor hook ----
     /// @notice MUST be called AFTER transferring `amount` of USDR to the vault.
-    /// Access-controlled (distributor/owner).
+    /// Access-controlled (yieldRedistributor only).
     function onYield(uint256 amount) external;
 
     /// @notice Applies previously parked yield once deposits exist (optional but useful).
+    /// Access-controlled (yieldRedistributor only).
     function applyParkedYield() external;
+    
+    /// @notice Sweep excess USDR yield to treasury (when vault has surplus above reserves)
+    function sweepSurplusToTreasury() external;
 }
