@@ -379,6 +379,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     // =========================
 
     /// @dev Settles user's accrued yield based on globalIndex difference
+    /// @dev Must ALWAYS be called before modifying principal[user] or accrued[user]
     /// @dev For first-time users, sets userIndex to current globalIndex to prevent over-allocation
     /// @param user Address to settle
     function _settle(address user) internal {

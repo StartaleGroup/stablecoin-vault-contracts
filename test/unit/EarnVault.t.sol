@@ -628,6 +628,127 @@ contract EarnVaultTest is Test {
         assertFalse(vault.paused(), "New pauser should be able to unpause");
     }
     
+    /// @notice Test treasury management
+    function test_TreasuryManagement() public {
+        // Only owner can set treasury
+        vm.prank(alice);
+        vm.expectRevert();
+        vault.setTreasury(alice);
+        
+        // Owner can set new treasury
+        address newTreasury = makeAddr("newTreasury");
+        vm.prank(owner);
+        vault.setTreasury(newTreasury);
+        assertEq(vault.treasury(), newTreasury, "Treasury should be updated");
+    }
+    
+    /// @notice Test sweep surplus to treasury functionality
+    function test_SweepSurplusToTreasury() public {
+        uint256 depositAmount = 1000e18;
+        uint256 yieldAmount = 100e18;
+        
+        // Setup: Alice deposits, yield is distributed, creating surplus
+        vm.prank(alice);
+        vault.deposit(depositAmount);
+        
+        vm.prank(yieldRedistributor);
+        usdr.transfer(address(vault), yieldAmount);
+        vm.prank(yieldRedistributor);
+        vault.onYield(yieldAmount);
+        
+        // Create additional surplus by sending extra USDR
+        uint256 extraAmount = 50e18;
+        usdr.mint(address(vault), extraAmount);
+        
+        uint256 initialTreasuryBalance = usdr.balanceOf(treasury);
+        uint256 vaultBalance = usdr.balanceOf(address(vault));
+        uint256 expectedSurplus = vaultBalance - vault.claimReserve() - vault.parkedYield();
+        
+        // Cannot sweep when not paused
+        vm.prank(owner);
+        vm.expectRevert(IEarnVaultEventsAndErrors.ContractNotPaused.selector);
+        vault.sweepSurplusToTreasury();
+        
+        // Pause and sweep surplus to treasury
+        vm.prank(owner);
+        vault.pause();
+        
+        vm.prank(owner);
+        vault.sweepSurplusToTreasury();
+        
+        // Verify surplus went to treasury
+        assertEq(usdr.balanceOf(treasury), initialTreasuryBalance + expectedSurplus, "Treasury should receive surplus");
+        assertEq(usdr.balanceOf(address(vault)), vault.claimReserve() + vault.parkedYield(), "Vault should keep only required reserves");
+    }
+    
+    /// @notice Test emergency sweep to treasury
+    function test_EmergencySweepToTreasury() public {
+        uint256 depositAmount = 1000e18;
+        
+        // Setup: Alice deposits
+        vm.prank(alice);
+        vault.deposit(depositAmount);
+        
+        // Create surplus by minting extra USDR to vault
+        uint256 extraAmount = 100e18;
+        usdr.mint(address(vault), extraAmount);
+        
+        uint256 initialTreasuryBalance = usdr.balanceOf(treasury);
+        
+        // Pause vault for emergency sweep
+        vm.prank(owner);
+        vault.pause();
+        
+        // Owner can emergency sweep surplus to treasury
+        vm.prank(owner);
+        vault.emergencySweep(address(usdr), treasury, extraAmount);
+        
+        // Verify treasury received the swept amount
+        assertEq(usdr.balanceOf(treasury), initialTreasuryBalance + extraAmount, "Treasury should receive swept amount");
+    }
+    
+    /// @notice Test role access control comprehensively
+    function test_RoleAccessControl() public {
+        // Test yield redistributor access
+        vm.prank(alice); // Not yield redistributor
+        vm.expectRevert(IEarnVaultEventsAndErrors.NotYieldRedistributor.selector);
+        vault.onYield(100e18);
+        
+        vm.prank(alice); // Not yield redistributor
+        vm.expectRevert(IEarnVaultEventsAndErrors.NotYieldRedistributor.selector);
+        vault.applyParkedYield();
+        
+        // Test pauser access
+        vm.prank(alice); // Not pauser or owner
+        vm.expectRevert(IEarnVaultEventsAndErrors.NotAuthorizedToPause.selector);
+        vault.pause();
+        
+        // Test owner-only functions
+        vm.prank(alice); // Not owner
+        vm.expectRevert();
+        vault.setYieldRedistributor(alice);
+        
+        vm.prank(alice); // Not owner
+        vm.expectRevert();
+        vault.setTreasury(alice);
+        
+        vm.prank(alice); // Not owner
+        vm.expectRevert();
+        vault.setPauser(alice);
+        
+        vm.prank(alice); // Not owner
+        vm.expectRevert();
+        vault.setBlacklisted(alice, true);
+        
+        vm.prank(alice); // Not owner
+        vm.expectRevert();
+        vault.emergencySweep(address(usdr), alice, 100e18);
+        
+        vm.prank(alice); // Not owner
+        vm.expectRevert();
+        vault.sweepSurplusToTreasury();
+    }
+    
     /// @notice Test blacklist functionality
     function test_BlacklistFunctionality() public {
         // Initially no one is blacklisted - everyone can deposit
