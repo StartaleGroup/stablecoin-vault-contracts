@@ -36,13 +36,14 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     // -------- Roles / endpoints --------
     address public yieldRedistributor;   // allowed to call onYield/applyParkedYield
     address public treasury;             // sink for admin sweeps (currently unused)
+    address public pauser;               // allowed to pause/unpause the contract
 
     // -------- Optional blacklist --------
     mapping(address => bool) public isBlacklisted;
 
     // -------- Vault accounting --------
     uint256 public totalPrincipal;       // sum of user principals
-    uint256 public globalIndex = 1e27;   // global index (scaled 1e27 - RAY precision)
+    uint256 public globalIndex = RAY;    // global index (scaled 1e27 - RAY precision)
     uint256 public parkedYield;          // yield received while totalPrincipal==0 (deferred)
     uint256 public claimReserve;         // assets available to pay claims/withdraws
     uint256 public pendingDelta;         // accumulated small deltas not yet applied to globalIndex
@@ -54,15 +55,15 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     // -------- Events and Errors --------
     // All events and errors are inherited from IEarnVaultEventsAndErrors interface
 
-    constructor(address usdr, address owner, address yieldRedistributorAddr, address treasuryAddr) 
+    constructor(address usdr, address owner, address yieldRedistributorAddr, address treasuryAddr, address pauserAddr) 
         Ownable(owner) {
         if (usdr == address(0) || owner == address(0)) revert CanNotBeZeroAddress();
         if (yieldRedistributorAddr == address(0) || treasuryAddr == address(0)) revert CanNotBeZeroAddress();
+        if (pauserAddr == address(0)) revert CanNotBeZeroAddress();
         USDR = IERC20(usdr);
         yieldRedistributor = yieldRedistributorAddr;
         treasury = treasuryAddr;
-        emit YieldRedistributorChanged(msg.sender, address(0), yieldRedistributorAddr);
-        emit TreasuryChanged(msg.sender, address(0), treasuryAddr);
+        pauser = pauserAddr;
     }
 
     // =========================
@@ -87,6 +88,15 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
         emit TreasuryChanged(msg.sender, oldTreasury, who);
     }
 
+    /// @notice Set the pauser address
+    /// @param who New pauser address
+    function setPauser(address who) external onlyOwner {
+        if (who == address(0)) revert CanNotBeZeroAddress();
+        address oldPauser = pauser;
+        pauser = who;
+        emit PauserChanged(msg.sender, oldPauser, who);
+    }
+
     /// @notice Set blacklist status for an address
     /// @param who Address to update blacklist status for
     /// @param blacklisted Whether address should be blacklisted
@@ -96,8 +106,19 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
         emit BlacklistStatusChanged(msg.sender, who, oldStatus, blacklisted);
     }
 
-    function pause() external onlyOwner { _pause(); }
-    function unpause() external onlyOwner { _unpause(); }
+    /// @notice Pause the contract (emergency stop)
+    /// @dev Can be called by owner or designated pauser
+    function pause() external {
+        if (msg.sender != owner() && msg.sender != pauser) revert NotAuthorizedToPause();
+        _pause();
+    }
+
+    /// @notice Unpause the contract
+    /// @dev Can be called by owner or designated pauser  
+    function unpause() external {
+        if (msg.sender != owner() && msg.sender != pauser) revert NotAuthorizedToPause();
+        _unpause();
+    }
 
     // =========================
     // Views
@@ -208,7 +229,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
 
     /// @notice Deposit USDR tokens using permit (gasless approval)
     /// @dev Same as deposit() but uses permit for approval in same transaction
-    /// @dev WARNING: Assumes USDR token implements IERC20Permit interface
+    /// @dev Safely handles tokens that may not implement IERC20Permit
     /// @param amount Amount of USDR tokens to deposit
     /// @param deadline Permit deadline timestamp
     /// @param v Permit signature parameter v
@@ -222,7 +243,12 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
         _checkNotBlacklisted(msg.sender);
         if (amount == 0) revert ZeroAmount();
 
-        IERC20Permit(address(USDR)).permit(msg.sender, address(this), amount, deadline, v, r, s);
+        // Safely attempt permit - revert with clear error if not supported
+        try IERC20Permit(address(USDR)).permit(msg.sender, address(this), amount, deadline, v, r, s) {
+            // Permit succeeded, continue with deposit
+        } catch {
+            revert PermitFailed();
+        }
 
         _settle(msg.sender);
         
@@ -285,23 +311,6 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
         accrued[msg.sender] = 0;
         claimReserve -= amt;
         USDR.safeTransfer(msg.sender, amt);
-        emit InterestClaimed(msg.sender, amt);
-    }
-
-    /// @notice Claim all accrued interest to specified address
-    /// @dev Useful for claiming to different address (e.g., cold wallet)
-    /// @param to Address to receive the claimed interest
-    function claimTo(address to) external whenNotPaused nonReentrant {
-        _checkNotBlacklisted(msg.sender);
-        if (to == address(0)) revert CanNotBeZeroAddress();
-        _settle(msg.sender);
-        uint256 amt = accrued[msg.sender];
-        if (amt == 0) revert NothingToClaim();
-        if (claimReserve < amt) revert InsufficientFunding();
-        
-        accrued[msg.sender] = 0;
-        claimReserve -= amt;
-        USDR.safeTransfer(to, amt);
         emit InterestClaimed(msg.sender, amt);
     }
 
@@ -370,7 +379,6 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     // =========================
 
     /// @dev Settles user's accrued yield based on globalIndex difference
-    /// @dev CRITICAL: Must ALWAYS be called before modifying principal[user] or accrued[user]
     /// @dev For first-time users, sets userIndex to current globalIndex to prevent over-allocation
     /// @param user Address to settle
     function _settle(address user) internal {

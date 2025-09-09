@@ -14,6 +14,7 @@ contract EarnVaultTest is Test {
     address public owner = makeAddr("owner");
     address public yieldRedistributor = makeAddr("yieldRedistributor");
     address public treasury = makeAddr("treasury");
+    address public pauser = makeAddr("pauser");
     address public alice = makeAddr("alice");
     address public bob = makeAddr("bob");
     address public charlie = makeAddr("charlie");
@@ -32,7 +33,7 @@ contract EarnVaultTest is Test {
         
         // Deploy EarnVault with proper parameters
         vm.prank(owner);
-        vault = new EarnVault(address(usdr), owner, yieldRedistributor, treasury);
+        vault = new EarnVault(address(usdr), owner, yieldRedistributor, treasury, pauser);
         
         // Mint USDR to test users
         usdr.mint(alice, INITIAL_SUPPLY);
@@ -268,33 +269,6 @@ contract EarnVaultTest is Test {
         assertEq(vault.claimable(alice), 0, "Alice should have no more claimable");
         assertEq(usdr.balanceOf(alice), initialBalance + claimableAmount, "Alice should receive claimed amount");
         assertEq(vault.claimReserve(), depositAmount, "Claim reserve should decrease by claimed amount");
-    }
-    
-    /// @notice Test claimTo functionality (claiming to different address)
-    function test_ClaimTo() public {
-        uint256 depositAmount = 1000e18;
-        uint256 yieldAmount = 100e18;
-        address recipient = makeAddr("recipient");
-        
-        // Setup: Alice deposits and yield is distributed
-        vm.prank(alice);
-        vault.deposit(depositAmount);
-        
-        vm.prank(yieldRedistributor);
-        usdr.transfer(address(vault), yieldAmount);
-        vm.prank(yieldRedistributor);
-        vault.onYield(yieldAmount);
-        
-        uint256 initialRecipientBalance = usdr.balanceOf(recipient);
-        uint256 claimableAmount = vault.claimable(alice);
-        
-        // Alice claims to recipient
-        vm.prank(alice);
-        vault.claimTo(recipient);
-        
-        // Verify claim went to recipient
-        assertEq(vault.accrued(alice), 0, "Alice's accrued should be reset");
-        assertEq(usdr.balanceOf(recipient), initialRecipientBalance + claimableAmount, "Recipient should receive yield");
     }
     
     /// @notice Test multiple claims over time
@@ -591,11 +565,67 @@ contract EarnVaultTest is Test {
         assertEq(vault.principal(alice), 1000e18, "Deposit should work after unpause");
     }
     
-    /// @notice Test only owner can pause
-    function test_OnlyOwnerCanPause() public {
+    /// @notice Test pause access control
+    function test_PauseAccessControl() public {
+        // Owner can pause
+        vm.prank(owner);
+        vault.pause();
+        assertTrue(vault.paused(), "Owner should be able to pause");
+        
+        // Unpause for next test
+        vm.prank(owner);
+        vault.unpause();
+        
+        // Pauser can pause
+        vm.prank(pauser);
+        vault.pause();
+        assertTrue(vault.paused(), "Pauser should be able to pause");
+        
+        // Pauser can unpause
+        vm.prank(pauser);
+        vault.unpause();
+        assertFalse(vault.paused(), "Pauser should be able to unpause");
+        
+        // Non-authorized user cannot pause
+        vm.prank(alice);
+        vm.expectRevert(IEarnVaultEventsAndErrors.NotAuthorizedToPause.selector);
+        vault.pause();
+        
+        // Non-authorized user cannot unpause  
+        vm.prank(owner);
+        vault.pause(); // Pause first
+        
+        vm.prank(alice);
+        vm.expectRevert(IEarnVaultEventsAndErrors.NotAuthorizedToPause.selector);
+        vault.unpause();
+    }
+    
+    /// @notice Test pauser management
+    function test_PauserManagement() public {
+        // Only owner can set pauser
         vm.prank(alice);
         vm.expectRevert();
+        vault.setPauser(alice);
+        
+        // Owner can set new pauser
+        vm.prank(owner);
+        vault.setPauser(alice);
+        assertEq(vault.pauser(), alice, "Pauser should be updated");
+        
+        // New pauser can pause
+        vm.prank(alice);
         vault.pause();
+        assertTrue(vault.paused(), "New pauser should be able to pause");
+        
+        // Old pauser cannot pause anymore
+        vm.prank(pauser);
+        vm.expectRevert(IEarnVaultEventsAndErrors.NotAuthorizedToPause.selector);
+        vault.unpause();
+        
+        // New pauser can unpause
+        vm.prank(alice);
+        vault.unpause();
+        assertFalse(vault.paused(), "New pauser should be able to unpause");
     }
     
     /// @notice Test blacklist functionality
@@ -646,6 +676,14 @@ contract EarnVaultTest is Test {
         // Alice cannot use depositWithPermit when blacklisted
         vm.prank(alice);
         vm.expectRevert(IEarnVaultEventsAndErrors.AddressBlacklisted.selector);
+        vault.depositWithPermit(1000e18, block.timestamp + 1 hours, 0, bytes32(0), bytes32(0));
+    }
+    
+    /// @notice Test depositWithPermit handles non-permit tokens gracefully
+    function test_DepositWithPermitFailure() public {
+        // Our MockERC20 doesn't implement permit, so this should fail gracefully
+        vm.prank(alice);
+        vm.expectRevert(IEarnVaultEventsAndErrors.PermitFailed.selector);
         vault.depositWithPermit(1000e18, block.timestamp + 1 hours, 0, bytes32(0), bytes32(0));
     }
     

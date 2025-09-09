@@ -36,10 +36,6 @@ interface IEarnVault {
 
     /// @notice Claim all accrued USDR interest to msg.sender
     function claim() external;
-    
-    /// @notice Claim all accrued USDR interest to specified address
-    /// @param to        Receiver of the claimed USDR.
-    function claimTo(address to) external;
 
     // ---- yield redistributor hook ----
     /// @notice MUST be called AFTER transferring `amount` of USDR to the vault.
@@ -52,4 +48,7 @@ interface IEarnVault {
     
     /// @notice Sweep excess USDR yield to treasury (when vault has surplus above reserves)
     function sweepSurplusToTreasury() external;
+    
+    /// @notice Set the pauser address (owner only)
+    function setPauser(address who) external;
 }

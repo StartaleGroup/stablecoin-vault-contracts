@@ -30,6 +30,16 @@ interface IEarnVaultEventsAndErrors {
         address indexed newTreasury
     );
     
+    /// @notice Emitted when pauser address is changed
+    /// @param actor Address that initiated the change (msg.sender)
+    /// @param oldPauser Previous pauser address
+    /// @param newPauser New pauser address
+    event PauserChanged(
+        address indexed actor, 
+        address indexed oldPauser, 
+        address indexed newPauser
+    );
+    
     /// @notice Emitted when an address blacklist status is changed
     /// @param actor Address that initiated the change (msg.sender)
     /// @param user Address whose blacklist status was changed
@@ -51,12 +61,6 @@ interface IEarnVaultEventsAndErrors {
     /// @param user Address that made the withdrawal
     /// @param amount Amount of principal withdrawn
     event Withdraw(address indexed user, uint256 amount);
-    
-    /// @notice Emitted when a user claims interest (legacy event for compatibility)
-    /// @param user Address that claimed interest
-    /// @param to Address that received the interest
-    /// @param amount Amount of interest claimed
-    event Claim(address indexed user, address indexed to, uint256 amount);
 
     /// @notice Emitted when yield is distributed and indexed to users
     /// @param amount Amount of yield distributed
@@ -91,6 +95,12 @@ interface IEarnVaultEventsAndErrors {
     
     /// @notice Thrown when caller is not the authorized yield redistributor
     error NotYieldRedistributor();
+    
+    /// @notice Thrown when caller is not authorized to pause/unpause the contract
+    error NotAuthorizedToPause();
+    
+    /// @notice Thrown when permit operation fails (token may not support IERC20Permit)
+    error PermitFailed();
     
     /// @notice Thrown when attempting to interact with a blacklisted address
     error AddressBlacklisted();
