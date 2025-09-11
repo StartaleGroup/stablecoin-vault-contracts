@@ -1,4 +1,4 @@
-# Two-vault yield system (USDx asset) [ DRAFT ]
+# Two-vault yield system (USDR asset) [ DRAFT ]
 
 Components:
 - ClaimVault (checkbox OFF): principal ledger + globalIndex; users deposit/withdraw 1:1 principal and claim interest; funds held in contract; ClaimVault.onYield(amount) indexes yield and increments claimReserve.

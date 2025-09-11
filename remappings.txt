@@ -4,3 +4,4 @@ forge-std/=lib/forge-std/src/
 solady/=lib/solady/src/
 m-extensions/=lib/evm-m-extensions/src/
 m-extensions-test/=lib/evm-m-extensions/test/
+erc4626-tests/=lib/erc4626-tests/

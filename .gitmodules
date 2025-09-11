@@ -26,3 +26,6 @@
 	path = lib/evm-m-extensions
 	url = https://github.com/m0-foundation/evm-m-extensions.git
 	branch = linea-deployment
+[submodule "lib/erc4626-tests"]
+	path = lib/erc4626-tests
+	url = https://github.com/a16z/erc4626-tests
