@@ -55,6 +55,6 @@ contract SUSDRVault is ERC20, ERC4626, AccessControl, Pausable, ReentrancyGuard 
 
   // Override function that exists in multiple base contracts
   function decimals() public view override(ERC20, ERC4626) returns (uint8) {
-    return ERC4626.decimals();
+    return super.decimals();
   }
 }
