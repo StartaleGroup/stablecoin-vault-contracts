@@ -34,3 +34,7 @@ broadcast/
 
 # Deployments
 deployments/
+
+# submodules that cause CI issues
+lib/common/
+lib/m-portal/
