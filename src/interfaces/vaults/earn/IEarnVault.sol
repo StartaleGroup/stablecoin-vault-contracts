@@ -18,7 +18,6 @@ interface IEarnVault {
     function getVaultStats() external view returns (
         uint256 vaultTotalPrincipal,
         uint256 vaultClaimReserve,
-        uint256 vaultParkedYield,
         uint256 vaultGlobalIndex,
         uint256 vaultPendingDelta,
         uint256 vaultBalance
@@ -42,9 +41,6 @@ interface IEarnVault {
     /// Access-controlled (yieldRedistributor only).
     function onYield(uint256 amount) external;
 
-    /// @notice Applies previously parked yield once deposits exist (optional but useful).
-    /// Access-controlled (yieldRedistributor only).
-    function applyParkedYield() external;
     
     /// @notice Sweep excess USDR yield to treasury (when vault has surplus above reserves)
     function sweepSurplusToTreasury() external;

@@ -73,10 +73,11 @@ interface IEarnVaultEventsAndErrors {
     /// @param totalParked Total amount of parked yield after this addition
     event YieldParked(uint256 amount, uint256 totalParked);
     
-    /// @notice Emitted when previously parked yield is applied to users
-    /// @param amountApplied Amount of parked yield that was applied
+    /// @notice Emitted when previously parked yield is transferred to treasury
+    /// @param amountApplied Amount of parked yield that was transferred
     /// @param remainingParked Amount of parked yield remaining (should be 0)
-    event ParkedYieldApplied(uint256 amountApplied, uint256 remainingParked);
+    /// @param treasury Address that received the parked yield
+    event ParkedYieldApplied(uint256 amountApplied, uint256 remainingParked, address indexed treasury);
     
     /// @notice Emitted when a user claims accrued interest
     /// @param user Address that claimed interest

@@ -11,7 +11,7 @@ Users deposit USDR tokens and earn claimable yield over time. Users maintain ful
 - **Auto-Claim on Full Withdrawal**: Complete withdrawals automatically claim all interest
 - **Proportional Distribution**: Yield distributed based on deposit amounts
 - **RAY Precision**: 1e27 precision for zero yield loss (MakerDAO standard)
-- **Fair Parked Yield**: Auto-transfers parked yield to treasury (no first-depositor advantage)
+- **Direct Treasury Transfer**: Yield goes directly to treasury when no deposits exist
 - **Role-Based Access Control**: Separate roles for different operations
 - **Blacklist Support**: Simple compliance controls
 - **Enhanced Security**: Overflow protection, reentrancy guards, pause mechanism
@@ -36,7 +36,6 @@ getUserInfo(address user) → (uint256 principal, uint256 claimable, uint256 tot
 ```solidity
 // Yield distribution (yieldRedistributor only)
 onYield(uint256 amount)                    // Distribute yield
-applyParkedYield()                         // Transfer previously parked yield to treasury
 
 // Access control (owner only)
 setYieldRedistributor(address who)         // Update yield redistributor
@@ -52,7 +51,7 @@ sweepSurplusToTreasury()                  // Sweep excess funds to treasury
 emergencySweep(address token, address to, uint256 amount)  // Emergency token recovery
 
 // Vault statistics
-getVaultStats() → (uint256 totalPrincipal, uint256 claimReserve, uint256 parkedYield, uint256 globalIndex, uint256 pendingDelta, uint256 balance)
+getVaultStats() → (uint256 totalPrincipal, uint256 claimReserve, uint256 globalIndex, uint256 pendingDelta, uint256 balance)
 ```
 
 ## How It Works
@@ -70,15 +69,14 @@ Small yield amounts are accumulated to prevent precision loss:
 - **Solution**: `pendingDelta` accumulates small deltas until `>= 1e18` threshold
 - **Result**: No yield is ever lost, even with tiny distributions
 
-### Fair Parked Yield Handling
+### Direct Treasury Transfer
 When yield arrives with no deposits (`totalPrincipal = 0`):
-- Yield is "parked" until deposits exist
-- **Automatically transferred to treasury** when next yield arrives (after deposits exist)
-- Ensures fair treatment - no first-depositor advantage
+- Yield is **transferred directly to treasury** immediately
+- Treasury take all the yield of free floating USDR
 
 ### Role-Based Security
 - **Owner**: Full administrative control, emergency functions
-- **YieldRedistributor**: Can distribute yield, transfer parked yield to treasury
+- **YieldRedistributor**: Can distribute yield to vault users
 - **Pauser**: Can pause/unpause for emergency response
 - **Treasury**: Receives swept surplus funds
 
@@ -137,35 +135,24 @@ vault.withdraw(1000e18);
 // Result: Alice receives 1050 USDR (1000 + 50)
 ```
 
-### Example 4: Fair Parked Yield Handling
+### Example 4: Direct Treasury Transfer
 ```solidity
 // Yield arrives when no one has deposited
-vault.onYield(500e18);    // Yield gets parked
-vault.parkedYield();      // Returns 500e18
-
-// Later, Alice deposits (parked yield stays parked)
-vault.deposit(1000e18);   
-vault.parkedYield();      // Still 500e18 (not applied on deposit)
-
-// When next yield arrives, parked yield gets transferred to treasury
 uint256 initialTreasuryBalance = usdr.balanceOf(treasury);
-vault.onYield(200e18);    // Applies parked yield to treasury, then processes new yield
-vault.parkedYield();      // Returns 0 (parked yield transferred to treasury)
+vault.onYield(500e18);    // Yield goes directly to treasury
+
+// Treasury receives the yield immediately
+usdr.balanceOf(treasury); // Returns initialTreasuryBalance + 500e18
+
+// Later, Alice deposits
+vault.deposit(1000e18);   
+vault.claimable(alice);   // Returns 0 (no yield to claim yet)
+
+// When new yield arrives, it gets processed normally
+vault.onYield(200e18);    // Normal yield processing
 vault.claimable(alice);   // Returns 200e18 (Alice gets new yield)
-usdr.balanceOf(treasury); // Returns initialTreasuryBalance + 500e18 (treasury gets parked yield!)
-```
 
-### Example 5: Role Management
-```solidity
-// Owner sets up roles
-vault.setYieldRedistributor(distributorAddress);
-vault.setPauser(emergencyResponder);
-vault.setTreasury(treasuryAddress);
-
-// Emergency response
-pauser.pause();           // Emergency stop
-owner.sweepSurplusToTreasury();  // Move excess funds
-pauser.unpause();         // Resume operations
+// Simple and fair - no complex parking logic!
 ```
 
 ## Integration
@@ -191,19 +178,7 @@ uint256 deposited = vault.principal(user);          // Principal only
 bool blocked = vault.isBlacklisted(user);           // Blacklist status
 
 // Get vault statistics (including pendingDelta)
-(uint256 tvl, uint256 reserves, uint256 parked, uint256 index, uint256 pending, uint256 balance) = vault.getVaultStats();
-```
-
-### For Permit-Enabled Tokens
-```solidity
-// Gasless deposit (if USDR supports permit)
-try vault.depositWithPermit(amount, deadline, v, r, s) {
-    // Success - no prior approval needed
-} catch PermitFailed {
-    // Fallback to regular approval + deposit
-    usdr.approve(vault, amount);
-    vault.deposit(amount);
-}
+(uint256 tvl, uint256 reserves, uint256 index, uint256 pending, uint256 balance) = vault.getVaultStats();
 ```
 
 ## Error Conditions
@@ -227,6 +202,15 @@ try vault.depositWithPermit(amount, deadline, v, r, s) {
 - `EthNotAccepted()`: Contract doesn't accept ETH
 - `PermitFailed()`: Permit operation failed (token may not support it)
 
+## Events
+
+### Key Events
+- **`Deposit(address indexed user, uint256 amount)`**: User deposits USDR
+- **`Withdraw(address indexed user, uint256 amount)`**: User withdraws principal
+- **`InterestClaimed(address indexed user, uint256 amount)`**: User claims accrued interest
+- **`YieldIndexed(uint256 amount, uint256 newGlobalIndex, uint256 newClaimReserve)`**: Yield distributed to users
+- **`YieldParked(uint256 amount, uint256 totalParked)`**: Yield transferred to treasury when no deposits exist
+
 ## Technical Notes
 
 ### Gas Efficiency
@@ -238,7 +222,7 @@ try vault.depositWithPermit(amount, deadline, v, r, s) {
 - **RAY Precision**: 1e27 prevents rounding errors
 - **Math.mulDiv**: 512-bit intermediate precision prevents overflows
 - **Delta Accumulation**: No yield lost to rounding
-- **Funding Invariant**: `USDR.balance >= claimReserve + parkedYield`
+- **Funding Invariant**: `USDR.balance >= claimReserve`
 
 ### Compatibility
 - **ERC20**: Works with any standard ERC20 token
@@ -256,7 +240,7 @@ Owner (Full Control)
 
 YieldRedistributor (Yield Operations)
 ├── Distribute yield via onYield()
-└── Apply parked yield
+└── Transfer to treasury
 
 Pauser (Emergency Response)
 ├── Pause contract operations
@@ -278,4 +262,4 @@ constructor(
 )
 ```
 
-All addresses must be non-zero and carefully chosen for production deployment.
+All addresses will be non-zero and carefully chosen for production deployment.

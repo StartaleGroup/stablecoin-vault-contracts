@@ -218,71 +218,44 @@ contract EarnVaultTest is Test {
         assertEq(vault.claimable(alice) + vault.claimable(bob), yieldAmount, "Total claimable should equal yield");
     }
     
-    /// @notice Test yield distribution when no deposits exist (parking mechanism)
-    /// @dev Parked yield is applied to treasury when next onYield is called (not on deposit)
-    function test_YieldParkingWhenNoDeposits() public {
+    /// @notice Test yield distribution when no deposits exist (direct treasury transfer)
+    /// @dev Yield goes directly to treasury when no deposits exist (no parking)
+    function test_YieldWhenNoDeposits() public {
         uint256 yieldAmount = 500e18;
         
         // Send yield when no one has deposited (totalPrincipal = 0)
+        uint256 initialTreasuryBalance = usdr.balanceOf(treasury);
         vm.prank(yieldRedistributor);
         usdr.transfer(address(vault), yieldAmount);
         
         vm.prank(yieldRedistributor);
         vault.onYield(yieldAmount);
         
-        // Yield should be parked, not indexed
+        // Yield should go directly to treasury, not be parked
         assertEq(vault.globalIndex(), RAY, "Global index should remain unchanged");
-        assertEq(vault.parkedYield(), yieldAmount, "Yield should be added to parked yield");  // FIXED: Check parkedYield instead
-        assertEq(vault.claimReserve(), 0, "Claim reserve should remain 0 when yield is parked");  // FIXED: claimReserve stays 0
+        assertEq(vault.claimReserve(), 0, "Claim reserve should remain 0");
+        assertEq(usdr.balanceOf(treasury), initialTreasuryBalance + yieldAmount, "Treasury should receive yield directly");
         
-        // Now Alice deposits - parked yield stays parked until next onYield call
+        // Now Alice deposits - no parked yield to worry about
         vm.prank(alice);
         vault.deposit(1000e18);
         
-        // Parked yield should still be parked (not applied on deposit)
+        // Alice should have no claimable yield yet
         assertEq(vault.claimable(alice), 0, "Alice should have no claimable yield yet");
         assertEq(vault.claimReserve(), 1000e18, "Reserve should only include principal");
-        assertEq(vault.parkedYield(), yieldAmount, "Parked yield should still be parked");
         
-        // Now when more yield arrives, parked yield gets applied to treasury
-        uint256 initialTreasuryBalance = usdr.balanceOf(treasury);
+        // When new yield arrives, it gets processed normally
         uint256 newYieldAmount = 200e18;
-        
         vm.prank(yieldRedistributor);
         usdr.transfer(address(vault), newYieldAmount);
         
         vm.prank(yieldRedistributor);
         vault.onYield(newYieldAmount);
         
-        // Parked yield should now be transferred to treasury
-        assertEq(vault.parkedYield(), 0, "Parked yield should be transferred to treasury");
-        assertEq(usdr.balanceOf(treasury), initialTreasuryBalance + yieldAmount, "Treasury should receive parked yield");
+        // Alice should get the new yield
         assertEq(vault.claimable(alice), newYieldAmount, "Alice should get the new yield");
     }
 
-    /// @notice Test manual applyParkedYield also sends to treasury
-    function test_ManualApplyParkedYieldToTreasury() public {
-        uint256 yieldAmount = 300e18;
-
-        // Send yield when no one has deposited (totalPrincipal = 0)
-        vm.prank(yieldRedistributor);
-        usdr.transfer(address(vault), yieldAmount);
-
-        vm.prank(yieldRedistributor);
-        vault.onYield(yieldAmount);
-
-        // Yield should be parked
-        assertEq(vault.parkedYield(), yieldAmount, "Yield should be parked");
-
-        // Manually apply parked yield - should go to treasury
-        uint256 initialTreasuryBalance = usdr.balanceOf(treasury);
-        vm.prank(yieldRedistributor);
-        vault.applyParkedYield();
-
-        // Verify parked yield went to treasury
-        assertEq(vault.parkedYield(), 0, "Parked yield should be cleared");
-        assertEq(usdr.balanceOf(treasury), initialTreasuryBalance + yieldAmount, "Treasury should receive parked yield");
-    }
     
     // ========================================
     // Claim Functionality Tests  
@@ -710,7 +683,7 @@ contract EarnVaultTest is Test {
         
         uint256 initialTreasuryBalance = usdr.balanceOf(treasury);
         uint256 vaultBalance = usdr.balanceOf(address(vault));
-        uint256 expectedSurplus = vaultBalance - vault.claimReserve() - vault.parkedYield();
+        uint256 expectedSurplus = vaultBalance - vault.claimReserve();
         
         // Cannot sweep when not paused
         vm.prank(owner);
@@ -726,7 +699,7 @@ contract EarnVaultTest is Test {
         
         // Verify surplus went to treasury
         assertEq(usdr.balanceOf(treasury), initialTreasuryBalance + expectedSurplus, "Treasury should receive surplus");
-        assertEq(usdr.balanceOf(address(vault)), vault.claimReserve() + vault.parkedYield(), "Vault should keep only required reserves");
+        assertEq(usdr.balanceOf(address(vault)), vault.claimReserve(), "Vault should keep only required reserves");
     }
     
     /// @notice Test emergency sweep to treasury
@@ -762,9 +735,6 @@ contract EarnVaultTest is Test {
         vm.expectRevert(IEarnVaultEventsAndErrors.NotYieldRedistributor.selector);
         vault.onYield(100e18);
         
-        vm.prank(alice); // Not yield redistributor
-        vm.expectRevert(IEarnVaultEventsAndErrors.NotYieldRedistributor.selector);
-        vault.applyParkedYield();
         
         // Test pauser access
         vm.prank(alice); // Not pauser or owner

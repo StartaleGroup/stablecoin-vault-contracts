@@ -14,13 +14,13 @@ import {IEarnVaultEventsAndErrors} from "../../interfaces/vaults/earn/IEarnVault
 
 /// @title EarnVault (claimable yield)
 /// @notice Users deposit USDR, accrue claimable USDR via index accounting, and can claim/withdraw anytime.
-///         A distributor pushes yield: transfer USDR to this contract, then call onYieldReceived(amount).
+///         A distributor pushes yield: transfer USDR to this contract, then call onYield(amount).
 /// Accounting:
 ///   - globalIndex is in RAY (1e27) for precision.
 ///   - User state: principal, userIndex, accrued.
 ///   - When yield arrives and totalPrincipal>0: globalIndex += amount*RAY/totalPrincipal.
-///   - If totalPrincipal==0 at yield time: amount is parked and transferred to treasury when deposits exist.
-/// Invariant (funding): USDR balance >= claimReserve + parkedYield.
+///   - If totalPrincipal==0 at yield time: amount is transferred directly to treasury.
+/// Invariant (funding): USDR balance >= claimReserve.
 contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
@@ -34,8 +34,8 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     IERC20 public immutable USDR;
 
     // -------- Roles / endpoints --------
-    address public yieldRedistributor;   // allowed to call onYield/applyParkedYield
-    address public treasury;             // sink for admin sweeps (currently unused)
+    address public yieldRedistributor;   // allowed to call onYield
+    address public treasury;             // receives yield when no deposits exist, surplus sweeps
     address public pauser;               // allowed to pause/unpause the contract
 
     // -------- Optional blacklist --------
@@ -44,9 +44,8 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     // -------- Vault accounting --------
     uint256 public totalPrincipal;       // sum of user principals
     uint256 public globalIndex = RAY;    // global index (scaled 1e27 - RAY precision)
-    uint256 public parkedYield;          // yield received while totalPrincipal==0 (deferred)
     uint256 public claimReserve;         // assets available to pay claims/withdraws
-    uint256 public pendingDelta;         // accumulated small deltas not yet applied to globalIndex
+    uint256 public pendingDelta;         // accumulated small deltas to prevent precision loss from tiny yields
 
     mapping(address => uint256) public principal;
     mapping(address => uint256) public userIndex;
@@ -184,14 +183,12 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     function getVaultStats() external view returns (
         uint256 vaultTotalPrincipal,
         uint256 vaultClaimReserve,
-        uint256 vaultParkedYield,
         uint256 vaultGlobalIndex,
         uint256 vaultPendingDelta,
         uint256 vaultBalance
     ) {
         vaultTotalPrincipal = totalPrincipal;
         vaultClaimReserve = claimReserve;
-        vaultParkedYield = parkedYield;
         vaultGlobalIndex = globalIndex;
         vaultPendingDelta = pendingDelta;
         vaultBalance = USDR.balanceOf(address(this));
@@ -303,30 +300,34 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
 
     /// @notice Distribute yield to vault users (callable only by yield redistributor)
     /// @dev MUST be called AFTER transferring `amount` USDR to this contract
-    /// @dev Enforces funding invariant: USDR.balance >= claimReserve + parkedYield + amount
+    /// @dev Enforces funding invariant: USDR.balance >= claimReserve + amount
     /// @param amount Amount of USDR yield to distribute
     function onYield(uint256 amount) external whenNotPaused {
         if (msg.sender != yieldRedistributor) revert NotYieldRedistributor();
         if (amount == 0) return;
         
-        // Verify actual balance before updating accounting (moved up to avoid duplication)
+        // Verify actual balance before updating accounting
         uint256 bal = USDR.balanceOf(address(this));
-        if (bal < claimReserve + parkedYield + amount) revert InsufficientFunding();
+        if (totalPrincipal == 0) {
+            // When no deposits exist, just need enough for the transfer to treasury
+            if (bal < amount) revert InsufficientFunding();
+        } else {
+            // When deposits exist, need enough for claimReserve + new yield
+            if (bal < claimReserve + amount) revert InsufficientFunding();
+        }
         
         if (totalPrincipal == 0) {
-            // Park yield until deposits exist
-            parkedYield += amount;
-            emit YieldParked(amount, parkedYield);
+            // No deposits exist - transfer yield directly to treasury
+            USDR.safeTransfer(treasury, amount);
+            emit YieldParked(amount, 0); // Event for treasury transfer (not actually parking)
             return;
         }
         
-        // If we have parked yield and now have deposits, apply it first
-        if (parkedYield > 0) {
-            _applyParkedYieldInternal();
-        }
+        // No parked yield logic needed - yield goes directly to treasury when no deposits exist
         
         // Calculate and accumulate delta (prevents loss of small yields)
         uint256 delta = Math.mulDiv(amount, RAY, totalPrincipal);
+        if (pendingDelta + delta < pendingDelta) revert ArithmeticOverflow();
         pendingDelta += delta;
         
         // Apply pending delta only when it reaches meaningful threshold
@@ -342,18 +343,6 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
         emit YieldIndexed(amount, globalIndex, claimReserve);
     }
 
-    /// @notice Transfer previously parked yield to treasury
-    /// @dev Only callable by yield redistributor to maintain atomic operations
-    function applyParkedYield() external whenNotPaused {
-        if (msg.sender != yieldRedistributor) revert NotYieldRedistributor();
-        uint256 amt = parkedYield;
-        if (amt == 0) return;
-
-        // Transfer parked yield to treasury instead of distributing to users
-        parkedYield = 0;
-        USDR.safeTransfer(treasury, amt);
-        emit ParkedYieldApplied(amt, 0);
-    }
 
     // =========================
     // Internal helpers
@@ -380,20 +369,12 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
         }
     }
 
+    /// @dev Check if user is not blacklisted, revert if they are
+    /// @param user Address to check blacklist status for
     function _checkNotBlacklisted(address user) internal view {
         if (isBlacklisted[user]) revert AddressBlacklisted();
     }
 
-    /// @dev Internal helper to transfer parked yield to treasury - called automatically in deposit
-    function _applyParkedYieldInternal() internal {
-        uint256 amt = parkedYield;
-        if (amt == 0) return;
-        
-        // Transfer parked yield to treasury instead of distributing to users
-        parkedYield = 0;
-        USDR.safeTransfer(treasury, amt);
-        emit ParkedYieldApplied(amt, 0);
-    }
 
     // =========================
     // Emergency (owner)
@@ -407,7 +388,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
             if (!paused()) revert ContractNotPaused();
             // allow sweeping only true surplus
             uint256 bal = USDR.balanceOf(address(this));
-            uint256 minRequired = claimReserve + parkedYield;
+            uint256 minRequired = claimReserve;
             if (bal <= minRequired) revert InsufficientFunding();
             uint256 maxSweep = bal - minRequired;
             if (amount > maxSweep) revert ExceedsSurplus();
@@ -426,7 +407,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
         if (!paused()) revert ContractNotPaused();
         
         uint256 bal = USDR.balanceOf(address(this));
-        uint256 minRequired = claimReserve + parkedYield;
+        uint256 minRequired = claimReserve;
         
         if (bal <= minRequired) return; // No surplus to sweep
         
