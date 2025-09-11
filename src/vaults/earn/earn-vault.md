@@ -11,7 +11,7 @@ Users deposit USDR tokens and earn claimable yield over time. Users maintain ful
 - **Auto-Claim on Full Withdrawal**: Complete withdrawals automatically claim all interest
 - **Proportional Distribution**: Yield distributed based on deposit amounts
 - **RAY Precision**: 1e27 precision for zero yield loss (MakerDAO standard)
-- **Automatic Parked Yield**: Auto-applies parked yield on first deposit
+- **Fair Parked Yield**: Auto-transfers parked yield to treasury (no first-depositor advantage)
 - **Role-Based Access Control**: Separate roles for different operations
 - **Blacklist Support**: Simple compliance controls
 - **Enhanced Security**: Overflow protection, reentrancy guards, pause mechanism
@@ -36,7 +36,7 @@ getUserInfo(address user) → (uint256 principal, uint256 claimable, uint256 tot
 ```solidity
 // Yield distribution (yieldRedistributor only)
 onYield(uint256 amount)                    // Distribute yield
-applyParkedYield()                         // Apply previously parked yield
+applyParkedYield()                         // Transfer previously parked yield to treasury
 
 // Access control (owner only)
 setYieldRedistributor(address who)         // Update yield redistributor
@@ -70,15 +70,15 @@ Small yield amounts are accumulated to prevent precision loss:
 - **Solution**: `pendingDelta` accumulates small deltas until `>= 1e18` threshold
 - **Result**: No yield is ever lost, even with tiny distributions
 
-### Automatic Parked Yield Application
+### Fair Parked Yield Handling
 When yield arrives with no deposits (`totalPrincipal = 0`):
 - Yield is "parked" until deposits exist
-- **Automatically applied** when first user deposits
-- Prevents first depositor from getting unfair yield advantage
+- **Automatically transferred to treasury** when next yield arrives (after deposits exist)
+- Ensures fair treatment - no first-depositor advantage
 
 ### Role-Based Security
 - **Owner**: Full administrative control, emergency functions
-- **YieldRedistributor**: Can distribute yield, apply parked yield
+- **YieldRedistributor**: Can distribute yield, transfer parked yield to treasury
 - **Pauser**: Can pause/unpause for emergency response
 - **Treasury**: Receives swept surplus funds
 
@@ -137,15 +137,22 @@ vault.withdraw(1000e18);
 // Result: Alice receives 1050 USDR (1000 + 50)
 ```
 
-### Example 4: Automatic Parked Yield
+### Example 4: Fair Parked Yield Handling
 ```solidity
 // Yield arrives when no one has deposited
 vault.onYield(500e18);    // Yield gets parked
 vault.parkedYield();      // Returns 500e18
 
-// Later, Alice deposits (auto-applies parked yield)
+// Later, Alice deposits (parked yield stays parked)
 vault.deposit(1000e18);   
-vault.claimable(alice);   // Returns 500e18 (automatically gets parked yield!)
+vault.parkedYield();      // Still 500e18 (not applied on deposit)
+
+// When next yield arrives, parked yield gets transferred to treasury
+uint256 initialTreasuryBalance = usdr.balanceOf(treasury);
+vault.onYield(200e18);    // Applies parked yield to treasury, then processes new yield
+vault.parkedYield();      // Returns 0 (parked yield transferred to treasury)
+vault.claimable(alice);   // Returns 200e18 (Alice gets new yield)
+usdr.balanceOf(treasury); // Returns initialTreasuryBalance + 500e18 (treasury gets parked yield!)
 ```
 
 ### Example 5: Role Management

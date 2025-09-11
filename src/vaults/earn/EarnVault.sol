@@ -19,7 +19,7 @@ import {IEarnVaultEventsAndErrors} from "../../interfaces/vaults/earn/IEarnVault
 ///   - globalIndex is in RAY (1e27) for precision.
 ///   - User state: principal, userIndex, accrued.
 ///   - When yield arrives and totalPrincipal>0: globalIndex += amount*RAY/totalPrincipal.
-///   - If totalPrincipal==0 at yield time: amount is parked until deposits exist (applyParkedYield()).
+///   - If totalPrincipal==0 at yield time: amount is parked and transferred to treasury when deposits exist.
 /// Invariant (funding): USDR balance >= claimReserve + parkedYield.
 contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausable, ReentrancyGuard {
     using SafeERC20 for IERC20;
@@ -203,7 +203,6 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
 
     /// @notice Deposit USDR tokens to earn yield
     /// @dev Reserves principal 1:1 in claimReserve to ensure withdrawals are always possible
-    /// @dev Auto-applies parked yield if this is the first deposit after vault was empty
     /// @param amount Amount of USDR tokens to deposit
     function deposit(uint256 amount) external whenNotPaused nonReentrant {
         _checkNotBlacklisted(msg.sender);
@@ -211,18 +210,10 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
 
         _settle(msg.sender);
         
-        // Auto-apply parked yield when transitioning from 0 to non-zero deposits
-        bool wasEmpty = totalPrincipal == 0;
-        
         USDR.safeTransferFrom(msg.sender, address(this), amount);
         principal[msg.sender] += amount;
         totalPrincipal += amount;
         claimReserve += amount;  // reserve principal 1:1
-
-        // Apply parked yield after deposit (so totalPrincipal > 0)
-        if (wasEmpty && parkedYield > 0) {
-            _applyParkedYieldInternal();
-        }
 
         emit Deposit(msg.sender, amount);
     }
@@ -252,18 +243,10 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
 
         _settle(msg.sender);
         
-        // Auto-apply parked yield when transitioning from 0 to non-zero deposits
-        bool wasEmpty = totalPrincipal == 0;
-        
         USDR.safeTransferFrom(msg.sender, address(this), amount);
         principal[msg.sender] += amount;
         totalPrincipal += amount;
         claimReserve += amount;  // reserve principal 1:1
-
-        // Apply parked yield after deposit (so totalPrincipal > 0)
-        if (wasEmpty && parkedYield > 0) {
-            _applyParkedYieldInternal();
-        }
 
         emit Deposit(msg.sender, amount);
     }
@@ -337,6 +320,11 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
             return;
         }
         
+        // If we have parked yield and now have deposits, apply it first
+        if (parkedYield > 0) {
+            _applyParkedYieldInternal();
+        }
+        
         // Calculate and accumulate delta (prevents loss of small yields)
         uint256 delta = Math.mulDiv(amount, RAY, totalPrincipal);
         pendingDelta += delta;
@@ -354,23 +342,16 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
         emit YieldIndexed(amount, globalIndex, claimReserve);
     }
 
-    /// @notice Apply previously parked yield once deposits exist
+    /// @notice Transfer previously parked yield to treasury
     /// @dev Only callable by yield redistributor to maintain atomic operations
     function applyParkedYield() external whenNotPaused {
         if (msg.sender != yieldRedistributor) revert NotYieldRedistributor();
         uint256 amt = parkedYield;
-        if (amt == 0 || totalPrincipal == 0) return;
+        if (amt == 0) return;
 
-        //   Use safe math to prevent overflow in (amt * RAY)
-        uint256 delta = Math.mulDiv(amt, RAY, totalPrincipal);
-        if (delta > 0) {
-            // Check for overflow before adding
-            if (globalIndex + delta < globalIndex) revert ArithmeticOverflow();
-            globalIndex += delta;
-        }
-        
+        // Transfer parked yield to treasury instead of distributing to users
         parkedYield = 0;
-        claimReserve += amt;  // Must increase claimReserve to maintain funding invariant
+        USDR.safeTransfer(treasury, amt);
         emit ParkedYieldApplied(amt, 0);
     }
 
@@ -403,19 +384,14 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
         if (isBlacklisted[user]) revert AddressBlacklisted();
     }
 
-    /// @dev Internal helper to apply parked yield - called automatically in deposit
+    /// @dev Internal helper to transfer parked yield to treasury - called automatically in deposit
     function _applyParkedYieldInternal() internal {
         uint256 amt = parkedYield;
-        if (amt == 0 || totalPrincipal == 0) return;
+        if (amt == 0) return;
         
-        uint256 delta = Math.mulDiv(amt, RAY, totalPrincipal);
-        if (delta > 0) {
-            if (globalIndex + delta < globalIndex) revert ArithmeticOverflow();
-            globalIndex += delta;
-        }
-        
+        // Transfer parked yield to treasury instead of distributing to users
         parkedYield = 0;
-        claimReserve += amt;
+        USDR.safeTransfer(treasury, amt);
         emit ParkedYieldApplied(amt, 0);
     }
 
