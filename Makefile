@@ -31,7 +31,7 @@ invariant:
 	@./test.sh -d test/invariant -p $(profile)
 
 coverage:
-	FOUNDRY_PROFILE=$(profile) forge coverage --report lcov --ir-minimum
+	FOUNDRY_PROFILE=$(profile) forge coverage --report lcov
 
 gas-report:
 	FOUNDRY_PROFILE=$(profile) forge test --gas-report > gasreport.ansi
