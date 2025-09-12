@@ -36,6 +36,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     // -------- Roles / endpoints --------
     address public yieldRedistributor;   // allowed to call onYield
     address public treasury;             // receives yield when no deposits exist, surplus sweeps
+    address public treasuryBoost;        // allowed to call onYield for treasury boosts
     address public pauser;               // allowed to pause/unpause the contract
 
     // -------- Optional blacklist --------
@@ -46,6 +47,11 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     uint256 public globalIndex = RAY;    // global index (scaled 1e27 - RAY precision)
     uint256 public claimReserve;         // assets available to pay claims/withdraws
     uint256 public pendingDelta;         // accumulated small deltas to prevent precision loss from tiny yields
+    
+    // -------- Boost system --------
+    uint256 public currentEpoch;         // current epoch number
+    mapping(uint256 => EpochData) public epochs;  // epoch data
+    mapping(address => uint256) public userLastEpoch;  // user's last settled epoch
 
     mapping(address => uint256) public principal;
     mapping(address => uint256) public userIndex;
@@ -54,14 +60,15 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     // -------- Events and Errors --------
     // All events and errors are inherited from IEarnVaultEventsAndErrors interface
 
-    constructor(address usdr, address owner, address yieldRedistributorAddr, address treasuryAddr, address pauserAddr) 
+    constructor(address usdr, address owner, address yieldRedistributorAddr, address treasuryAddr, address treasuryBoostAddr, address pauserAddr) 
         Ownable(owner) {
         if (usdr == address(0) || owner == address(0)) revert CanNotBeZeroAddress();
         if (yieldRedistributorAddr == address(0) || treasuryAddr == address(0)) revert CanNotBeZeroAddress();
-        if (pauserAddr == address(0)) revert CanNotBeZeroAddress();
+        if (treasuryBoostAddr == address(0) || pauserAddr == address(0)) revert CanNotBeZeroAddress();
         USDR = IERC20(usdr);
         yieldRedistributor = yieldRedistributorAddr;
         treasury = treasuryAddr;
+        treasuryBoost = treasuryBoostAddr;
         pauser = pauserAddr;
     }
 
@@ -94,6 +101,15 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
         address oldPauser = pauser;
         pauser = who;
         emit PauserChanged(msg.sender, oldPauser, who);
+    }
+
+    /// @notice Set the treasury boost address
+    /// @param who New treasury boost address
+    function setTreasuryBoost(address who) external onlyOwner {
+        if (who == address(0)) revert CanNotBeZeroAddress();
+        address oldTreasuryBoost = treasuryBoost;
+        treasuryBoost = who;
+        emit TreasuryBoostChanged(msg.sender, oldTreasuryBoost, who);
     }
 
     /// @notice Set blacklist status for an address
@@ -248,34 +264,73 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
         emit Deposit(msg.sender, amount);
     }
 
-    /// @notice Withdraw principal amount. Full withdrawals automatically claim all accrued interest.
-    /// @dev Partial withdrawals do NOT auto-claim interest - use claim() separately for partial withdrawals.
-    /// @param amount Principal amount to withdraw. If equals user's total principal, all interest is auto-claimed.
+    /// @notice Withdraw any amount up to total value (principal + accrued interest)
+    /// @param amount Total amount to withdraw (can include accrued interest)
+    /// @dev Can withdraw: principal only, principal + partial interest, or full amount
+    /// @dev For withdrawing everything including all interest, use withdrawAll()
     function withdraw(uint256 amount) external whenNotPaused nonReentrant {
-        _checkNotBlacklisted(msg.sender);  //   Add blacklist check
+        _checkNotBlacklisted(msg.sender);
         if (amount == 0) revert ZeroAmount();
 
         _settle(msg.sender);
+        
         uint256 p = principal[msg.sender];
-        if (amount > p) revert InsufficientPrincipal();
+        uint256 userAccrued = accrued[msg.sender];
+        uint256 userTotalValue = p + userAccrued;
+        
+        if (amount > userTotalValue) revert InsufficientPrincipal();
 
-        uint256 interestOut = 0;
-        if (amount == p) {
-            // Full withdrawal: auto-claim all accrued interest
-            interestOut = accrued[msg.sender];
-            accrued[msg.sender] = 0;
-            if (claimReserve < interestOut) revert InsufficientFunding();
-            claimReserve -= interestOut;
+        uint256 principalToWithdraw = amount;
+        uint256 interestToClaim = 0;
+        
+        if (amount > p) {
+            // Need to claim some interest
+            principalToWithdraw = p; // Withdraw all principal
+            interestToClaim = amount - p; // Claim remaining from interest
         }
-
-        principal[msg.sender] = p - amount;
-        totalPrincipal -= amount;
+        
+        // Update state
+        principal[msg.sender] = p - principalToWithdraw;
+        accrued[msg.sender] = userAccrued - interestToClaim;
+        totalPrincipal -= principalToWithdraw;
+        
+        // Transfer funds
         claimReserve -= amount;
+        USDR.safeTransfer(msg.sender, amount);
+        
+        // Emit events
+        emit Withdraw(msg.sender, principalToWithdraw);
+        if (interestToClaim > 0) {
+            emit InterestClaimed(msg.sender, interestToClaim);
+        }
+    }
 
-        USDR.safeTransfer(msg.sender, amount + interestOut);
-        emit Withdraw(msg.sender, amount);
-        if (interestOut > 0) {
-            emit InterestClaimed(msg.sender, interestOut);
+    /// @notice Withdraw all funds (principal + all accrued interest)
+    /// @dev Convenience function that withdraws everything the user has
+    /// @dev Equivalent to withdraw(principal + accrued) but simpler to use
+    function withdrawAll() external whenNotPaused nonReentrant {
+        _checkNotBlacklisted(msg.sender);
+        _settle(msg.sender);
+        
+        uint256 p = principal[msg.sender];
+        uint256 userAccrued = accrued[msg.sender];
+        uint256 totalAmount = p + userAccrued;
+        
+        if (totalAmount == 0) revert NothingToClaim();
+        
+        // Update state
+        principal[msg.sender] = 0;
+        accrued[msg.sender] = 0;
+        totalPrincipal -= p;
+        claimReserve -= totalAmount;
+        
+        // Transfer all funds
+        USDR.safeTransfer(msg.sender, totalAmount);
+        
+        // Emit events
+        emit Withdraw(msg.sender, p);
+        if (userAccrued > 0) {
+            emit InterestClaimed(msg.sender, userAccrued);
         }
     }
 
@@ -303,7 +358,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     /// @dev Enforces funding invariant: USDR.balance >= claimReserve + amount
     /// @param amount Amount of USDR yield to distribute
     function onYield(uint256 amount) external whenNotPaused {
-        if (msg.sender != yieldRedistributor) revert NotYieldRedistributor();
+        if (msg.sender != yieldRedistributor && msg.sender != treasuryBoost) revert NotYieldRedistributor();
         if (amount == 0) return;
         
         // Verify actual balance before updating accounting

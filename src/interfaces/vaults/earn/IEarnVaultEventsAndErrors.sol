@@ -39,6 +39,16 @@ interface IEarnVaultEventsAndErrors {
         address indexed oldPauser, 
         address indexed newPauser
     );
+
+    /// @notice Emitted when treasury boost address is changed
+    /// @param actor Address that initiated the change (msg.sender)
+    /// @param oldTreasuryBoost Previous treasury boost address
+    /// @param newTreasuryBoost New treasury boost address
+    event TreasuryBoostChanged(
+        address indexed actor, 
+        address indexed oldTreasuryBoost, 
+        address indexed newTreasuryBoost
+    );
     
     /// @notice Emitted when an address blacklist status is changed
     /// @param actor Address that initiated the change (msg.sender)

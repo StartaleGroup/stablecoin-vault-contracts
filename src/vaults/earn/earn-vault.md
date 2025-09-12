@@ -2,13 +2,14 @@
 
 ## Overview
 
-Users deposit USDR tokens and earn claimable yield over time. Users maintain full control over their principal and can claim accrued interest separately or automatically on full withdrawal.
+Users deposit USDR tokens and earn claimable yield over time. Users maintain full control over their principal and can claim accrued interest separately or withdraw any amount including partial interest.
 
 ## Key Features
 
 - **Principal Protection**: Withdraw original deposit anytime
 - **Claimable Yield**: Interest accrues continuously, claim separately
-- **Auto-Claim on Full Withdrawal**: Complete withdrawals automatically claim all interest
+- **Flexible Withdrawal**: Withdraw any amount (principal + partial interest)
+- **Convenience Function**: `withdrawAll()` for complete withdrawal
 - **Proportional Distribution**: Yield distributed based on deposit amounts
 - **RAY Precision**: 1e27 precision for zero yield loss (MakerDAO standard)
 - **Direct Treasury Transfer**: Yield goes directly to treasury when no deposits exist
@@ -23,7 +24,8 @@ Users deposit USDR tokens and earn claimable yield over time. Users maintain ful
 // Write functions
 deposit(uint256 amount)                    // Deposit USDR
 depositWithPermit(...)                     // Deposit with permit (gasless approval)
-withdraw(uint256 amount)                   // Withdraw principal (auto-claims on full withdrawal)
+withdraw(uint256 amount)                   // Withdraw any amount (principal + partial interest)
+withdrawAll()                              // Withdraw everything (principal + all interest)
 claim()                                    // Claim all accrued interest
 
 // Read functions
@@ -108,23 +110,45 @@ sequenceDiagram
     
     User->>Vault: withdraw(amount)
     Vault->>Vault: _settle(user)
-    Vault->>Vault: check amount <= principal[user]
+    Vault->>Vault: check amount <= totalValue[user]
     
-    alt amount == principal[user] (Full Withdrawal)
-        Vault->>Vault: interestOut = accrued[user]
-        Vault->>Vault: accrued[user] = 0
-        Vault->>Vault: claimReserve -= interestOut
-        Vault->>USDR: transfer(user, amount + interestOut)
-        Vault-->>User: emit Withdraw(user, amount)
-        Vault-->>User: emit InterestClaimed(user, interestOut)
-    else amount < principal[user] (Partial Withdrawal)
+    alt amount <= principal[user] (Principal Only)
+        Vault->>Vault: principalToWithdraw = amount
+        Vault->>Vault: interestToClaim = 0
         Vault->>USDR: transfer(user, amount)
         Vault-->>User: emit Withdraw(user, amount)
+    else amount > principal[user] (Principal + Interest)
+        Vault->>Vault: principalToWithdraw = principal[user]
+        Vault->>Vault: interestToClaim = amount - principal[user]
+        Vault->>USDR: transfer(user, amount)
+        Vault-->>User: emit Withdraw(user, principalToWithdraw)
+        Vault-->>User: emit InterestClaimed(user, interestToClaim)
     end
     
-    Vault->>Vault: principal[user] -= amount
-    Vault->>Vault: totalPrincipal -= amount
+    Vault->>Vault: principal[user] -= principalToWithdraw
+    Vault->>Vault: accrued[user] -= interestToClaim
+    Vault->>Vault: totalPrincipal -= principalToWithdraw
     Vault->>Vault: claimReserve -= amount
+```
+
+### WithdrawAll Flow
+```mermaid
+sequenceDiagram
+    participant User
+    participant Vault
+    participant USDR
+    
+    User->>Vault: withdrawAll()
+    Vault->>Vault: _settle(user)
+    Vault->>Vault: totalAmount = principal[user] + accrued[user]
+    
+    Vault->>Vault: principal[user] = 0
+    Vault->>Vault: accrued[user] = 0
+    Vault->>Vault: totalPrincipal -= principal[user]
+    Vault->>Vault: claimReserve -= totalAmount
+    Vault->>USDR: transfer(user, totalAmount)
+    Vault-->>User: emit Withdraw(user, originalPrincipal)
+    Vault-->>User: emit InterestClaimed(user, originalAccrued)
 ```
 
 ### Emergency Operations Flow
@@ -185,6 +209,30 @@ When yield arrives with no deposits (`totalPrincipal = 0`):
 - **Settlement Ordering**: Critical `_settle()` called before state changes
 - **ETH Safety**: Contract rejects ETH to prevent accidental loss
 
+## Withdrawal Examples
+
+### Withdrawal Scenarios
+Given: User has 1000 USDR principal + 100 USDR accrued interest
+
+| Function Call | Amount | Result | Remaining |
+|---------------|--------|--------|-----------|
+| `withdraw(500)` | 500 USDR | Gets 500 USDR (principal only) | 500 principal + 100 interest |
+| `withdraw(1000)` | 1000 USDR | Gets 1000 USDR (principal only) | 0 principal + 100 interest |
+| `withdraw(1050)` | 1050 USDR | Gets 1050 USDR (1000 principal + 50 interest) | 0 principal + 50 interest |
+| `withdraw(1100)` | 1100 USDR | Gets 1100 USDR (1000 principal + 100 interest) | 0 principal + 0 interest |
+| `withdrawAll()` | - | Gets 1100 USDR (everything) | 0 principal + 0 interest |
+
+### Key Features
+- **Flexible**: `withdraw(amount)` can withdraw any amount up to total value
+- **Precise**: Can withdraw principal + partial interest for exact amounts
+- **Convenience**: `withdrawAll()` for simple "withdraw everything" use cases
+- **Clear separation**: `withdraw()` for specific amounts, `withdrawAll()` for everything
+
+### Important: Principal Withdrawal Impact
+- **Withdrawing principal stops future interest accrual** on that amount
+- **Remaining accrued interest can still be claimed** separately
+- **This is standard DeFi behavior** - no principal = no new interest
+
 ## Examples
 
 ### Example 1: Basic User Flow
@@ -218,15 +266,19 @@ vault.claimable(alice);  // Returns 100e18 (25% of 400)
 vault.claimable(bob);    // Returns 300e18 (75% of 400)
 ```
 
-### Example 3: Full Withdrawal (Auto-Claim)
+### Example 3: Full Withdrawal Options
 ```solidity
 // Alice has 1000 principal + 50 claimable
 vault.principal(alice);   // 1000e18
 vault.claimable(alice);   // 50e18
 
-// Full withdrawal automatically claims interest
+// Option 1: Withdraw exact principal (interest remains)
 vault.withdraw(1000e18);  
-// Result: Alice receives 1050 USDR (1000 + 50)
+// Result: Alice receives 1000 USDR, 50 USDR interest remains
+
+// Option 2: Withdraw everything using withdrawAll()
+vault.withdrawAll();      
+// Result: Alice receives 1050 USDR (1000 + 50), nothing remains
 ```
 
 ### Example 4: Direct Treasury Transfer

@@ -31,7 +31,11 @@ interface IEarnVault {
         uint8 v, bytes32 r, bytes32 s
     ) external;
 
+    /// @notice Withdraw any amount up to total value (principal + accrued interest)
     function withdraw(uint256 amountPrincipal) external;
+
+    /// @notice Withdraw all funds (principal + all accrued interest)
+    function withdrawAll() external;
 
     /// @notice Claim all accrued USDR interest to msg.sender
     function claim() external;
@@ -47,4 +51,7 @@ interface IEarnVault {
     
     /// @notice Set the pauser address (owner only)
     function setPauser(address who) external;
+
+    /// @notice Set the treasury boost address (owner only)
+    function setTreasuryBoost(address who) external;
 }
