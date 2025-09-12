@@ -319,7 +319,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
         if (totalPrincipal == 0) {
             // No deposits exist - transfer yield directly to treasury
             USDR.safeTransfer(treasury, amount);
-            emit YieldParked(amount, 0); // Event for treasury transfer (not actually parking)
+            emit YieldTransferredToTreasury(amount);
             return;
         }
         

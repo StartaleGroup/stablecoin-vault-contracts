@@ -68,16 +68,10 @@ interface IEarnVaultEventsAndErrors {
     /// @param newClaimReserve New claim reserve amount
     event YieldIndexed(uint256 amount, uint256 newGlobalIndex, uint256 newClaimReserve);
     
-    /// @notice Emitted when yield is parked (when totalPrincipal = 0)
-    /// @param amount Amount of yield parked
-    /// @param totalParked Total amount of parked yield after this addition
-    event YieldParked(uint256 amount, uint256 totalParked);
+    /// @notice Emitted when yield is transferred to treasury (when totalPrincipal = 0)
+    /// @param amount Amount of yield transferred to treasury
+    event YieldTransferredToTreasury(uint256 amount);
     
-    /// @notice Emitted when previously parked yield is transferred to treasury
-    /// @param amountApplied Amount of parked yield that was transferred
-    /// @param remainingParked Amount of parked yield remaining (should be 0)
-    /// @param treasury Address that received the parked yield
-    event ParkedYieldApplied(uint256 amountApplied, uint256 remainingParked, address indexed treasury);
     
     /// @notice Emitted when a user claims accrued interest
     /// @param user Address that claimed interest

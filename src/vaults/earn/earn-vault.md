@@ -54,6 +54,100 @@ emergencySweep(address token, address to, uint256 amount)  // Emergency token re
 getVaultStats() → (uint256 totalPrincipal, uint256 claimReserve, uint256 globalIndex, uint256 pendingDelta, uint256 balance)
 ```
 
+## Sequence Diagrams
+
+### Basic User Flow
+```mermaid
+sequenceDiagram
+    participant User
+    participant Vault
+    participant USDR
+    
+    User->>USDR: approve(vault, amount)
+    User->>Vault: deposit(amount)
+    Vault->>USDR: transferFrom(user, vault, amount)
+    Vault->>Vault: _settle(user)
+    Vault->>Vault: principal[user] += amount
+    Vault->>Vault: totalPrincipal += amount
+    Vault->>Vault: claimReserve += amount
+    Vault-->>User: emit Deposit(user, amount)
+```
+
+### Yield Distribution Flow
+```mermaid
+sequenceDiagram
+    participant Distributor
+    participant Vault
+    participant USDR
+    participant Treasury
+    
+    Distributor->>USDR: transfer(vault, yieldAmount)
+    Distributor->>Vault: onYield(yieldAmount)
+    
+    alt totalPrincipal == 0
+        Vault->>USDR: transfer(treasury, yieldAmount)
+        Vault-->>Distributor: emit YieldTransferredToTreasury(amount, 0)
+    else totalPrincipal > 0
+        Vault->>Vault: delta = Math.mulDiv(amount, RAY, totalPrincipal)
+        Vault->>Vault: pendingDelta += delta
+        alt pendingDelta >= MINIMUM_DELTA_THRESHOLD
+            Vault->>Vault: globalIndex += pendingDelta
+            Vault->>Vault: pendingDelta = 0
+        end
+        Vault->>Vault: claimReserve += amount
+        Vault-->>Distributor: emit YieldIndexed(amount, globalIndex, claimReserve)
+    end
+```
+
+### User Withdrawal Flow
+```mermaid
+sequenceDiagram
+    participant User
+    participant Vault
+    participant USDR
+    
+    User->>Vault: withdraw(amount)
+    Vault->>Vault: _settle(user)
+    Vault->>Vault: check amount <= principal[user]
+    
+    alt amount == principal[user] (Full Withdrawal)
+        Vault->>Vault: interestOut = accrued[user]
+        Vault->>Vault: accrued[user] = 0
+        Vault->>Vault: claimReserve -= interestOut
+        Vault->>USDR: transfer(user, amount + interestOut)
+        Vault-->>User: emit Withdraw(user, amount)
+        Vault-->>User: emit InterestClaimed(user, interestOut)
+    else amount < principal[user] (Partial Withdrawal)
+        Vault->>USDR: transfer(user, amount)
+        Vault-->>User: emit Withdraw(user, amount)
+    end
+    
+    Vault->>Vault: principal[user] -= amount
+    Vault->>Vault: totalPrincipal -= amount
+    Vault->>Vault: claimReserve -= amount
+```
+
+### Emergency Operations Flow
+```mermaid
+sequenceDiagram
+    participant Owner
+    participant Vault
+    participant USDR
+    participant Treasury
+    
+    Owner->>Vault: pause()
+    Vault->>Vault: _pause()
+    
+    Owner->>Vault: sweepSurplusToTreasury()
+    Vault->>Vault: check paused()
+    Vault->>Vault: surplus = balance - claimReserve
+    Vault->>USDR: transfer(treasury, surplus)
+    Vault-->>Owner: emit EmergencySweep(USDR, treasury, surplus)
+    
+    Owner->>Vault: unpause()
+    Vault->>Vault: _unpause()
+```
+
 ## How It Works
 
 ### Global Index Accounting
@@ -209,101 +303,7 @@ bool blocked = vault.isBlacklisted(user);           // Blacklist status
 - **`Withdraw(address indexed user, uint256 amount)`**: User withdraws principal
 - **`InterestClaimed(address indexed user, uint256 amount)`**: User claims accrued interest
 - **`YieldIndexed(uint256 amount, uint256 newGlobalIndex, uint256 newClaimReserve)`**: Yield distributed to users
-- **`YieldParked(uint256 amount, uint256 totalParked)`**: Yield transferred to treasury when no deposits exist
-
-## Sequence Diagrams
-
-### Basic User Flow
-```mermaid
-sequenceDiagram
-    participant User
-    participant Vault
-    participant USDR
-    
-    User->>USDR: approve(vault, amount)
-    User->>Vault: deposit(amount)
-    Vault->>USDR: transferFrom(user, vault, amount)
-    Vault->>Vault: _settle(user)
-    Vault->>Vault: principal[user] += amount
-    Vault->>Vault: totalPrincipal += amount
-    Vault->>Vault: claimReserve += amount
-    Vault-->>User: emit Deposit(user, amount)
-```
-
-### Yield Distribution Flow
-```mermaid
-sequenceDiagram
-    participant Distributor
-    participant Vault
-    participant USDR
-    participant Treasury
-    
-    Distributor->>USDR: transfer(vault, yieldAmount)
-    Distributor->>Vault: onYield(yieldAmount)
-    
-    alt totalPrincipal == 0
-        Vault->>USDR: transfer(treasury, yieldAmount)
-        Vault-->>Distributor: emit YieldParked(amount, 0)
-    else totalPrincipal > 0
-        Vault->>Vault: delta = Math.mulDiv(amount, RAY, totalPrincipal)
-        Vault->>Vault: pendingDelta += delta
-        alt pendingDelta >= MINIMUM_DELTA_THRESHOLD
-            Vault->>Vault: globalIndex += pendingDelta
-            Vault->>Vault: pendingDelta = 0
-        end
-        Vault->>Vault: claimReserve += amount
-        Vault-->>Distributor: emit YieldIndexed(amount, globalIndex, claimReserve)
-    end
-```
-
-### User Withdrawal Flow
-```mermaid
-sequenceDiagram
-    participant User
-    participant Vault
-    participant USDR
-    
-    User->>Vault: withdraw(amount)
-    Vault->>Vault: _settle(user)
-    Vault->>Vault: check amount <= principal[user]
-    
-    alt amount == principal[user] (Full Withdrawal)
-        Vault->>Vault: interestOut = accrued[user]
-        Vault->>Vault: accrued[user] = 0
-        Vault->>Vault: claimReserve -= interestOut
-        Vault->>USDR: transfer(user, amount + interestOut)
-        Vault-->>User: emit Withdraw(user, amount)
-        Vault-->>User: emit InterestClaimed(user, interestOut)
-    else amount < principal[user] (Partial Withdrawal)
-        Vault->>USDR: transfer(user, amount)
-        Vault-->>User: emit Withdraw(user, amount)
-    end
-    
-    Vault->>Vault: principal[user] -= amount
-    Vault->>Vault: totalPrincipal -= amount
-    Vault->>Vault: claimReserve -= amount
-```
-
-### Emergency Operations Flow
-```mermaid
-sequenceDiagram
-    participant Owner
-    participant Vault
-    participant USDR
-    participant Treasury
-    
-    Owner->>Vault: pause()
-    Vault->>Vault: _pause()
-    
-    Owner->>Vault: sweepSurplusToTreasury()
-    Vault->>Vault: check paused()
-    Vault->>Vault: surplus = balance - claimReserve
-    Vault->>USDR: transfer(treasury, surplus)
-    Vault-->>Owner: emit EmergencySweep(USDR, treasury, surplus)
-    
-    Owner->>Vault: unpause()
-    Vault->>Vault: _unpause()
-```
+- **`YieldTransferredToTreasury(uint256 amount)`**: Yield transferred to treasury when no deposits exist
 
 ## Technical Notes
 
