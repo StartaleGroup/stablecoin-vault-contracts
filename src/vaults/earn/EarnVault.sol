@@ -5,8 +5,7 @@ import {IERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.so
 import {IERC20Permit} from "lib/openzeppelin-contracts/contracts/token/ERC20/extensions/IERC20Permit.sol";
 import {SafeERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Math} from "lib/openzeppelin-contracts/contracts/utils/math/Math.sol";
-import {Ownable} from "lib/openzeppelin-contracts/contracts/access/Ownable.sol";
-import {Ownable2Step} from "lib/openzeppelin-contracts/contracts/access/Ownable2Step.sol";
+import {AccessControl} from "lib/openzeppelin-contracts/contracts/access/AccessControl.sol";
 import {Pausable} from "lib/openzeppelin-contracts/contracts/utils/Pausable.sol";
 import {ReentrancyGuard} from "lib/openzeppelin-contracts/contracts/utils/ReentrancyGuard.sol";
 import {IEarnVault} from "../../interfaces/vaults/earn/IEarnVault.sol";
@@ -21,22 +20,25 @@ import {IEarnVaultEventsAndErrors} from "../../interfaces/vaults/earn/IEarnVault
 ///   - When yield arrives and totalPrincipal>0: globalIndex += amount*RAY/totalPrincipal.
 ///   - If totalPrincipal==0 at yield time: amount is transferred directly to treasury.
 /// Invariant (funding): USDR balance >= claimReserve.
-contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausable, ReentrancyGuard {
+contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Pausable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     // -------- Constants --------
     uint256 public constant RAY = 1e27;  // High precision for yield calculations (MakerDAO standard)
     
-    /// @dev Minimum delta threshold before applying to globalIndex (prevents gas waste on tiny yields)
-    uint256 public constant MINIMUM_DELTA_THRESHOLD = 1e18;  // 1 RAY unit
+    
+    // -------- Roles --------
+    bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
+    bytes32 public constant YIELD_REDISTRIBUTOR_ROLE = keccak256("YIELD_REDISTRIBUTOR_ROLE");
+    bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
 
     // -------- Immutables --------
     IERC20 public immutable USDR;
 
+
     // -------- Roles / endpoints --------
     address public yieldRedistributor;   // allowed to call onYield
     address public treasury;             // receives yield when no deposits exist, surplus sweeps
-    address public treasuryBoost;        // allowed to call onYield for treasury boosts
     address public pauser;               // allowed to pause/unpause the contract
 
     // -------- Optional blacklist --------
@@ -46,12 +48,6 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     uint256 public totalPrincipal;       // sum of user principals
     uint256 public globalIndex = RAY;    // global index (scaled 1e27 - RAY precision)
     uint256 public claimReserve;         // assets available to pay claims/withdraws
-    uint256 public pendingDelta;         // accumulated small deltas to prevent precision loss from tiny yields
-    
-    // -------- Boost system --------
-    uint256 public currentEpoch;         // current epoch number
-    mapping(uint256 => EpochData) public epochs;  // epoch data
-    mapping(address => uint256) public userLastEpoch;  // user's last settled epoch
 
     mapping(address => uint256) public principal;
     mapping(address => uint256) public userIndex;
@@ -60,16 +56,21 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     // -------- Events and Errors --------
     // All events and errors are inherited from IEarnVaultEventsAndErrors interface
 
-    constructor(address usdr, address owner, address yieldRedistributorAddr, address treasuryAddr, address treasuryBoostAddr, address pauserAddr) 
-        Ownable(owner) {
-        if (usdr == address(0) || owner == address(0)) revert CanNotBeZeroAddress();
+    constructor(address usdr, address admin, address yieldRedistributorAddr, address treasuryAddr, address pauserAddr) {
+        if (usdr == address(0) || admin == address(0)) revert CanNotBeZeroAddress();
         if (yieldRedistributorAddr == address(0) || treasuryAddr == address(0)) revert CanNotBeZeroAddress();
-        if (treasuryBoostAddr == address(0) || pauserAddr == address(0)) revert CanNotBeZeroAddress();
+        if (pauserAddr == address(0)) revert CanNotBeZeroAddress();
+        
         USDR = IERC20(usdr);
         yieldRedistributor = yieldRedistributorAddr;
         treasury = treasuryAddr;
-        treasuryBoost = treasuryBoostAddr;
         pauser = pauserAddr;
+        
+        // Set up roles
+        _grantRole(DEFAULT_ADMIN_ROLE, admin);
+        _grantRole(ADMIN_ROLE, admin);
+        _grantRole(YIELD_REDISTRIBUTOR_ROLE, yieldRedistributorAddr);
+        _grantRole(PAUSER_ROLE, pauserAddr);
     }
 
     // =========================
@@ -78,16 +79,18 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
 
     /// @notice Set the yield redistributor address
     /// @param who New yield redistributor address
-    function setYieldRedistributor(address who) external onlyOwner {
+    function setYieldRedistributor(address who) external onlyRole(ADMIN_ROLE) {
         if (who == address(0)) revert CanNotBeZeroAddress();
         address oldRedistributor = yieldRedistributor;
+        _revokeRole(YIELD_REDISTRIBUTOR_ROLE, yieldRedistributor);
+        _grantRole(YIELD_REDISTRIBUTOR_ROLE, who);
         yieldRedistributor = who;
         emit YieldRedistributorChanged(msg.sender, oldRedistributor, who);
     }
 
     /// @notice Set the treasury address  
     /// @param who New treasury address
-    function setTreasury(address who) external onlyOwner {
+    function setTreasury(address who) external onlyRole(ADMIN_ROLE) {
         if (who == address(0)) revert CanNotBeZeroAddress();
         address oldTreasury = treasury;
         treasury = who;
@@ -96,42 +99,36 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
 
     /// @notice Set the pauser address
     /// @param who New pauser address
-    function setPauser(address who) external onlyOwner {
+    function setPauser(address who) external onlyRole(ADMIN_ROLE) {
         if (who == address(0)) revert CanNotBeZeroAddress();
         address oldPauser = pauser;
+        _revokeRole(PAUSER_ROLE, pauser);
+        _grantRole(PAUSER_ROLE, who);
         pauser = who;
         emit PauserChanged(msg.sender, oldPauser, who);
     }
 
-    /// @notice Set the treasury boost address
-    /// @param who New treasury boost address
-    function setTreasuryBoost(address who) external onlyOwner {
-        if (who == address(0)) revert CanNotBeZeroAddress();
-        address oldTreasuryBoost = treasuryBoost;
-        treasuryBoost = who;
-        emit TreasuryBoostChanged(msg.sender, oldTreasuryBoost, who);
-    }
 
     /// @notice Set blacklist status for an address
     /// @param who Address to update blacklist status for
     /// @param blacklisted Whether address should be blacklisted
-    function setBlacklisted(address who, bool blacklisted) external onlyOwner {
+    function setBlacklisted(address who, bool blacklisted) external onlyRole(ADMIN_ROLE) {
         bool oldStatus = isBlacklisted[who];
         isBlacklisted[who] = blacklisted;
         emit BlacklistStatusChanged(msg.sender, who, oldStatus, blacklisted);
     }
 
     /// @notice Pause the contract (emergency stop)
-    /// @dev Can be called by owner or designated pauser
+    /// @dev Can be called by admin or designated pauser
     function pause() external {
-        if (msg.sender != owner() && msg.sender != pauser) revert NotAuthorizedToPause();
+        if (!hasRole(ADMIN_ROLE, msg.sender) && !hasRole(PAUSER_ROLE, msg.sender)) revert NotAuthorizedToPause();
         _pause();
     }
-
+    
     /// @notice Unpause the contract
-    /// @dev Can be called by owner or designated pauser  
+    /// @dev Can be called by admin or designated pauser  
     function unpause() external {
-        if (msg.sender != owner() && msg.sender != pauser) revert NotAuthorizedToPause();
+        if (!hasRole(ADMIN_ROLE, msg.sender) && !hasRole(PAUSER_ROLE, msg.sender)) revert NotAuthorizedToPause();
         _unpause();
     }
 
@@ -200,13 +197,11 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
         uint256 vaultTotalPrincipal,
         uint256 vaultClaimReserve,
         uint256 vaultGlobalIndex,
-        uint256 vaultPendingDelta,
         uint256 vaultBalance
     ) {
         vaultTotalPrincipal = totalPrincipal;
         vaultClaimReserve = claimReserve;
         vaultGlobalIndex = globalIndex;
-        vaultPendingDelta = pendingDelta;
         vaultBalance = USDR.balanceOf(address(this));
     }
 
@@ -357,8 +352,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     /// @dev MUST be called AFTER transferring `amount` USDR to this contract
     /// @dev Enforces funding invariant: USDR.balance >= claimReserve + amount
     /// @param amount Amount of USDR yield to distribute
-    function onYield(uint256 amount) external whenNotPaused {
-        if (msg.sender != yieldRedistributor && msg.sender != treasuryBoost) revert NotYieldRedistributor();
+    function onYield(uint256 amount) external onlyRole(YIELD_REDISTRIBUTOR_ROLE) nonReentrant {
         if (amount == 0) return;
         
         // Verify actual balance before updating accounting
@@ -378,21 +372,16 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
             return;
         }
         
-        // No parked yield logic needed - yield goes directly to treasury when no deposits exist
-        
-        // Calculate and accumulate delta (prevents loss of small yields)
+        // Calculate delta for this yield
         uint256 delta = Math.mulDiv(amount, RAY, totalPrincipal);
-        if (pendingDelta + delta < pendingDelta) revert ArithmeticOverflow();
-        pendingDelta += delta;
         
-        // Apply pending delta only when it reaches meaningful threshold
-        if (pendingDelta >= MINIMUM_DELTA_THRESHOLD) {
-            // Check for overflow before adding
-            if (globalIndex + pendingDelta < globalIndex) revert ArithmeticOverflow();
-            
-            globalIndex += pendingDelta;
-            pendingDelta = 0;  // Reset after application
-        }
+        // Apply delta immediately to ensure fairness for all users
+        // This prevents users who withdraw before threshold from missing yield
+        if (globalIndex + delta < globalIndex) revert ArithmeticOverflow();
+        globalIndex += delta;
+        
+        // Note: We no longer use pendingDelta since we apply delta immediately
+        // This ensures all users get fair yield distribution
         
         claimReserve += amount;
         emit YieldIndexed(amount, globalIndex, claimReserve);
@@ -435,8 +424,12 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     // Emergency (owner)
     // =========================
 
-    /// @dev Emergency sweep of tokens other than USDR, or USDR *surplus* if paused.
-    function emergencySweep(address token, address to, uint256 amount) external onlyOwner {
+    /// @notice Recover ERC20 tokens sent to this contract
+    /// @dev For non-USDR tokens or USDR surplus when paused
+    /// @param token Token address to recover
+    /// @param to Address to send tokens to
+    /// @param amount Amount to recover
+    function recoverERC20(address token, address to, uint256 amount) external onlyRole(ADMIN_ROLE) {
         if (to == address(0)) revert CanNotBeZeroAddress();
 
         if (token == address(USDR)) {
@@ -453,14 +446,12 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
             if (amount > tokenBalance) revert ExceedsSurplus();
         }
         IERC20(token).safeTransfer(to, amount);
-        emit EmergencySweep(token, to, amount);
+        emit TokenRecovered(token, to, amount);
     }
 
     /// @notice Sweep excess USDR yield to treasury (when vault has surplus above reserves)
-    /// @dev Only callable when paused for safety, sweeps all surplus above minimum required reserves
-    function sweepSurplusToTreasury() external onlyOwner {
-        if (!paused()) revert ContractNotPaused();
-        
+    /// @dev Sweeps all surplus above minimum required reserves
+    function sweepSurplusToTreasury() external onlyRole(ADMIN_ROLE) {
         uint256 bal = USDR.balanceOf(address(this));
         uint256 minRequired = claimReserve;
         
@@ -468,7 +459,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
         
         uint256 surplus = bal - minRequired;
         USDR.safeTransfer(treasury, surplus);
-        emit EmergencySweep(address(USDR), treasury, surplus);
+        emit SurplusSweptToTreasury(surplus);
     }
 
     // =========================

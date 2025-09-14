@@ -181,11 +181,11 @@ The vault uses a **global index pattern** for gas-efficient yield distribution:
 2. **User Index**: Records when user last settled
 3. **Settlement Formula**: `owed = principal × (globalIndex - userIndex) / RAY`
 
-### Pending Delta Accumulation
-Small yield amounts are accumulated to prevent precision loss:
-- **Problem**: Very small yields might round to zero delta
-- **Solution**: `pendingDelta` accumulates small deltas until `>= 1e18` threshold
-- **Result**: No yield is ever lost, even with tiny distributions
+### Immediate Delta Application
+Yield is applied immediately to ensure fairness:
+- **Problem**: Users who withdraw before threshold reached would miss their fair share of yield
+- **Solution**: Delta is applied immediately to `globalIndex` when yield arrives
+- **Result**: All users get fair yield distribution regardless of when they interact with the contract
 
 ### Direct Treasury Transfer
 When yield arrives with no deposits (`totalPrincipal = 0`):

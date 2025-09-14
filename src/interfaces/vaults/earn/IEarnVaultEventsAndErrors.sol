@@ -40,15 +40,6 @@ interface IEarnVaultEventsAndErrors {
         address indexed newPauser
     );
 
-    /// @notice Emitted when treasury boost address is changed
-    /// @param actor Address that initiated the change (msg.sender)
-    /// @param oldTreasuryBoost Previous treasury boost address
-    /// @param newTreasuryBoost New treasury boost address
-    event TreasuryBoostChanged(
-        address indexed actor, 
-        address indexed oldTreasuryBoost, 
-        address indexed newTreasuryBoost
-    );
     
     /// @notice Emitted when an address blacklist status is changed
     /// @param actor Address that initiated the change (msg.sender)
@@ -82,17 +73,22 @@ interface IEarnVaultEventsAndErrors {
     /// @param amount Amount of yield transferred to treasury
     event YieldTransferredToTreasury(uint256 amount);
     
+    /// @notice Emitted when ERC20 tokens are recovered from the contract
+    /// @param token Token address that was recovered
+    /// @param to Address that received the tokens
+    /// @param amount Amount of tokens recovered
+    event TokenRecovered(address indexed token, address indexed to, uint256 amount);
+    
+    /// @notice Emitted when surplus USDR is swept to treasury
+    /// @param amount Amount of surplus swept to treasury
+    event SurplusSweptToTreasury(uint256 amount);
+    
     
     /// @notice Emitted when a user claims accrued interest
     /// @param user Address that claimed interest
     /// @param amount Amount of interest claimed
     event InterestClaimed(address indexed user, uint256 amount);
 
-    /// @notice Emitted when emergency sweep is performed
-    /// @param token Address of token that was swept
-    /// @param to Address that received the swept tokens
-    /// @param amount Amount of tokens swept
-    event EmergencySweep(address indexed token, address indexed to, uint256 amount);
 
     // ========================================
     // Errors

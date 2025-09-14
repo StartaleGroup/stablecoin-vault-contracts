@@ -581,7 +581,7 @@ contract EarnVaultTest is Test {
     function test_UnauthorizedYieldCall() public {
         // Random user cannot call onYield
         vm.prank(alice);
-        vm.expectRevert(IEarnVaultEventsAndErrors.NotYieldRedistributor.selector);
+        vm.expectRevert();
         vault.onYield(100e18);
     }
     
@@ -761,15 +761,7 @@ contract EarnVaultTest is Test {
         uint256 vaultBalance = usdr.balanceOf(address(vault));
         uint256 expectedSurplus = vaultBalance - vault.claimReserve();
         
-        // Cannot sweep when not paused
-        vm.prank(owner);
-        vm.expectRevert(IEarnVaultEventsAndErrors.ContractNotPaused.selector);
-        vault.sweepSurplusToTreasury();
-        
-        // Pause and sweep surplus to treasury
-        vm.prank(owner);
-        vault.pause();
-        
+        // Sweep surplus to treasury (no pause required anymore)
         vm.prank(owner);
         vault.sweepSurplusToTreasury();
         
@@ -798,7 +790,7 @@ contract EarnVaultTest is Test {
         
         // Owner can emergency sweep surplus to treasury
         vm.prank(owner);
-        vault.emergencySweep(address(usdr), treasury, extraAmount);
+        vault.recoverERC20(address(usdr), treasury, extraAmount);
         
         // Verify treasury received the swept amount
         assertEq(usdr.balanceOf(treasury), initialTreasuryBalance + extraAmount, "Treasury should receive swept amount");
@@ -808,7 +800,7 @@ contract EarnVaultTest is Test {
     function test_RoleAccessControl() public {
         // Test yield redistributor access
         vm.prank(alice); // Not yield redistributor
-        vm.expectRevert(IEarnVaultEventsAndErrors.NotYieldRedistributor.selector);
+        vm.expectRevert();
         vault.onYield(100e18);
         
         
@@ -836,7 +828,7 @@ contract EarnVaultTest is Test {
         
         vm.prank(alice); // Not owner
         vm.expectRevert();
-        vault.emergencySweep(address(usdr), alice, 100e18);
+        vault.recoverERC20(address(usdr), alice, 100e18);
         
         vm.prank(alice); // Not owner
         vm.expectRevert();
@@ -918,7 +910,7 @@ contract EarnVaultTest is Test {
         
         // Old yield redistributor should no longer work
         vm.prank(yieldRedistributor);
-        vm.expectRevert(IEarnVaultEventsAndErrors.NotYieldRedistributor.selector);
+        vm.expectRevert();
         vault.onYield(100e18);
         
         // New yield redistributor should work

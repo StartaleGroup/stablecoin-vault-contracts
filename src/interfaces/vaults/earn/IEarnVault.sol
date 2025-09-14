@@ -19,7 +19,6 @@ interface IEarnVault {
         uint256 vaultTotalPrincipal,
         uint256 vaultClaimReserve,
         uint256 vaultGlobalIndex,
-        uint256 vaultPendingDelta,
         uint256 vaultBalance
     );
 
@@ -49,9 +48,10 @@ interface IEarnVault {
     /// @notice Sweep excess USDR yield to treasury (when vault has surplus above reserves)
     function sweepSurplusToTreasury() external;
     
-    /// @notice Set the pauser address (owner only)
+    /// @notice Recover ERC20 tokens sent to this contract (admin only)
+    function recoverERC20(address token, address to, uint256 amount) external;
+    
+    /// @notice Set the pauser address (admin only)
     function setPauser(address who) external;
 
-    /// @notice Set the treasury boost address (owner only)
-    function setTreasuryBoost(address who) external;
 }
