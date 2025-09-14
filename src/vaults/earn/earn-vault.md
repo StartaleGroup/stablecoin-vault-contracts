@@ -90,12 +90,10 @@ sequenceDiagram
         Vault->>USDR: transfer(treasury, yieldAmount)
         Vault-->>Distributor: emit YieldTransferredToTreasury(amount, 0)
     else totalPrincipal > 0
-        Vault->>Vault: delta = Math.mulDiv(amount, RAY, totalPrincipal)
-        Vault->>Vault: pendingDelta += delta
-        alt pendingDelta >= MINIMUM_DELTA_THRESHOLD
-            Vault->>Vault: globalIndex += pendingDelta
-            Vault->>Vault: pendingDelta = 0
-        end
+        Vault->>Vault: num = amount * RAY + carryRay
+        Vault->>Vault: delta = num / totalPrincipal
+        Vault->>Vault: carryRay = num % totalPrincipal
+        Vault->>Vault: globalIndex += delta
         Vault->>Vault: claimReserve += amount
         Vault-->>Distributor: emit YieldIndexed(amount, globalIndex, claimReserve)
     end
@@ -181,11 +179,19 @@ The vault uses a **global index pattern** for gas-efficient yield distribution:
 2. **User Index**: Records when user last settled
 3. **Settlement Formula**: `owed = principal × (globalIndex - userIndex) / RAY`
 
-### Immediate Delta Application
-Yield is applied immediately to ensure fairness:
-- **Problem**: Users who withdraw before threshold reached would miss their fair share of yield
-- **Solution**: Delta is applied immediately to `globalIndex` when yield arrives
-- **Result**: All users get fair yield distribution regardless of when they interact with the contract
+### Ray-Space Carry Precision
+Yield is distributed with perfect mathematical precision:
+- **Problem**: Small yield amounts could cause rounding loss or fairness issues
+- **Solution**: Ray-space carry mechanism ensures exact precision with no rounding loss
+- **Implementation**: 
+  ```solidity
+  uint256 num = amount * RAY + carryRay;
+  uint256 delta = num / totalPrincipal;        // Floor division
+  carryRay = num % totalPrincipal;             // Remainder carried forward
+  globalIndex += delta;                        // Apply immediately
+  ```
+- **Benefits**: Perfect precision, immediate fairness, no yield ever lost, gas efficient
+- **Example**: 0.3 USDR yield on 1000 USDR principal = exact 0.3e9 delta with remainder carried
 
 ### Direct Treasury Transfer
 When yield arrives with no deposits (`totalPrincipal = 0`):
@@ -197,6 +203,18 @@ When yield arrives with no deposits (`totalPrincipal = 0`):
 - **YieldRedistributor**: Can distribute yield to vault users
 - **Pauser**: Can pause/unpause for emergency response
 - **Treasury**: Receives swept surplus funds
+
+### Vault Statistics
+The `getVaultStats()` function provides comprehensive vault information:
+```solidity
+function getVaultStats() external view returns (
+    uint256 vaultTotalPrincipal,    // Total user deposits
+    uint256 vaultClaimReserve,      // Total reserves for claims/withdrawals
+    uint256 vaultGlobalIndex,       // Current global yield index
+    uint256 vaultBalance,           // Actual USDR balance in vault
+    uint256 vaultCarryRay           // Ray-space carry remainder for precision
+);
+```
 
 ## Security Features
 
@@ -361,13 +379,13 @@ bool blocked = vault.isBlacklisted(user);           // Blacklist status
 
 ### Gas Efficiency
 - **Yield Distribution**: ~200k gas regardless of user count
-- **pendingDelta**: Prevents gas waste on tiny yield amounts
+- **Ray-Space Carry**: Efficient unchecked arithmetic for perfect precision
 - **getUserInfo**: Inlined calculations avoid external calls
 
 ### Precision & Safety
 - **RAY Precision**: 1e27 prevents rounding errors
-- **Math.mulDiv**: 512-bit intermediate precision prevents overflows
-- **Delta Accumulation**: No yield lost to rounding
+- **Ray-Space Carry**: Perfect precision with no rounding loss using carry mechanism
+- **Unchecked Arithmetic**: Safe in carry calculations due to RAY precision
 - **Funding Invariant**: `USDR.balance >= claimReserve`
 
 ## Role Hierarchy

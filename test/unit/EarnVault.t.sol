@@ -57,7 +57,7 @@ contract EarnVaultTest is Test {
     // ========================================
     
     // Helper function for getting user principal (addresses review comment about naming)
-    function getUserPrincipal(address user) internal view returns (uint256) {
+    function _getUserPrincipal(address user) internal view returns (uint256) {
         return vault.principal(user);
     }
     
@@ -76,7 +76,7 @@ contract EarnVaultTest is Test {
         vault.deposit(depositAmount);
         
         // Verify state changes
-        assertEq(getUserPrincipal(alice), depositAmount, "Alice's principal should be 1000");
+        assertEq(_getUserPrincipal(alice), depositAmount, "Alice's principal should be 1000");
         assertEq(vault.totalPrincipal(), depositAmount, "Total principal should be 1000");
         assertEq(vault.claimReserve(), depositAmount, "Claim reserve should equal principal");
         assertEq(vault.userIndex(alice), RAY, "Alice's user index should be 1e27");
@@ -98,8 +98,8 @@ contract EarnVaultTest is Test {
         vault.deposit(3000e18);
         
         // Verify individual principals
-        assertEq(getUserPrincipal(alice), 1000e18, "Alice should have 1000 principal");
-        assertEq(getUserPrincipal(bob), 3000e18, "Bob should have 3000 principal");
+        assertEq(_getUserPrincipal(alice), 1000e18, "Alice should have 1000 principal");
+        assertEq(_getUserPrincipal(bob), 3000e18, "Bob should have 3000 principal");
         
         // Verify total state
         assertEq(vault.totalPrincipal(), 4000e18, "Total principal should be 4000");
@@ -129,7 +129,7 @@ contract EarnVaultTest is Test {
         vault.withdraw(withdrawAmount);
         
         // Verify state changes
-        assertEq(getUserPrincipal(alice), depositAmount - withdrawAmount, "Alice's principal should be 400");
+        assertEq(_getUserPrincipal(alice), depositAmount - withdrawAmount, "Alice's principal should be 400");
         assertEq(vault.totalPrincipal(), depositAmount - withdrawAmount, "Total principal should be 400");
         assertEq(vault.claimReserve(), depositAmount - withdrawAmount, "Claim reserve should be 400");
         assertEq(usdr.balanceOf(alice), initialBalance + withdrawAmount, "Alice should receive 600 USDR");
@@ -150,7 +150,7 @@ contract EarnVaultTest is Test {
         vault.withdraw(depositAmount);
         
         // Verify complete withdrawal
-        assertEq(getUserPrincipal(alice), 0, "Alice's principal should be 0");
+        assertEq(_getUserPrincipal(alice), 0, "Alice's principal should be 0");
         assertEq(vault.accrued(alice), 0, "Alice should have no accrued interest");
         assertEq(usdr.balanceOf(alice), initialBalance + depositAmount, "Alice should receive full amount");
     }
@@ -234,7 +234,8 @@ contract EarnVaultTest is Test {
         // Yield should go directly to treasury, not be parked
         assertEq(vault.globalIndex(), RAY, "Global index should remain unchanged");
         assertEq(vault.claimReserve(), 0, "Claim reserve should remain 0");
-        assertEq(usdr.balanceOf(treasury), initialTreasuryBalance + yieldAmount, "Treasury should receive yield directly");
+        assertEq(usdr.balanceOf(treasury), initialTreasuryBalance + yieldAmount, 
+                 "Treasury should receive yield directly");
         
         // Now Alice deposits - no parked yield to worry about
         vm.prank(alice);
@@ -379,7 +380,7 @@ contract EarnVaultTest is Test {
         vault.withdraw(depositAmount);
         
         // Verify Alice received only principal, interest remains
-        assertEq(getUserPrincipal(alice), 0, "Alice's principal should be 0");
+        assertEq(_getUserPrincipal(alice), 0, "Alice's principal should be 0");
         assertEq(vault.accrued(alice), claimableAmount, "Alice's accrued should remain unchanged");
         assertEq(usdr.balanceOf(alice), initialBalance + depositAmount, "Alice should receive only principal");
     }
@@ -405,7 +406,7 @@ contract EarnVaultTest is Test {
         vault.withdraw(withdrawAmount);
         
         // Verify Alice received 1050 USDR (1000 principal + 50 interest)
-        assertEq(getUserPrincipal(alice), 0, "Alice should have no principal");
+        assertEq(_getUserPrincipal(alice), 0, "Alice should have no principal");
         assertEq(vault.accrued(alice), 50e18, "Alice should have 50 USDR interest remaining");
         assertEq(usdr.balanceOf(alice), initialBalance + withdrawAmount, "Alice should receive 1050 USDR");
     }
@@ -431,7 +432,7 @@ contract EarnVaultTest is Test {
         vault.withdraw(withdrawAmount);
         
         // Verify Alice received 1100 USDR
-        assertEq(getUserPrincipal(alice), 0, "Alice should have no principal");
+        assertEq(_getUserPrincipal(alice), 0, "Alice should have no principal");
         assertEq(vault.accrued(alice), 0, "Alice should have no interest remaining");
         assertEq(usdr.balanceOf(alice), initialBalance + withdrawAmount, "Alice should receive 1100 USDR");
     }
@@ -460,9 +461,11 @@ contract EarnVaultTest is Test {
         vault.withdraw(withdrawAmount);
         
         // Verify interest is NOT auto-claimed
-        assertEq(getUserPrincipal(alice), depositAmount - withdrawAmount, "Alice should have 400 principal remaining");
+        assertEq(_getUserPrincipal(alice), depositAmount - withdrawAmount, 
+                 "Alice should have 400 principal remaining");
         assertEq(vault.claimable(alice), claimableBefore, "Claimable amount should remain unchanged");
-        assertEq(usdr.balanceOf(alice), initialBalance + withdrawAmount, "Alice should only receive withdrawn principal");
+        assertEq(usdr.balanceOf(alice), initialBalance + withdrawAmount, 
+                 "Alice should only receive withdrawn principal");
     }
     
     // ========================================
@@ -490,7 +493,7 @@ contract EarnVaultTest is Test {
         
         // Verify her accrued was settled and principal updated
         assertEq(vault.accrued(alice), 100e18, "Previous yield should be settled into accrued");
-        assertEq(getUserPrincipal(alice), 2000e18, "Alice should now have 2000 principal");
+        assertEq(_getUserPrincipal(alice), 2000e18, "Alice should now have 2000 principal");
         assertEq(vault.userIndex(alice), vault.globalIndex(), "Alice's index should be updated to current");
         
         // Second yield: 200 USDR on 2000 total principal
@@ -659,7 +662,7 @@ contract EarnVaultTest is Test {
         // Operations should work after unpause
         vm.prank(alice);
         vault.deposit(1000e18); // Should not revert
-        assertEq(getUserPrincipal(alice), 1000e18, "Deposit should work after unpause");
+        assertEq(_getUserPrincipal(alice), 1000e18, "Deposit should work after unpause");
     }
     
     /// @notice Test pause access control
@@ -793,7 +796,8 @@ contract EarnVaultTest is Test {
         vault.recoverERC20(address(usdr), treasury, extraAmount);
         
         // Verify treasury received the swept amount
-        assertEq(usdr.balanceOf(treasury), initialTreasuryBalance + extraAmount, "Treasury should receive swept amount");
+        assertEq(usdr.balanceOf(treasury), initialTreasuryBalance + extraAmount, 
+                 "Treasury should receive swept amount");
     }
     
     /// @notice Test role access control comprehensively
@@ -840,7 +844,7 @@ contract EarnVaultTest is Test {
         // Initially no one is blacklisted - everyone can deposit
         vm.prank(alice);
         vault.deposit(1000e18);
-        assertEq(getUserPrincipal(alice), 1000e18, "Alice should be able to deposit when not blacklisted");
+        assertEq(_getUserPrincipal(alice), 1000e18, "Alice should be able to deposit when not blacklisted");
         
         // Blacklist Bob
         vm.prank(owner);
@@ -854,7 +858,7 @@ contract EarnVaultTest is Test {
         // Alice (not blacklisted) should still be able to deposit
         vm.prank(alice);
         vault.deposit(500e18);
-        assertEq(getUserPrincipal(alice), 1500e18, "Alice should still be able to deposit");
+        assertEq(_getUserPrincipal(alice), 1500e18, "Alice should still be able to deposit");
         
         // Remove Bob from blacklist
         vm.prank(owner);
@@ -863,7 +867,7 @@ contract EarnVaultTest is Test {
         // Bob should now be able to deposit
         vm.prank(bob);
         vault.deposit(1000e18);
-        assertEq(getUserPrincipal(bob), 1000e18, "Bob should be able to deposit after removal from blacklist");
+        assertEq(_getUserPrincipal(bob), 1000e18, "Bob should be able to deposit after removal from blacklist");
     }
     
     /// @notice Test only owner can manage blacklist
@@ -984,7 +988,7 @@ contract EarnVaultTest is Test {
         vm.prank(bob);
         vault.withdrawAll();
         
-        assertEq(getUserPrincipal(bob), 0, "Bob should have no principal");
+        assertEq(_getUserPrincipal(bob), 0, "Bob should have no principal");
         assertEq(vault.claimable(bob), 0, "Bob should have no claimable");
         assertEq(usdr.balanceOf(bob), bobInitialBalance + 2000e18 + 400e18, "Bob should get principal + interest");
         
@@ -992,5 +996,178 @@ contract EarnVaultTest is Test {
         assertEq(vault.totalPrincipal(), 4000e18, "Total should be 4000 after Bob leaves");
         assertEq(vault.claimable(alice), 100e18, "Alice claimable unchanged");
         assertEq(vault.claimable(charlie), 300e18, "Charlie claimable unchanged");
+    }
+
+    // ========================================
+    // Funding Invariant Tests
+    // ========================================
+
+    /// @notice Test that funds sent without calling onYield are detected
+    function test_FundsSentWithoutOnYield() public {
+        // Alice deposits 1000 USDR
+        vm.prank(alice);
+        vault.deposit(1000e18);
+        
+        // Record initial state
+        uint256 initialBalance = usdr.balanceOf(address(vault));
+        uint256 initialClaimReserve = vault.claimReserve();
+        
+        // Yield redistributor sends 100 USDR but forgets to call onYield
+        vm.prank(yieldRedistributor);
+        usdr.transfer(address(vault), 100e18);
+        
+        // Verify vault received the funds
+        assertEq(usdr.balanceOf(address(vault)), initialBalance + 100e18, "Vault should receive funds");
+        
+        // But claimReserve and globalIndex should be unchanged
+        assertEq(vault.claimReserve(), initialClaimReserve, "ClaimReserve should be unchanged");
+        assertEq(vault.globalIndex(), RAY, "GlobalIndex should be unchanged");
+        
+        // Alice should have no claimable yield
+        assertEq(vault.claimable(alice), 0, "Alice should have no claimable yield");
+        
+        // Now when onYield is called with correct amount, it should work
+        vm.prank(yieldRedistributor);
+        vault.onYield(100e18);
+        
+        // Verify yield is properly distributed
+        assertEq(vault.claimReserve(), initialClaimReserve + 100e18, "ClaimReserve should increase");
+        // GlobalIndex should be 1.1e27 (100e18 * 1e27 / 1000e18 = 0.1e27, so RAY + 0.1e27 = 1.1e27)
+        assertEq(vault.globalIndex(), RAY + 1e26, "GlobalIndex should increase");
+        assertEq(vault.claimable(alice), 100e18, "Alice should now have claimable yield");
+    }
+
+    /// @notice Test that onYield with incorrect amount fails funding check
+    function test_OnYieldWithIncorrectAmount() public {
+        // Alice deposits 1000 USDR
+        vm.prank(alice);
+        vault.deposit(1000e18);
+        
+        // Yield redistributor sends 100 USDR
+        vm.prank(yieldRedistributor);
+        usdr.transfer(address(vault), 100e18);
+        
+        // Try to call onYield with excessive amount (200 instead of 100)
+        vm.prank(yieldRedistributor);
+        vm.expectRevert(IEarnVaultEventsAndErrors.InsufficientFunding.selector);
+        vault.onYield(200e18);
+        
+        // Verify state is unchanged
+        assertEq(vault.claimReserve(), 1000e18, "ClaimReserve should be unchanged");
+        assertEq(vault.globalIndex(), RAY, "GlobalIndex should be unchanged");
+        assertEq(vault.claimable(alice), 0, "Alice should have no claimable yield");
+        
+        // Now call onYield with correct amount
+        vm.prank(yieldRedistributor);
+        vault.onYield(100e18);
+        
+        // Verify yield is properly distributed
+        assertEq(vault.claimReserve(), 1100e18, "ClaimReserve should increase by 100");
+        assertEq(vault.globalIndex(), RAY + 1e26, "GlobalIndex should increase");
+        assertEq(vault.claimable(alice), 100e18, "Alice should have claimable yield");
+    }
+
+    /// @notice Test that onYield with amount larger than sent funds fails
+    function test_OnYieldWithExcessiveAmount() public {
+        // Alice deposits 1000 USDR
+        vm.prank(alice);
+        vault.deposit(1000e18);
+        
+        // Yield redistributor sends 100 USDR
+        vm.prank(yieldRedistributor);
+        usdr.transfer(address(vault), 100e18);
+        
+        // Try to call onYield with excessive amount (200 instead of 100)
+        vm.prank(yieldRedistributor);
+        vm.expectRevert(IEarnVaultEventsAndErrors.InsufficientFunding.selector);
+        vault.onYield(200e18);
+        
+        // Verify state is unchanged
+        assertEq(vault.claimReserve(), 1000e18, "ClaimReserve should be unchanged");
+        assertEq(vault.globalIndex(), RAY, "GlobalIndex should be unchanged");
+        assertEq(vault.claimable(alice), 0, "Alice should have no claimable yield");
+    }
+
+    /// @notice Test funding invariant with multiple users and partial yield
+    function test_FundingInvariantWithMultipleUsers() public {
+        // Alice deposits 1000 USDR, Bob deposits 2000 USDR
+        vm.prank(alice);
+        vault.deposit(1000e18);
+        vm.prank(bob);
+        vault.deposit(2000e18);
+        
+        // Yield redistributor sends 150 USDR but calls onYield with 200 USDR (excessive)
+        vm.prank(yieldRedistributor);
+        usdr.transfer(address(vault), 150e18);
+        
+        // Should fail because balance (3150) < claimReserve (3000) + amount (200)
+        vm.prank(yieldRedistributor);
+        vm.expectRevert(IEarnVaultEventsAndErrors.InsufficientFunding.selector);
+        vault.onYield(200e18);
+        
+        // Now call onYield with correct amount
+        vm.prank(yieldRedistributor);
+        vault.onYield(150e18);
+        
+        // Verify proportional distribution
+        assertEq(vault.claimReserve(), 3150e18, "ClaimReserve should increase by 150");
+        // 150e18 * 1e27 / 3000e18 = 5e25
+        assertEq(vault.globalIndex(), RAY + 5e25, "GlobalIndex should increase by 5e25");
+        
+        // Alice should get 1/3 of yield (50 USDR), Bob should get 2/3 (100 USDR)
+        assertEq(vault.claimable(alice), 50e18, "Alice should have 50 USDR claimable");
+        assertEq(vault.claimable(bob), 100e18, "Bob should have 100 USDR claimable");
+    }
+
+    /// @notice Test funding invariant when no deposits exist
+    function test_FundingInvariantNoDeposits() public {
+        // No deposits, but yield redistributor sends 100 USDR
+        vm.prank(yieldRedistributor);
+        usdr.transfer(address(vault), 100e18);
+        
+        // onYield should work and transfer to treasury
+        vm.prank(yieldRedistributor);
+        vault.onYield(100e18);
+        
+        // Verify treasury received the funds
+        assertEq(usdr.balanceOf(treasury), 100e18, "Treasury should receive yield");
+        assertEq(usdr.balanceOf(address(vault)), 0, "Vault should have no USDR");
+        
+        // But if we try to call onYield with wrong amount, it should fail
+        vm.prank(yieldRedistributor);
+        usdr.transfer(address(vault), 50e18);
+        
+        vm.prank(yieldRedistributor);
+        vm.expectRevert(IEarnVaultEventsAndErrors.InsufficientFunding.selector);
+        vault.onYield(100e18); // Trying to claim 100 when only 50 was sent
+    }
+
+    /// @notice Test that surplus funds can be swept after incorrect onYield attempts
+    function test_SurplusAfterIncorrectOnYield() public {
+        // Alice deposits 1000 USDR
+        vm.prank(alice);
+        vault.deposit(1000e18);
+        
+        // Yield redistributor sends 200 USDR but only calls onYield for 100 USDR
+        vm.prank(yieldRedistributor);
+        usdr.transfer(address(vault), 200e18);
+        
+        vm.prank(yieldRedistributor);
+        vault.onYield(100e18);
+        
+        // Verify 100 USDR was distributed
+        assertEq(vault.claimReserve(), 1100e18, "ClaimReserve should be 1100");
+        assertEq(vault.claimable(alice), 100e18, "Alice should have 100 USDR claimable");
+        
+        // Vault should have 200 USDR total (1000 + 200)
+        assertEq(usdr.balanceOf(address(vault)), 1200e18, "Vault should have 1200 USDR");
+        
+        // Admin can sweep the surplus (100 USDR that wasn't distributed)
+        vm.prank(owner);
+        vault.sweepSurplusToTreasury();
+        
+        // Treasury should receive the surplus
+        assertEq(usdr.balanceOf(treasury), 100e18, "Treasury should receive surplus");
+        assertEq(usdr.balanceOf(address(vault)), 1100e18, "Vault should have exactly claimReserve");
     }
 }

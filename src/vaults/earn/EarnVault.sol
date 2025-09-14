@@ -48,6 +48,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
     uint256 public totalPrincipal;       // sum of user principals
     uint256 public globalIndex = RAY;    // global index (scaled 1e27 - RAY precision)
     uint256 public claimReserve;         // assets available to pay claims/withdraws
+    uint256 private _carryRay;           // remainder in "RAY * principal" space for exact precision
 
     mapping(address => uint256) public principal;
     mapping(address => uint256) public userIndex;
@@ -197,12 +198,14 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
         uint256 vaultTotalPrincipal,
         uint256 vaultClaimReserve,
         uint256 vaultGlobalIndex,
-        uint256 vaultBalance
+        uint256 vaultBalance,
+        uint256 vaultCarryRay
     ) {
         vaultTotalPrincipal = totalPrincipal;
         vaultClaimReserve = claimReserve;
         vaultGlobalIndex = globalIndex;
         vaultBalance = USDR.balanceOf(address(this));
+        vaultCarryRay = _carryRay;
     }
 
     // =========================
@@ -372,16 +375,15 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
             return;
         }
         
-        // Calculate delta for this yield
-        uint256 delta = Math.mulDiv(amount, RAY, totalPrincipal);
-        
-        // Apply delta immediately to ensure fairness for all users
-        // This prevents users who withdraw before threshold from missing yield
-        if (globalIndex + delta < globalIndex) revert ArithmeticOverflow();
-        globalIndex += delta;
-        
-        // Note: We no longer use pendingDelta since we apply delta immediately
-        // This ensures all users get fair yield distribution
+        // Exact, immediate index update with Ray remainder carry
+        // delta = floor( (amount*RAY + _carryRay) / totalPrincipal )
+        // _carryRay = (amount*RAY + _carryRay) % totalPrincipal
+        unchecked {
+            uint256 num = amount * RAY + _carryRay;
+            uint256 delta = num / totalPrincipal;
+            _carryRay = num % totalPrincipal;
+            globalIndex += delta;
+        }
         
         claimReserve += amount;
         emit YieldIndexed(amount, globalIndex, claimReserve);

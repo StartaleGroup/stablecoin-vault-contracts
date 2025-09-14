@@ -19,7 +19,8 @@ interface IEarnVault {
         uint256 vaultTotalPrincipal,
         uint256 vaultClaimReserve,
         uint256 vaultGlobalIndex,
-        uint256 vaultBalance
+        uint256 vaultBalance,
+        uint256 vaultCarryRay
     );
 
     // ---- user flows (OFF path) ----
