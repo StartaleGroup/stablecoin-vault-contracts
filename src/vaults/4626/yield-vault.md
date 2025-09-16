@@ -7,7 +7,7 @@ The `SUSDRVault` is a passive ERC4626-compliant vault that allows users to depos
 ## Key Features
 
 - **ERC4626 Compliance**: Full compatibility with the ERC4626 tokenized vault standard
-- **Passive Strategy**: No active yield-generating strategy - relies on external asset donations
+- **Passive Strategy**: No active yield-generating strategy - relies on external yield inflow of the vault asset USDR.
 - **Access Control**: Role-based permissions for administrative functions
 - **Pausable**: Can be paused/unpaused by authorized accounts
 - **Reentrancy Protection**: All critical functions are protected against reentrancy attacks
