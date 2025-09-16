@@ -1170,4 +1170,67 @@ contract EarnVaultTest is Test {
         assertEq(usdr.balanceOf(treasury), 100e18, "Treasury should receive surplus");
         assertEq(usdr.balanceOf(address(vault)), 1100e18, "Vault should have exactly claimReserve");
     }
+
+    // ========================================
+    // Realistic Large Amount Tests
+    // ========================================
+
+    /// @notice Test with realistic large yield amounts (high but not impossible)
+    function test_RealisticLargeYieldAmount() public {
+        // Alice deposits 1M USDR
+        vm.prank(alice);
+        vault.deposit(1_000_000e18);
+        
+        // Test with a realistic large yield amount (1M USDR = 100% yield)
+        // This is large but won't overflow: 1e6 * 1e27 = 1e33, which is safe
+        uint256 largeYield = 1_000_000e18; // 1 million USDR
+        
+        // Yield redistributor sends the large amount
+        vm.prank(yieldRedistributor);
+        usdr.transfer(address(vault), largeYield);
+        
+        // Call onYield with the large amount
+        vm.prank(yieldRedistributor);
+        vault.onYield(largeYield);
+        
+        // Verify the distribution worked
+        assertEq(vault.claimReserve(), 1_000_000e18 + largeYield, "ClaimReserve should include large yield");
+        
+        // Check that Alice gets the proportional amount (100% since she's the only depositor)
+        assertEq(vault.claimable(alice), largeYield, "Alice should get all the large yield");
+        
+        // Verify globalIndex increased correctly
+        // For 1M USDR on 1M USDR principal: delta = 1e6 * 1e27 / 1e6 = 1e27
+        uint256 expectedDelta = 1e27; // 1 million * 1e27 / 1 million = 1e27
+        assertEq(vault.globalIndex(), RAY + expectedDelta, "GlobalIndex should increase by 1e27");
+    }
+
+    /// @notice Test with very high yield percentage (100% yield - extreme but possible)
+    function test_VeryHighYieldPercentage() public {
+        // Alice deposits 1000 USDR
+        vm.prank(alice);
+        vault.deposit(1000e18);
+        
+        // Test with 100% yield (1000 USDR yield on 1000 USDR principal)
+        uint256 highYield = 1000e18; // 100% yield
+        
+        // Yield redistributor sends the high yield
+        vm.prank(yieldRedistributor);
+        usdr.transfer(address(vault), highYield);
+        
+        // Call onYield with the high yield
+        vm.prank(yieldRedistributor);
+        vault.onYield(highYield);
+        
+        // Verify the distribution worked
+        assertEq(vault.claimReserve(), 1000e18 + highYield, "ClaimReserve should include high yield");
+        
+        // Check that Alice gets the proportional amount
+        assertEq(vault.claimable(alice), highYield, "Alice should get all the high yield");
+        
+        // Verify globalIndex increased correctly
+        // For 1000 USDR on 1000 USDR principal: delta = 1000e18 * 1e27 / 1000e18 = 1e27
+        uint256 expectedDelta = 1e27; // 1000 * 1e27 / 1000 = 1e27
+        assertEq(vault.globalIndex(), RAY + expectedDelta, "GlobalIndex should increase by 1e27");
+    }
 }

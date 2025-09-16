@@ -27,6 +27,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
     uint256 public constant RAY = 1e27;  // High precision for yield calculations (MakerDAO standard)
     
     
+    
     // -------- Roles --------
     bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
     bytes32 public constant YIELD_REDISTRIBUTOR_ROLE = keccak256("YIELD_REDISTRIBUTOR_ROLE");
@@ -360,20 +361,17 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
         
         // Verify actual balance before updating accounting
         uint256 bal = USDR.balanceOf(address(this));
-        if (totalPrincipal == 0) {
-            // When no deposits exist, just need enough for the transfer to treasury
-            if (bal < amount) revert InsufficientFunding();
-        } else {
-            // When deposits exist, need enough for claimReserve + new yield
-            if (bal < claimReserve + amount) revert InsufficientFunding();
-        }
         
         if (totalPrincipal == 0) {
-            // No deposits exist - transfer yield directly to treasury
+            // No deposits: just need enough for treasury transfer
+            if (bal < amount) revert InsufficientFunding();
             USDR.safeTransfer(treasury, amount);
             emit YieldTransferredToTreasury(amount);
             return;
         }
+        
+        // Deposits exist: need enough for claimReserve + new yield
+        if (bal < claimReserve + amount) revert InsufficientFunding();
         
         // Exact, immediate index update with Ray remainder carry
         // delta = floor( (amount*RAY + _carryRay) / totalPrincipal )
