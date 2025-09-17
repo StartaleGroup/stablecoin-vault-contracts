@@ -19,8 +19,8 @@ interface IEarnVault {
         uint256 vaultTotalPrincipal,
         uint256 vaultClaimReserve,
         uint256 vaultGlobalIndex,
-        uint256 vaultPendingDelta,
-        uint256 vaultBalance
+        uint256 vaultBalance,
+        uint256 vaultCarryRay
     );
 
     // ---- user flows (OFF path) ----
@@ -31,7 +31,11 @@ interface IEarnVault {
         uint8 v, bytes32 r, bytes32 s
     ) external;
 
+    /// @notice Withdraw any amount up to total value (principal + accrued interest)
     function withdraw(uint256 amountPrincipal) external;
+
+    /// @notice Withdraw all funds (principal + all accrued interest)
+    function withdrawAll() external;
 
     /// @notice Claim all accrued USDR interest to msg.sender
     function claim() external;
@@ -45,6 +49,10 @@ interface IEarnVault {
     /// @notice Sweep excess USDR yield to treasury (when vault has surplus above reserves)
     function sweepSurplusToTreasury() external;
     
-    /// @notice Set the pauser address (owner only)
+    /// @notice Recover ERC20 tokens sent to this contract (admin only)
+    function recoverERC20(address token, address to, uint256 amount) external;
+    
+    /// @notice Set the pauser address (admin only)
     function setPauser(address who) external;
+
 }
