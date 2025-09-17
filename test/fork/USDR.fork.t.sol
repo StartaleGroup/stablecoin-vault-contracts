@@ -436,4 +436,9 @@ contract ForkUSDR is Test {
         console2.log("USDR Contract M Balance:", mTokenERC20.balanceOf(SEPOLIA_USDR_ADDRESS));
         console2.log("USDR Total Supply:", usdrToken.totalSupply());
     }
+
+    // Todo
+    // Testing yield accural based on index
+    // setIsEarning call be called by appropriate mocks on M token (Or we wait for M0 team to add our extension as earner)
+    // then based on M token balance in our USDR contract and currentIndex, we would see yield.
 }
