@@ -2,13 +2,14 @@
 
 ## Overview
 
-Users deposit USDR tokens and earn claimable yield over time. Users maintain full control over their principal and can claim accrued interest separately or automatically on full withdrawal.
+Users deposit USDR tokens and earn claimable yield over time. Users maintain full control over their principal and can claim accrued interest separately or withdraw any amount including partial interest.
 
 ## Key Features
 
 - **Principal Protection**: Withdraw original deposit anytime
 - **Claimable Yield**: Interest accrues continuously, claim separately
-- **Auto-Claim on Full Withdrawal**: Complete withdrawals automatically claim all interest
+- **Flexible Withdrawal**: Withdraw any amount (principal + partial interest)
+- **Convenience Function**: `withdrawAll()` for complete withdrawal
 - **Proportional Distribution**: Yield distributed based on deposit amounts
 - **RAY Precision**: 1e27 precision for zero yield loss (MakerDAO standard)
 - **Direct Treasury Transfer**: Yield goes directly to treasury when no deposits exist
@@ -23,7 +24,8 @@ Users deposit USDR tokens and earn claimable yield over time. Users maintain ful
 // Write functions
 deposit(uint256 amount)                    // Deposit USDR
 depositWithPermit(...)                     // Deposit with permit (gasless approval)
-withdraw(uint256 amount)                   // Withdraw principal (auto-claims on full withdrawal)
+withdraw(uint256 amount)                   // Withdraw any amount (principal + partial interest)
+withdrawAll()                              // Withdraw everything (principal + all interest)
 claim()                                    // Claim all accrued interest
 
 // Read functions
@@ -54,6 +56,120 @@ emergencySweep(address token, address to, uint256 amount)  // Emergency token re
 getVaultStats() → (uint256 totalPrincipal, uint256 claimReserve, uint256 globalIndex, uint256 pendingDelta, uint256 balance)
 ```
 
+## Sequence Diagrams
+
+### Basic User Flow
+```mermaid
+sequenceDiagram
+    participant User
+    participant Vault
+    participant USDR
+    
+    User->>USDR: approve(vault, amount)
+    User->>Vault: deposit(amount)
+    Vault->>USDR: transferFrom(user, vault, amount)
+    Vault->>Vault: _settle(user)
+    Vault->>Vault: principal[user] += amount
+    Vault->>Vault: totalPrincipal += amount
+    Vault->>Vault: claimReserve += amount
+    Vault-->>User: emit Deposit(user, amount)
+```
+
+### Yield Distribution Flow
+```mermaid
+sequenceDiagram
+    participant Distributor
+    participant Vault
+    participant USDR
+    participant Treasury
+    
+    Distributor->>USDR: transfer(vault, yieldAmount)
+    Distributor->>Vault: onYield(yieldAmount)
+    
+    alt totalPrincipal == 0
+        Vault->>USDR: transfer(treasury, yieldAmount)
+        Vault-->>Distributor: emit YieldTransferredToTreasury(amount, 0)
+    else totalPrincipal > 0
+        Vault->>Vault: num = amount * RAY + carryRay
+        Vault->>Vault: delta = num / totalPrincipal
+        Vault->>Vault: carryRay = num % totalPrincipal
+        Vault->>Vault: globalIndex += delta
+        Vault->>Vault: claimReserve += amount
+        Vault-->>Distributor: emit YieldIndexed(amount, globalIndex, claimReserve)
+    end
+```
+
+### User Withdrawal Flow
+```mermaid
+sequenceDiagram
+    participant User
+    participant Vault
+    participant USDR
+    
+    User->>Vault: withdraw(amount)
+    Vault->>Vault: _settle(user)
+    Vault->>Vault: check amount <= totalValue[user]
+    
+    alt amount <= principal[user] (Principal Only)
+        Vault->>Vault: principalToWithdraw = amount
+        Vault->>Vault: interestToClaim = 0
+        Vault->>USDR: transfer(user, amount)
+        Vault-->>User: emit Withdraw(user, amount)
+    else amount > principal[user] (Principal + Interest)
+        Vault->>Vault: principalToWithdraw = principal[user]
+        Vault->>Vault: interestToClaim = amount - principal[user]
+        Vault->>USDR: transfer(user, amount)
+        Vault-->>User: emit Withdraw(user, principalToWithdraw)
+        Vault-->>User: emit InterestClaimed(user, interestToClaim)
+    end
+    
+    Vault->>Vault: principal[user] -= principalToWithdraw
+    Vault->>Vault: accrued[user] -= interestToClaim
+    Vault->>Vault: totalPrincipal -= principalToWithdraw
+    Vault->>Vault: claimReserve -= amount
+```
+
+### WithdrawAll Flow
+```mermaid
+sequenceDiagram
+    participant User
+    participant Vault
+    participant USDR
+    
+    User->>Vault: withdrawAll()
+    Vault->>Vault: _settle(user)
+    Vault->>Vault: totalAmount = principal[user] + accrued[user]
+    
+    Vault->>Vault: principal[user] = 0
+    Vault->>Vault: accrued[user] = 0
+    Vault->>Vault: totalPrincipal -= principal[user]
+    Vault->>Vault: claimReserve -= totalAmount
+    Vault->>USDR: transfer(user, totalAmount)
+    Vault-->>User: emit Withdraw(user, originalPrincipal)
+    Vault-->>User: emit InterestClaimed(user, originalAccrued)
+```
+
+### Emergency Operations Flow
+```mermaid
+sequenceDiagram
+    participant Owner
+    participant Vault
+    participant USDR
+    participant Treasury
+    
+    Owner->>Vault: pause()
+    Vault->>Vault: _pause()
+    
+    Owner->>Vault: sweepSurplusToTreasury()
+    Vault->>Vault: check paused()
+    Vault->>Vault: surplus = balance - claimReserve
+    Vault->>USDR: transfer(treasury, surplus)
+    Vault-->>Owner: emit EmergencySweep(USDR, treasury, surplus)
+    
+    Owner->>Vault: unpause()
+    Vault->>Vault: _unpause()
+```
+
 ## How It Works
 
 ### Global Index Accounting
@@ -63,11 +179,19 @@ The vault uses a **global index pattern** for gas-efficient yield distribution:
 2. **User Index**: Records when user last settled
 3. **Settlement Formula**: `owed = principal × (globalIndex - userIndex) / RAY`
 
-### Pending Delta Accumulation
-Small yield amounts are accumulated to prevent precision loss:
-- **Problem**: Very small yields might round to zero delta
-- **Solution**: `pendingDelta` accumulates small deltas until `>= 1e18` threshold
-- **Result**: No yield is ever lost, even with tiny distributions
+### Ray-Space Carry Precision
+Yield is distributed with perfect mathematical precision:
+- **Problem**: Small yield amounts could cause rounding loss or fairness issues
+- **Solution**: Ray-space carry mechanism ensures exact precision with no rounding loss
+- **Implementation**: 
+  ```solidity
+  uint256 num = amount * RAY + carryRay;
+  uint256 delta = num / totalPrincipal;        // Floor division
+  carryRay = num % totalPrincipal;             // Remainder carried forward
+  globalIndex += delta;                        // Apply immediately
+  ```
+- **Benefits**: Perfect precision, immediate fairness, no yield ever lost, gas efficient
+- **Example**: 0.3 USDR yield on 1000 USDR principal = exact 0.3e9 delta with remainder carried
 
 ### Direct Treasury Transfer
 When yield arrives with no deposits (`totalPrincipal = 0`):
@@ -80,6 +204,18 @@ When yield arrives with no deposits (`totalPrincipal = 0`):
 - **Pauser**: Can pause/unpause for emergency response
 - **Treasury**: Receives swept surplus funds
 
+### Vault Statistics
+The `getVaultStats()` function provides comprehensive vault information:
+```solidity
+function getVaultStats() external view returns (
+    uint256 vaultTotalPrincipal,    // Total user deposits
+    uint256 vaultClaimReserve,      // Total reserves for claims/withdrawals
+    uint256 vaultGlobalIndex,       // Current global yield index
+    uint256 vaultBalance,           // Actual USDR balance in vault
+    uint256 vaultCarryRay           // Ray-space carry remainder for precision
+);
+```
+
 ## Security Features
 
 - **Funding Verification**: All yield functions verify actual token balance
@@ -90,6 +226,30 @@ When yield arrives with no deposits (`totalPrincipal = 0`):
 - **Permit Safety**: Graceful handling of tokens that don't support permit
 - **Settlement Ordering**: Critical `_settle()` called before state changes
 - **ETH Safety**: Contract rejects ETH to prevent accidental loss
+
+## Withdrawal Examples
+
+### Withdrawal Scenarios
+Given: User has 1000 USDR principal + 100 USDR accrued interest
+
+| Function Call | Amount | Result | Remaining |
+|---------------|--------|--------|-----------|
+| `withdraw(500)` | 500 USDR | Gets 500 USDR (principal only) | 500 principal + 100 interest |
+| `withdraw(1000)` | 1000 USDR | Gets 1000 USDR (principal only) | 0 principal + 100 interest |
+| `withdraw(1050)` | 1050 USDR | Gets 1050 USDR (1000 principal + 50 interest) | 0 principal + 50 interest |
+| `withdraw(1100)` | 1100 USDR | Gets 1100 USDR (1000 principal + 100 interest) | 0 principal + 0 interest |
+| `withdrawAll()` | - | Gets 1100 USDR (everything) | 0 principal + 0 interest |
+
+### Key Features
+- **Flexible**: `withdraw(amount)` can withdraw any amount up to total value
+- **Precise**: Can withdraw principal + partial interest for exact amounts
+- **Convenience**: `withdrawAll()` for simple "withdraw everything" use cases
+- **Clear separation**: `withdraw()` for specific amounts, `withdrawAll()` for everything
+
+### Important: Principal Withdrawal Impact
+- **Withdrawing principal stops future interest accrual** on that amount
+- **Remaining accrued interest can still be claimed** separately
+- **This is standard DeFi behavior** - no principal = no new interest
 
 ## Examples
 
@@ -124,15 +284,19 @@ vault.claimable(alice);  // Returns 100e18 (25% of 400)
 vault.claimable(bob);    // Returns 300e18 (75% of 400)
 ```
 
-### Example 3: Full Withdrawal (Auto-Claim)
+### Example 3: Full Withdrawal Options
 ```solidity
 // Alice has 1000 principal + 50 claimable
 vault.principal(alice);   // 1000e18
 vault.claimable(alice);   // 50e18
 
-// Full withdrawal automatically claims interest
+// Option 1: Withdraw exact principal (interest remains)
 vault.withdraw(1000e18);  
-// Result: Alice receives 1050 USDR (1000 + 50)
+// Result: Alice receives 1000 USDR, 50 USDR interest remains
+
+// Option 2: Withdraw everything using withdrawAll()
+vault.withdrawAll();      
+// Result: Alice receives 1050 USDR (1000 + 50), nothing remains
 ```
 
 ### Example 4: Direct Treasury Transfer
@@ -209,113 +373,19 @@ bool blocked = vault.isBlacklisted(user);           // Blacklist status
 - **`Withdraw(address indexed user, uint256 amount)`**: User withdraws principal
 - **`InterestClaimed(address indexed user, uint256 amount)`**: User claims accrued interest
 - **`YieldIndexed(uint256 amount, uint256 newGlobalIndex, uint256 newClaimReserve)`**: Yield distributed to users
-- **`YieldParked(uint256 amount, uint256 totalParked)`**: Yield transferred to treasury when no deposits exist
-
-## Sequence Diagrams
-
-### Basic User Flow
-```mermaid
-sequenceDiagram
-    participant User
-    participant Vault
-    participant USDR
-    
-    User->>USDR: approve(vault, amount)
-    User->>Vault: deposit(amount)
-    Vault->>USDR: transferFrom(user, vault, amount)
-    Vault->>Vault: _settle(user)
-    Vault->>Vault: principal[user] += amount
-    Vault->>Vault: totalPrincipal += amount
-    Vault->>Vault: claimReserve += amount
-    Vault-->>User: emit Deposit(user, amount)
-```
-
-### Yield Distribution Flow
-```mermaid
-sequenceDiagram
-    participant Distributor
-    participant Vault
-    participant USDR
-    participant Treasury
-    
-    Distributor->>USDR: transfer(vault, yieldAmount)
-    Distributor->>Vault: onYield(yieldAmount)
-    
-    alt totalPrincipal == 0
-        Vault->>USDR: transfer(treasury, yieldAmount)
-        Vault-->>Distributor: emit YieldParked(amount, 0)
-    else totalPrincipal > 0
-        Vault->>Vault: delta = Math.mulDiv(amount, RAY, totalPrincipal)
-        Vault->>Vault: pendingDelta += delta
-        alt pendingDelta >= MINIMUM_DELTA_THRESHOLD
-            Vault->>Vault: globalIndex += pendingDelta
-            Vault->>Vault: pendingDelta = 0
-        end
-        Vault->>Vault: claimReserve += amount
-        Vault-->>Distributor: emit YieldIndexed(amount, globalIndex, claimReserve)
-    end
-```
-
-### User Withdrawal Flow
-```mermaid
-sequenceDiagram
-    participant User
-    participant Vault
-    participant USDR
-    
-    User->>Vault: withdraw(amount)
-    Vault->>Vault: _settle(user)
-    Vault->>Vault: check amount <= principal[user]
-    
-    alt amount == principal[user] (Full Withdrawal)
-        Vault->>Vault: interestOut = accrued[user]
-        Vault->>Vault: accrued[user] = 0
-        Vault->>Vault: claimReserve -= interestOut
-        Vault->>USDR: transfer(user, amount + interestOut)
-        Vault-->>User: emit Withdraw(user, amount)
-        Vault-->>User: emit InterestClaimed(user, interestOut)
-    else amount < principal[user] (Partial Withdrawal)
-        Vault->>USDR: transfer(user, amount)
-        Vault-->>User: emit Withdraw(user, amount)
-    end
-    
-    Vault->>Vault: principal[user] -= amount
-    Vault->>Vault: totalPrincipal -= amount
-    Vault->>Vault: claimReserve -= amount
-```
-
-### Emergency Operations Flow
-```mermaid
-sequenceDiagram
-    participant Owner
-    participant Vault
-    participant USDR
-    participant Treasury
-    
-    Owner->>Vault: pause()
-    Vault->>Vault: _pause()
-    
-    Owner->>Vault: sweepSurplusToTreasury()
-    Vault->>Vault: check paused()
-    Vault->>Vault: surplus = balance - claimReserve
-    Vault->>USDR: transfer(treasury, surplus)
-    Vault-->>Owner: emit EmergencySweep(USDR, treasury, surplus)
-    
-    Owner->>Vault: unpause()
-    Vault->>Vault: _unpause()
-```
+- **`YieldTransferredToTreasury(uint256 amount)`**: Yield transferred to treasury when no deposits exist
 
 ## Technical Notes
 
 ### Gas Efficiency
 - **Yield Distribution**: ~200k gas regardless of user count
-- **pendingDelta**: Prevents gas waste on tiny yield amounts
+- **Ray-Space Carry**: Efficient unchecked arithmetic for perfect precision
 - **getUserInfo**: Inlined calculations avoid external calls
 
 ### Precision & Safety
 - **RAY Precision**: 1e27 prevents rounding errors
-- **Math.mulDiv**: 512-bit intermediate precision prevents overflows
-- **Delta Accumulation**: No yield lost to rounding
+- **Ray-Space Carry**: Perfect precision with no rounding loss using carry mechanism
+- **Unchecked Arithmetic**: Safe in carry calculations due to RAY precision
 - **Funding Invariant**: `USDR.balance >= claimReserve`
 
 ## Role Hierarchy

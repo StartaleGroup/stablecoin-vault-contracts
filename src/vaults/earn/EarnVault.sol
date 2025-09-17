@@ -5,8 +5,7 @@ import {IERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.so
 import {IERC20Permit} from "lib/openzeppelin-contracts/contracts/token/ERC20/extensions/IERC20Permit.sol";
 import {SafeERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Math} from "lib/openzeppelin-contracts/contracts/utils/math/Math.sol";
-import {Ownable} from "lib/openzeppelin-contracts/contracts/access/Ownable.sol";
-import {Ownable2Step} from "lib/openzeppelin-contracts/contracts/access/Ownable2Step.sol";
+import {AccessControl} from "lib/openzeppelin-contracts/contracts/access/AccessControl.sol";
 import {Pausable} from "lib/openzeppelin-contracts/contracts/utils/Pausable.sol";
 import {ReentrancyGuard} from "lib/openzeppelin-contracts/contracts/utils/ReentrancyGuard.sol";
 import {IEarnVault} from "../../interfaces/vaults/earn/IEarnVault.sol";
@@ -21,17 +20,22 @@ import {IEarnVaultEventsAndErrors} from "../../interfaces/vaults/earn/IEarnVault
 ///   - When yield arrives and totalPrincipal>0: globalIndex += amount*RAY/totalPrincipal.
 ///   - If totalPrincipal==0 at yield time: amount is transferred directly to treasury.
 /// Invariant (funding): USDR balance >= claimReserve.
-contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausable, ReentrancyGuard {
+contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Pausable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     // -------- Constants --------
     uint256 public constant RAY = 1e27;  // High precision for yield calculations (MakerDAO standard)
     
-    /// @dev Minimum delta threshold before applying to globalIndex (prevents gas waste on tiny yields)
-    uint256 public constant MINIMUM_DELTA_THRESHOLD = 1e18;  // 1 RAY unit
+    
+    
+    // -------- Roles --------
+    bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
+    bytes32 public constant YIELD_REDISTRIBUTOR_ROLE = keccak256("YIELD_REDISTRIBUTOR_ROLE");
+    bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
 
     // -------- Immutables --------
     IERC20 public immutable USDR;
+
 
     // -------- Roles / endpoints --------
     address public yieldRedistributor;   // allowed to call onYield
@@ -45,7 +49,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     uint256 public totalPrincipal;       // sum of user principals
     uint256 public globalIndex = RAY;    // global index (scaled 1e27 - RAY precision)
     uint256 public claimReserve;         // assets available to pay claims/withdraws
-    uint256 public pendingDelta;         // accumulated small deltas to prevent precision loss from tiny yields
+    uint256 private _carryRay;           // remainder in "RAY * principal" space for exact precision
 
     mapping(address => uint256) public principal;
     mapping(address => uint256) public userIndex;
@@ -54,15 +58,21 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     // -------- Events and Errors --------
     // All events and errors are inherited from IEarnVaultEventsAndErrors interface
 
-    constructor(address usdr, address owner, address yieldRedistributorAddr, address treasuryAddr, address pauserAddr) 
-        Ownable(owner) {
-        if (usdr == address(0) || owner == address(0)) revert CanNotBeZeroAddress();
+    constructor(address usdr, address admin, address yieldRedistributorAddr, address treasuryAddr, address pauserAddr) {
+        if (usdr == address(0) || admin == address(0)) revert CanNotBeZeroAddress();
         if (yieldRedistributorAddr == address(0) || treasuryAddr == address(0)) revert CanNotBeZeroAddress();
         if (pauserAddr == address(0)) revert CanNotBeZeroAddress();
+        
         USDR = IERC20(usdr);
         yieldRedistributor = yieldRedistributorAddr;
         treasury = treasuryAddr;
         pauser = pauserAddr;
+        
+        // Set up roles
+        _grantRole(DEFAULT_ADMIN_ROLE, admin);
+        _grantRole(ADMIN_ROLE, admin);
+        _grantRole(YIELD_REDISTRIBUTOR_ROLE, yieldRedistributorAddr);
+        _grantRole(PAUSER_ROLE, pauserAddr);
     }
 
     // =========================
@@ -71,16 +81,18 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
 
     /// @notice Set the yield redistributor address
     /// @param who New yield redistributor address
-    function setYieldRedistributor(address who) external onlyOwner {
+    function setYieldRedistributor(address who) external onlyRole(ADMIN_ROLE) {
         if (who == address(0)) revert CanNotBeZeroAddress();
         address oldRedistributor = yieldRedistributor;
+        _revokeRole(YIELD_REDISTRIBUTOR_ROLE, yieldRedistributor);
+        _grantRole(YIELD_REDISTRIBUTOR_ROLE, who);
         yieldRedistributor = who;
         emit YieldRedistributorChanged(msg.sender, oldRedistributor, who);
     }
 
     /// @notice Set the treasury address  
     /// @param who New treasury address
-    function setTreasury(address who) external onlyOwner {
+    function setTreasury(address who) external onlyRole(ADMIN_ROLE) {
         if (who == address(0)) revert CanNotBeZeroAddress();
         address oldTreasury = treasury;
         treasury = who;
@@ -89,33 +101,36 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
 
     /// @notice Set the pauser address
     /// @param who New pauser address
-    function setPauser(address who) external onlyOwner {
+    function setPauser(address who) external onlyRole(ADMIN_ROLE) {
         if (who == address(0)) revert CanNotBeZeroAddress();
         address oldPauser = pauser;
+        _revokeRole(PAUSER_ROLE, pauser);
+        _grantRole(PAUSER_ROLE, who);
         pauser = who;
         emit PauserChanged(msg.sender, oldPauser, who);
     }
 
+
     /// @notice Set blacklist status for an address
     /// @param who Address to update blacklist status for
     /// @param blacklisted Whether address should be blacklisted
-    function setBlacklisted(address who, bool blacklisted) external onlyOwner {
+    function setBlacklisted(address who, bool blacklisted) external onlyRole(ADMIN_ROLE) {
         bool oldStatus = isBlacklisted[who];
         isBlacklisted[who] = blacklisted;
         emit BlacklistStatusChanged(msg.sender, who, oldStatus, blacklisted);
     }
 
     /// @notice Pause the contract (emergency stop)
-    /// @dev Can be called by owner or designated pauser
+    /// @dev Can be called by admin or designated pauser
     function pause() external {
-        if (msg.sender != owner() && msg.sender != pauser) revert NotAuthorizedToPause();
+        if (!hasRole(ADMIN_ROLE, msg.sender) && !hasRole(PAUSER_ROLE, msg.sender)) revert NotAuthorizedToPause();
         _pause();
     }
-
+    
     /// @notice Unpause the contract
-    /// @dev Can be called by owner or designated pauser  
+    /// @dev Can be called by admin or designated pauser  
     function unpause() external {
-        if (msg.sender != owner() && msg.sender != pauser) revert NotAuthorizedToPause();
+        if (!hasRole(ADMIN_ROLE, msg.sender) && !hasRole(PAUSER_ROLE, msg.sender)) revert NotAuthorizedToPause();
         _unpause();
     }
 
@@ -184,14 +199,14 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
         uint256 vaultTotalPrincipal,
         uint256 vaultClaimReserve,
         uint256 vaultGlobalIndex,
-        uint256 vaultPendingDelta,
-        uint256 vaultBalance
+        uint256 vaultBalance,
+        uint256 vaultCarryRay
     ) {
         vaultTotalPrincipal = totalPrincipal;
         vaultClaimReserve = claimReserve;
         vaultGlobalIndex = globalIndex;
-        vaultPendingDelta = pendingDelta;
         vaultBalance = USDR.balanceOf(address(this));
+        vaultCarryRay = _carryRay;
     }
 
     // =========================
@@ -248,34 +263,73 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
         emit Deposit(msg.sender, amount);
     }
 
-    /// @notice Withdraw principal amount. Full withdrawals automatically claim all accrued interest.
-    /// @dev Partial withdrawals do NOT auto-claim interest - use claim() separately for partial withdrawals.
-    /// @param amount Principal amount to withdraw. If equals user's total principal, all interest is auto-claimed.
+    /// @notice Withdraw any amount up to total value (principal + accrued interest)
+    /// @param amount Total amount to withdraw (can include accrued interest)
+    /// @dev Can withdraw: principal only, principal + partial interest, or full amount
+    /// @dev For withdrawing everything including all interest, use withdrawAll()
     function withdraw(uint256 amount) external whenNotPaused nonReentrant {
-        _checkNotBlacklisted(msg.sender);  //   Add blacklist check
+        _checkNotBlacklisted(msg.sender);
         if (amount == 0) revert ZeroAmount();
 
         _settle(msg.sender);
+        
         uint256 p = principal[msg.sender];
-        if (amount > p) revert InsufficientPrincipal();
+        uint256 userAccrued = accrued[msg.sender];
+        uint256 userTotalValue = p + userAccrued;
+        
+        if (amount > userTotalValue) revert InsufficientPrincipal();
 
-        uint256 interestOut = 0;
-        if (amount == p) {
-            // Full withdrawal: auto-claim all accrued interest
-            interestOut = accrued[msg.sender];
-            accrued[msg.sender] = 0;
-            if (claimReserve < interestOut) revert InsufficientFunding();
-            claimReserve -= interestOut;
+        uint256 principalToWithdraw = amount;
+        uint256 interestToClaim = 0;
+        
+        if (amount > p) {
+            // Need to claim some interest
+            principalToWithdraw = p; // Withdraw all principal
+            interestToClaim = amount - p; // Claim remaining from interest
         }
-
-        principal[msg.sender] = p - amount;
-        totalPrincipal -= amount;
+        
+        // Update state
+        principal[msg.sender] = p - principalToWithdraw;
+        accrued[msg.sender] = userAccrued - interestToClaim;
+        totalPrincipal -= principalToWithdraw;
+        
+        // Transfer funds
         claimReserve -= amount;
+        USDR.safeTransfer(msg.sender, amount);
+        
+        // Emit events
+        emit Withdraw(msg.sender, principalToWithdraw);
+        if (interestToClaim > 0) {
+            emit InterestClaimed(msg.sender, interestToClaim);
+        }
+    }
 
-        USDR.safeTransfer(msg.sender, amount + interestOut);
-        emit Withdraw(msg.sender, amount);
-        if (interestOut > 0) {
-            emit InterestClaimed(msg.sender, interestOut);
+    /// @notice Withdraw all funds (principal + all accrued interest)
+    /// @dev Convenience function that withdraws everything the user has
+    /// @dev Equivalent to withdraw(principal + accrued) but simpler to use
+    function withdrawAll() external whenNotPaused nonReentrant {
+        _checkNotBlacklisted(msg.sender);
+        _settle(msg.sender);
+        
+        uint256 p = principal[msg.sender];
+        uint256 userAccrued = accrued[msg.sender];
+        uint256 totalAmount = p + userAccrued;
+        
+        if (totalAmount == 0) revert NothingToClaim();
+        
+        // Update state
+        principal[msg.sender] = 0;
+        accrued[msg.sender] = 0;
+        totalPrincipal -= p;
+        claimReserve -= totalAmount;
+        
+        // Transfer all funds
+        USDR.safeTransfer(msg.sender, totalAmount);
+        
+        // Emit events
+        emit Withdraw(msg.sender, p);
+        if (userAccrued > 0) {
+            emit InterestClaimed(msg.sender, userAccrued);
         }
     }
 
@@ -302,41 +356,31 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     /// @dev MUST be called AFTER transferring `amount` USDR to this contract
     /// @dev Enforces funding invariant: USDR.balance >= claimReserve + amount
     /// @param amount Amount of USDR yield to distribute
-    function onYield(uint256 amount) external whenNotPaused {
-        if (msg.sender != yieldRedistributor) revert NotYieldRedistributor();
+    function onYield(uint256 amount) external onlyRole(YIELD_REDISTRIBUTOR_ROLE) nonReentrant {
         if (amount == 0) return;
         
         // Verify actual balance before updating accounting
         uint256 bal = USDR.balanceOf(address(this));
-        if (totalPrincipal == 0) {
-            // When no deposits exist, just need enough for the transfer to treasury
-            if (bal < amount) revert InsufficientFunding();
-        } else {
-            // When deposits exist, need enough for claimReserve + new yield
-            if (bal < claimReserve + amount) revert InsufficientFunding();
-        }
         
         if (totalPrincipal == 0) {
-            // No deposits exist - transfer yield directly to treasury
+            // No deposits: just need enough for treasury transfer
+            if (bal < amount) revert InsufficientFunding();
             USDR.safeTransfer(treasury, amount);
-            emit YieldParked(amount, 0); // Event for treasury transfer (not actually parking)
+            emit YieldTransferredToTreasury(amount);
             return;
         }
         
-        // No parked yield logic needed - yield goes directly to treasury when no deposits exist
+        // Deposits exist: need enough for claimReserve + new yield
+        if (bal < claimReserve + amount) revert InsufficientFunding();
         
-        // Calculate and accumulate delta (prevents loss of small yields)
-        uint256 delta = Math.mulDiv(amount, RAY, totalPrincipal);
-        if (pendingDelta + delta < pendingDelta) revert ArithmeticOverflow();
-        pendingDelta += delta;
-        
-        // Apply pending delta only when it reaches meaningful threshold
-        if (pendingDelta >= MINIMUM_DELTA_THRESHOLD) {
-            // Check for overflow before adding
-            if (globalIndex + pendingDelta < globalIndex) revert ArithmeticOverflow();
-            
-            globalIndex += pendingDelta;
-            pendingDelta = 0;  // Reset after application
+        // Exact, immediate index update with Ray remainder carry
+        // delta = floor( (amount*RAY + _carryRay) / totalPrincipal )
+        // _carryRay = (amount*RAY + _carryRay) % totalPrincipal
+        unchecked {
+            uint256 num = amount * RAY + _carryRay;
+            uint256 delta = num / totalPrincipal;
+            _carryRay = num % totalPrincipal;
+            globalIndex += delta;
         }
         
         claimReserve += amount;
@@ -380,8 +424,12 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     // Emergency (owner)
     // =========================
 
-    /// @dev Emergency sweep of tokens other than USDR, or USDR *surplus* if paused.
-    function emergencySweep(address token, address to, uint256 amount) external onlyOwner {
+    /// @notice Recover ERC20 tokens sent to this contract
+    /// @dev For non-USDR tokens or USDR surplus when paused
+    /// @param token Token address to recover
+    /// @param to Address to send tokens to
+    /// @param amount Amount to recover
+    function recoverERC20(address token, address to, uint256 amount) external onlyRole(ADMIN_ROLE) {
         if (to == address(0)) revert CanNotBeZeroAddress();
 
         if (token == address(USDR)) {
@@ -398,14 +446,12 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
             if (amount > tokenBalance) revert ExceedsSurplus();
         }
         IERC20(token).safeTransfer(to, amount);
-        emit EmergencySweep(token, to, amount);
+        emit TokenRecovered(token, to, amount);
     }
 
     /// @notice Sweep excess USDR yield to treasury (when vault has surplus above reserves)
-    /// @dev Only callable when paused for safety, sweeps all surplus above minimum required reserves
-    function sweepSurplusToTreasury() external onlyOwner {
-        if (!paused()) revert ContractNotPaused();
-        
+    /// @dev Sweeps all surplus above minimum required reserves
+    function sweepSurplusToTreasury() external onlyRole(ADMIN_ROLE) {
         uint256 bal = USDR.balanceOf(address(this));
         uint256 minRequired = claimReserve;
         
@@ -413,7 +459,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
         
         uint256 surplus = bal - minRequired;
         USDR.safeTransfer(treasury, surplus);
-        emit EmergencySweep(address(USDR), treasury, surplus);
+        emit SurplusSweptToTreasury(surplus);
     }
 
     // =========================

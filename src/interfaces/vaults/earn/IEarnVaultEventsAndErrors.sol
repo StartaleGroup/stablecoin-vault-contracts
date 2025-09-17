@@ -39,6 +39,7 @@ interface IEarnVaultEventsAndErrors {
         address indexed oldPauser, 
         address indexed newPauser
     );
+
     
     /// @notice Emitted when an address blacklist status is changed
     /// @param actor Address that initiated the change (msg.sender)
@@ -68,27 +69,26 @@ interface IEarnVaultEventsAndErrors {
     /// @param newClaimReserve New claim reserve amount
     event YieldIndexed(uint256 amount, uint256 newGlobalIndex, uint256 newClaimReserve);
     
-    /// @notice Emitted when yield is parked (when totalPrincipal = 0)
-    /// @param amount Amount of yield parked
-    /// @param totalParked Total amount of parked yield after this addition
-    event YieldParked(uint256 amount, uint256 totalParked);
+    /// @notice Emitted when yield is transferred to treasury (when totalPrincipal = 0)
+    /// @param amount Amount of yield transferred to treasury
+    event YieldTransferredToTreasury(uint256 amount);
     
-    /// @notice Emitted when previously parked yield is transferred to treasury
-    /// @param amountApplied Amount of parked yield that was transferred
-    /// @param remainingParked Amount of parked yield remaining (should be 0)
-    /// @param treasury Address that received the parked yield
-    event ParkedYieldApplied(uint256 amountApplied, uint256 remainingParked, address indexed treasury);
+    /// @notice Emitted when ERC20 tokens are recovered from the contract
+    /// @param token Token address that was recovered
+    /// @param to Address that received the tokens
+    /// @param amount Amount of tokens recovered
+    event TokenRecovered(address indexed token, address indexed to, uint256 amount);
+    
+    /// @notice Emitted when surplus USDR is swept to treasury
+    /// @param amount Amount of surplus swept to treasury
+    event SurplusSweptToTreasury(uint256 amount);
+    
     
     /// @notice Emitted when a user claims accrued interest
     /// @param user Address that claimed interest
     /// @param amount Amount of interest claimed
     event InterestClaimed(address indexed user, uint256 amount);
 
-    /// @notice Emitted when emergency sweep is performed
-    /// @param token Address of token that was swept
-    /// @param to Address that received the swept tokens
-    /// @param amount Amount of tokens swept
-    event EmergencySweep(address indexed token, address indexed to, uint256 amount);
 
     // ========================================
     // Errors
