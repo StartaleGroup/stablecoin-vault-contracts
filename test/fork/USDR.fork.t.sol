@@ -8,6 +8,9 @@ import {IERC20} from '@openzeppelin/contracts/token/ERC20/IERC20.sol';
 import {IERC20Metadata} from '@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol';
 import {IMTokenLike} from 'm-extensions/interfaces/IMTokenLike.sol';
 import {console2} from 'forge-std/console2.sol';
+// Todo
+// Import swapFacility
+import {ISwapFacility} from 'm-extensions/swap/interfaces/ISwapFacility.sol';
 
 contract ForkUSDR is Test {
     IMYieldToOne internal usdr;
@@ -16,6 +19,8 @@ contract ForkUSDR is Test {
     IERC20Metadata internal usdrMetadata;
     IMTokenLike internal mToken;
     IERC20 internal mTokenERC20;
+    // Todo
+    // Import swapFacility
     
     address constant SEPOLIA_USDR_ADDRESS = 0x7E426d026f604d1c47b50059752122d8ab1E2C28;
     address constant SEPOLIA_USDR_ADMIN = 0x77001610a4fD68548B80E49226c02a99c3b6Ae14;
@@ -29,9 +34,12 @@ contract ForkUSDR is Test {
     address zelda = makeAddr('zelda');
     
     function setUp() external {
+
         // Fork Sepolia at the latest block
-        string memory sepoliaRpc = "https://ethereum-sepolia-rpc.publicnode.com";
-        vm.createFork(sepoliaRpc);
+        // string memory sepoliaRpc = "https://ethereum-sepolia-rpc.publicnode.com";
+        // vm.createFork(sepoliaRpc);
+        // Fork Sepolia network (done via --fork-url command line argument)
+        // No need for vm.createFork() when using --fork-url
         
         // Initialize contract interfaces
         usdr = IMYieldToOne(SEPOLIA_USDR_ADDRESS);
@@ -59,10 +67,20 @@ contract ForkUSDR is Test {
         // mapping(address => struct MToken.MBalance) _balances
         bytes32 balanceSlot = keccak256(abi.encode(SEPOLIA_USDR_ADMIN, uint256(8)));
         
-        // MToken uses struct MBalance, the struct layout affects how the value is stored
-        // Let's set a larger value to ensure we have enough M tokens for testing
-        // The struct packing might cause our value to be interpreted differently
-        vm.store(SEPOLIA_MTOKEN_ADDRESS, balanceSlot, bytes32(uint256(100000e6))); // 100,000 M tokens
+        // MToken uses struct MBalance { bool isEarning; uint240 rawBalance; }
+        // Let's reverse engineer: current balance is 390625000, let's calculate the multiplier
+        uint256 desiredBalance = 1000e6; // 1000 M tokens = 1000,000,000
+        
+        // Current result: 390625000 when we set 100000000000
+        // Ratio: 390625000 / 100000000000 = 0.00390625 = 1/256
+        // This suggests the struct packing puts our value in a different position
+        
+        // Try scaling up our input to get the desired output
+        uint256 scaledInput = desiredBalance * 256; // Scale by 256 to compensate
+        vm.store(SEPOLIA_MTOKEN_ADDRESS, balanceSlot, bytes32(scaledInput));
+        
+        console2.log("Setting M token balance - desired:", desiredBalance);
+        console2.log("Scaled input:", scaledInput);
     }
     
     function test_contractInfo() public view {
@@ -294,6 +312,9 @@ contract ForkUSDR is Test {
                 uint256 usdrTotalSupplyAfter = usdrToken.totalSupply();
                 console2.log("Bob's USDR balance after wrap:", bobUSDRBalance);
                 console2.log("USDR total supply after wrap:", usdrTotalSupplyAfter);
+
+                uint256 mTokenBalanceOfUSDR = mTokenERC20.balanceOf(SEPOLIA_USDR_ADDRESS);
+                console2.log("M Token balance of USDR:", mTokenBalanceOfUSDR);
             } else {
                 vm.prank(SEPOLIA_SWAP_FACILITY_ADDRESS);
                 vm.expectRevert();
@@ -318,7 +339,7 @@ contract ForkUSDR is Test {
         console2.log("[PASS] M Token address correctly configured:", mTokenFromContract);
     }
 
-    function test_readMTokenCurrentIndex() external {
+    function test_readMTokenCurrentIndex() external view {
         // Test reading the current index of the M token
         uint256 currentIndex = mToken.currentIndex();
         console2.log("Current Index:", currentIndex);
