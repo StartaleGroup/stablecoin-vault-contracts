@@ -68,12 +68,11 @@ contract ForkUSDR is Test {
         bytes32 balanceSlot = keccak256(abi.encode(SEPOLIA_USDR_ADMIN, uint256(8)));
         
         // MToken uses struct MBalance { bool isEarning; uint240 rawBalance; }
-        // Let's reverse engineer: current balance is 390625000, let's calculate the multiplier
         uint256 desiredBalance = 1000e6; // 1000 M tokens = 1000,000,000
         
+        // calc..
         // Current result: 390625000 when we set 100000000000
         // Ratio: 390625000 / 100000000000 = 0.00390625 = 1/256
-        // This suggests the struct packing puts our value in a different position
         
         // Try scaling up our input to get the desired output
         uint256 scaledInput = desiredBalance * 256; // Scale by 256 to compensate
