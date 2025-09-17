@@ -75,5 +75,24 @@ contract SUSDRVault is ERC20, ERC4626, AccessControl, Pausable, ReentrancyGuard,
   }
 
   // Todo // Review
+  /**
+   * @dev Override to provide enhanced protection against inflation attacks.
+   * 
+   * With USDR having 6 decimals, setting _decimalsOffset to 6 creates 10^6 = 1,000,000 virtual shares.
+   * This makes inflation attacks prohibitively expensive as an attacker would need to donate
+   * approximately 1 million USDR to manipulate a 1 USDR deposit, making the attack economically infeasible.
+   * 
+   * The offset increases the vault decimals to 12 (6 + 6) but doesn't affect user experience
+   * as all conversions are handled internally by the ERC4626 implementation.
+   * 
+   * OR
+   * we could keep this to zero and put Initial seed deposit upon deployment (say 1000 USDR)
+   */
+  function _decimalsOffset() internal pure override returns (uint8) {
+    // return 6;
+    return 0;
+  }
+
+  // Todo // Review
   // Decide if we want to accept eth, withdraw eth etc or not.
 }
