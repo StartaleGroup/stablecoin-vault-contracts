@@ -372,7 +372,7 @@ contract RewardRedistributorIntegrationTest is Test {
         uint256 charlieNewClaimable = earnVault.claimable(charlie);
         uint256 charlieBalanceBeforeFullWithdraw = usdr.balanceOf(charlie);
         
-        earnVault.withdraw(charlieRemainingPrincipal);
+        earnVault.withdraw(charlieRemainingPrincipal + charlieNewClaimable);
         
         uint256 charlieBalanceAfterFullWithdraw = usdr.balanceOf(charlie);
         
