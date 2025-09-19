@@ -36,10 +36,10 @@ contract ForkUSDR is Test {
     function setUp() external {
 
         // Fork Sepolia at the latest block
-        // string memory sepoliaRpc = "https://ethereum-sepolia-rpc.publicnode.com";
-        // vm.createFork(sepoliaRpc);
-        // Fork Sepolia network (done via --fork-url command line argument)
-        // No need for vm.createFork() when using --fork-url
+        string memory sepoliaRpc = "https://ethereum-sepolia-rpc.publicnode.com";
+        vm.createSelectFork(sepoliaRpc);
+        // Fork Sepolia network and select it immediately
+        // This creates the fork and selects it in one step
         
         // Initialize contract interfaces
         usdr = IMYieldToOne(SEPOLIA_USDR_ADDRESS);
