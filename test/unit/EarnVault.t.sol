@@ -1176,4 +1176,164 @@ contract EarnVaultTest is Test {
         uint256 expectedDelta = 1e27; // 1000 * 1e27 / 1000 = 1e27
         assertEq(vault.globalIndex(), RAY + expectedDelta, "GlobalIndex should increase by 1e27");
     }
+    
+    // ========================================
+    // Additional Coverage Tests
+    // ========================================
+    
+    /// @notice Test setYieldRedistributor function
+    function test_SetYieldRedistributor() public {
+        address newRedistributor = makeAddr("newRedistributor");
+        
+        // Only owner can set
+        vm.prank(owner);
+        vault.setYieldRedistributor(newRedistributor);
+        
+        // Verify change
+        assertTrue(vault.hasRole(vault.YIELD_REDISTRIBUTOR_ROLE(), newRedistributor));
+    }
+    
+    /// @notice Test setTreasury function
+    function test_SetTreasury() public {
+        address newTreasury = makeAddr("newTreasury");
+        
+        // Only owner can set
+        vm.prank(owner);
+        vault.setTreasury(newTreasury);
+        
+        // Verify change (treasury is stored in a state variable, check via events or other means)
+        // Note: We can't directly access treasury state variable, but the function should not revert
+    }
+    
+    /// @notice Test setPauser function
+    function test_SetPauser() public {
+        address newPauser = makeAddr("newPauser");
+        
+        // Only owner can set
+        vm.prank(owner);
+        vault.setPauser(newPauser);
+        
+        // Verify change
+        assertTrue(vault.hasRole(vault.PAUSER_ROLE(), newPauser));
+    }
+    
+    /// @notice Test setBlacklisted function
+    function test_SetBlacklisted() public {
+        // Only owner can set
+        vm.prank(owner);
+        vault.setBlacklisted(alice, true);
+        
+        // Verify Alice is blacklisted
+        assertTrue(vault.isBlacklisted(alice));
+        
+        // Unblacklist Alice
+        vm.prank(owner);
+        vault.setBlacklisted(alice, false);
+        
+        // Verify Alice is not blacklisted
+        assertFalse(vault.isBlacklisted(alice));
+    }
+    
+    
+    /// @notice Test asset function
+    function test_Asset() public {
+        assertEq(vault.asset(), address(usdr));
+    }
+    
+    /// @notice Test claimable function with no deposits
+    function test_ClaimableNoDeposits() public {
+        assertEq(vault.claimable(alice), 0);
+    }
+    
+    /// @notice Test totalValue function with no deposits
+    function test_TotalValueNoDeposits() public {
+        assertEq(vault.totalValue(alice), 0);
+    }
+    
+    /// @notice Test getUserInfo function with no deposits
+    function test_GetUserInfoNoDeposits() public {
+        (uint256 principal, uint256 claimable, uint256 total, uint256 lastIndex) = vault.getUserInfo(alice);
+        assertEq(principal, 0);
+        assertEq(claimable, 0);
+        assertEq(total, 0);
+        assertEq(lastIndex, 0);
+    }
+    
+    /// @notice Test getVaultStats function
+    function test_GetVaultStats() public {
+        // Setup: Alice deposits
+        uint256 depositAmount = 1000e6;
+        vm.prank(alice);
+        vault.deposit(depositAmount);
+        
+        (uint256 totalPrincipal, uint256 claimReserve, uint256 globalIndex, uint256 vaultBalance, uint256 vaultCarryRay) = vault.getVaultStats();
+        assertEq(totalPrincipal, depositAmount);
+        assertEq(claimReserve, depositAmount);
+        assertEq(globalIndex, 1000000000000000000000000000); // 1e27 (RAY)
+        assertEq(vaultBalance, depositAmount);
+        // Carry ray should be 0 after deposit
+        assertEq(vaultCarryRay, 0);
+    }
+    
+    /// @notice Test getClaimableBoostReward function with no boost rewards
+    function test_GetClaimableBoostRewardNoRewards() public {
+        // Create a mock token for testing
+        address mockToken = makeAddr("mockToken");
+        assertEq(vault.getClaimableBoostReward(alice, mockToken), 0);
+    }
+    
+    /// @notice Test onYield function with zero amount
+    function test_OnYieldZeroAmount() public {
+        // Setup: Alice deposits
+        uint256 depositAmount = 1000e6;
+        vm.prank(alice);
+        vault.deposit(depositAmount);
+        
+        // Distribute zero yield (should not revert)
+        vm.prank(yieldRedistributor);
+        vault.onYield(0);
+        
+        // Verify no yield was distributed
+        assertEq(vault.claimable(alice), 0);
+    }
+    
+    /// @notice Test onBoostReward function with zero amount
+    function test_OnBoostRewardZeroAmount() public {
+        // Setup: Alice deposits
+        uint256 depositAmount = 1000e6;
+        vm.prank(alice);
+        vault.deposit(depositAmount);
+        
+        // Create a mock token for testing
+        address mockToken = makeAddr("mockToken");
+        
+        // Distribute zero boost rewards (should not revert)
+        vm.prank(yieldRedistributor);
+        vault.onBoostReward(mockToken, 0);
+        
+        // Verify no boost rewards were distributed
+        assertEq(vault.getClaimableBoostReward(alice, mockToken), 0);
+    }
+    
+    /// @notice Test deposit function with zero amount
+    function test_DepositZeroAmount() public {
+        vm.prank(alice);
+        vm.expectRevert();
+        vault.deposit(0);
+    }
+    
+    /// @notice Test withdraw function with zero amount
+    function test_WithdrawZeroAmount() public {
+        vm.prank(alice);
+        vm.expectRevert();
+        vault.withdraw(0);
+    }
+    
+    /// @notice Test claim function with no rewards
+    function test_ClaimNoRewards() public {
+        vm.prank(alice);
+        vm.expectRevert();
+        vault.claim();
+    }
+    
 }

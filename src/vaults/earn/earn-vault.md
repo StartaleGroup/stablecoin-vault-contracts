@@ -9,7 +9,7 @@ Users deposit USDR tokens and earn claimable yield over time, plus additional bo
 - **Principal Protection**: Withdraw original deposit anytime
 - **Dual Reward System**: USDR yield + boost rewards in other tokens
 - **Automatic Reward Claiming**: Any withdrawal automatically claims ALL rewards (USDR yield + boost rewards)
-- **Simplified Withdrawal**: Withdraw any amount up to principal, get all rewards automatically
+- **Withdrawal**: Withdraw any amount up to principal, get all rewards automatically
 - **Proportional Distribution**: Both USDR yield and boost rewards distributed based on deposit amounts
 - **RAY Precision**: 1e27 precision for zero yield loss (MakerDAO standard)
 - **Direct Treasury Transfer**: Yield goes directly to treasury when no deposits exist
@@ -108,28 +108,40 @@ sequenceDiagram
     participant User
     participant Vault
     participant USDR
+    participant BoostToken
     
     User->>Vault: withdraw(amount)
-    Vault->>Vault: _settle(user)
-    Vault->>Vault: check amount <= totalValue[user]
+    Vault->>Vault: _settle(user) // Settle USDR yield
+    Vault->>Vault: check amount <= principal[user]
     
-    alt amount <= principal[user] (Principal Only)
-        Vault->>Vault: principalToWithdraw = amount
-        Vault->>Vault: interestToClaim = 0
-        Vault->>USDR: transfer(user, amount)
-        Vault-->>User: emit Withdraw(user, amount)
-    else amount > principal[user] (Principal + Interest)
-        Vault->>Vault: principalToWithdraw = principal[user]
-        Vault->>Vault: interestToClaim = amount - principal[user]
-        Vault->>USDR: transfer(user, amount)
-        Vault-->>User: emit Withdraw(user, principalToWithdraw)
-        Vault-->>User: emit InterestClaimed(user, interestToClaim)
+    Note over Vault: Update principal state
+    Vault->>Vault: principal[user] -= amount
+    Vault->>Vault: totalPrincipal -= amount
+    Vault->>Vault: claimReserve -= amount
+    
+    Note over Vault: Transfer principal
+    Vault->>USDR: transfer(user, amount)
+    
+    Note over Vault: Auto-claim ALL USDR yield
+    alt accrued[user] > 0
+        Vault->>Vault: claimReserve -= accrued[user]
+        Vault->>USDR: transfer(user, accrued[user])
+        Vault->>Vault: accrued[user] = 0
+        Vault-->>User: emit InterestClaimed(user, accrued[user])
     end
     
-    Vault->>Vault: principal[user] -= principalToWithdraw
-    Vault->>Vault: accrued[user] -= interestToClaim
-    Vault->>Vault: totalPrincipal -= principalToWithdraw
-    Vault->>Vault: claimReserve -= amount
+    Note over Vault: Auto-claim ALL boost rewards
+    loop For each activeBoostTokens
+        Vault->>Vault: _settleBoost(user, token)
+        Vault->>Vault: calculate boostReward
+        alt boostReward > 0
+            Vault->>BoostToken: transfer(user, boostReward)
+            Vault->>Vault: boostClaimReserve[token] -= boostReward
+            Vault-->>User: emit BoostRewardClaimed(user, token, boostReward)
+        end
+    end
+    
+    Vault-->>User: emit Withdraw(user, amount)
 ```
 
 ### Boost Reward Distribution Flow
@@ -164,18 +176,21 @@ sequenceDiagram
     participant BoostToken
     
     User->>Vault: withdraw(amount) or claim()
-    Vault->>Vault: _settle(user) // Settle USDR yield
-    Vault->>Vault: _settleBoost(user, token) for each activeBoostTokens
+    Vault->>Vault: _settle(user) // Settle USDR yield first
     
+    Note over Vault: Auto-claim ALL boost rewards
     loop For each activeBoostTokens
-        Vault->>Vault: calculate owed = principal * (boostGlobalIndex[token] - userBoostIndex[user][token]) / RAY
-        Vault->>Vault: userBoostAccrued[user][token] += owed
-        Vault->>Vault: userBoostIndex[user][token] = boostGlobalIndex[token]
-        Vault->>BoostToken: transfer(user, userBoostAccrued[user][token])
-        Vault->>Vault: userBoostAccrued[user][token] = 0
-        Vault->>Vault: boostClaimReserve[token] -= claimedAmount
-        Vault-->>User: emit BoostRewardClaimed(user, token, claimedAmount)
+        Vault->>Vault: _settleBoost(user, token) // Settle boost rewards
+        Vault->>Vault: calculate claimedAmount = userBoostAccrued[user][token]
+        alt claimedAmount > 0
+            Vault->>Vault: userBoostAccrued[user][token] = 0
+            Vault->>Vault: boostClaimReserve[token] -= claimedAmount
+            Vault->>BoostToken: transfer(user, claimedAmount)
+            Vault-->>User: emit BoostRewardClaimed(user, token, claimedAmount)
+        end
     end
+    
+    Note over Vault: ALL boost rewards claimed automatically
 ```
 
 ### Emergency Operations Flow
@@ -297,7 +312,7 @@ function getVaultStats() external view returns (
 
 ## Withdrawal Examples
 
-### Simplified Withdrawal Logic
+###  Withdrawal Logic
 **Key Rule**: User can only withdraw up to their principal amount, but ANY withdrawal automatically claims ALL rewards (USDR yield + boost rewards).
 
 Given: User has 1000 USDR principal + 100 USDR accrued interest + 50 ASTR boost rewards
@@ -363,7 +378,7 @@ vault.getClaimableBoostReward(alice, address(astr));  // Returns 50e18 ASTR (25%
 vault.getClaimableBoostReward(bob, address(astr));    // Returns 150e18 ASTR (75% of 200)
 ```
 
-### Example 3: Simplified Withdrawal with Automatic Reward Claiming
+### Example 3: Withdrawal with Automatic Reward Claiming
 ```solidity
 // Alice has 1000 principal + 50 USDR claimable + 25 ASTR boost rewards
 vault.principal(alice);   // 1000e6
@@ -426,7 +441,6 @@ vault.claimable(alice);   // Returns 0 (no yield to claim yet)
 vault.onYield(200e6);    // Normal USDR yield processing
 vault.claimable(alice);   // Returns 200e6 (Alice gets new yield)
 
-// Simple and fair - no complex parking logic!
 ```
 
 ## Integration
@@ -555,24 +569,3 @@ constructor(
 ```
 
 All addresses will be non-zero and carefully chosen for production deployment.
-
-## Summary: Simplified Withdrawal Logic
-
-The EarnVault now features a **simplified withdrawal system** that makes it easy for users to manage their funds:
-
-### **Key Principles:**
-1. **Withdraw up to principal**: Users can only withdraw amounts up to their deposited principal
-2. **Automatic reward claiming**: ANY withdrawal automatically claims ALL accrued rewards (USDR yield + boost rewards)
-3. **Simple user experience**: No complex logic or multiple functions to remember
-
-### **User Actions:**
-- **`withdraw(amount)`**: Withdraw any amount up to principal + get all rewards automatically
-- **`claim()`**: Claim all rewards without withdrawing principal
-
-### **Benefits:**
-- ✅ **Simple**: One function handles everything
-- ✅ **Automatic**: No need to remember to claim rewards separately
-- ✅ **Gas efficient**: Single transaction gets everything
-- ✅ **Clear**: No confusion about what gets claimed when
-
-This design prioritizes **user experience** and **simplicity** while maintaining all the powerful features of the dual reward system.
