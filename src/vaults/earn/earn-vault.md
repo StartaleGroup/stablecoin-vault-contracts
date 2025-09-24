@@ -1,18 +1,20 @@
-# EarnVault - Claimable Yield Vault
+# EarnVault - Claimable Yield Vault with Boost Rewards
 
 ## Overview
 
-Users deposit USDR tokens and earn claimable yield over time. Users maintain full control over their principal and can claim accrued interest separately or withdraw any amount including partial interest.
+Users deposit USDR tokens and earn claimable yield over time, plus additional boost rewards in other ERC20 tokens (ASTR, DOT, etc.). Users maintain full control over their principal and can claim accrued interest and boost rewards separately or withdraw any amount including partial interest and all boost rewards.
 
 ## Key Features
 
 - **Principal Protection**: Withdraw original deposit anytime
-- **Claimable Yield**: Interest accrues continuously, claim separately
-- **Flexible Withdrawal**: Withdraw any amount (principal + partial interest)
-- **Convenience Function**: `withdrawAll()` for complete withdrawal
-- **Proportional Distribution**: Yield distributed based on deposit amounts
+- **Dual Reward System**: USDR yield + boost rewards in other tokens
+- **Automatic Boost Claiming**: Withdrawals automatically claim all boost rewards
+- **Flexible Withdrawal**: Withdraw any amount (principal + partial interest + all boost rewards)
+- **Proportional Distribution**: Both USDR yield and boost rewards distributed based on deposit amounts
 - **RAY Precision**: 1e27 precision for zero yield loss (MakerDAO standard)
 - **Direct Treasury Transfer**: Yield goes directly to treasury when no deposits exist
+- **Multi-Token Support**: Support for multiple boost reward tokens
+- **Library Architecture**: Boost logic separated into reusable library
 - **Role-Based Access Control**: Separate roles for different operations
 - **Blacklist Support**: Simple compliance controls
 - **Enhanced Security**: Overflow protection, reentrancy guards, pause mechanism
@@ -24,20 +26,21 @@ Users deposit USDR tokens and earn claimable yield over time. Users maintain ful
 // Write functions
 deposit(uint256 amount)                    // Deposit USDR
 depositWithPermit(...)                     // Deposit with permit (gasless approval)
-withdraw(uint256 amount)                   // Withdraw any amount (principal + partial interest)
-withdrawAll()                              // Withdraw everything (principal + all interest)
-claim()                                    // Claim all accrued interest
+withdraw(uint256 amount)                   // Withdraw any amount (principal + partial interest + all boost rewards)
+claim()                                    // Claim all accrued interest + all boost rewards
 
 // Read functions
-claimable(address user) → uint256          // View claimable interest amount
-totalValue(address user) → uint256         // View total value (principal + claimable)
+claimable(address user) → uint256          // View claimable USDR interest amount
+totalValue(address user) → uint256         // View total USDR value (principal + claimable)
 getUserInfo(address user) → (uint256 principal, uint256 claimable, uint256 total, uint256 lastIndex)
+getClaimableBoostReward(address user, address token) → uint256  // View claimable boost rewards for specific token
 ```
 
 ### Admin Functions
 ```solidity
 // Yield distribution (yieldRedistributor only)
-onYield(uint256 amount)                    // Distribute yield
+onYield(uint256 amount)                    // Distribute USDR yield
+onBoostReward(address token, uint256 amount)  // Distribute boost rewards (ASTR, DOT, etc.)
 
 // Access control (owner only)
 setYieldRedistributor(address who)         // Update yield redistributor
@@ -50,7 +53,7 @@ pause() / unpause()                        // Emergency stop/resume
 
 // Treasury operations (owner only, when paused)
 sweepSurplusToTreasury()                  // Sweep excess funds to treasury
-emergencySweep(address token, address to, uint256 amount)  // Emergency token recovery
+recoverERC20(address token, address to, uint256 amount)  // Emergency token recovery
 
 // Vault statistics
 getVaultStats() → (uint256 totalPrincipal, uint256 claimReserve, uint256 globalIndex, uint256 pendingDelta, uint256 balance)
@@ -129,24 +132,50 @@ sequenceDiagram
     Vault->>Vault: claimReserve -= amount
 ```
 
-### WithdrawAll Flow
+### Boost Reward Distribution Flow
+```mermaid
+sequenceDiagram
+    participant Distributor
+    participant Vault
+    participant BoostToken
+    participant Treasury
+    
+    Distributor->>BoostToken: transfer(vault, boostAmount)
+    Distributor->>Vault: onBoostReward(token, boostAmount)
+    
+    alt totalPrincipal == 0
+        Vault->>BoostToken: transfer(treasury, boostAmount)
+        Vault-->>Distributor: emit BoostRewardTransferredToTreasury(token, amount)
+    else totalPrincipal > 0
+        Vault->>Vault: num = amount * RAY + carryRay
+        Vault->>Vault: delta = num / totalPrincipal
+        Vault->>Vault: boostGlobalIndex[token] += delta
+        Vault->>Vault: boostClaimReserve[token] += amount
+        Vault->>Vault: activeBoostTokens.push(token) if new
+        Vault-->>Distributor: emit BoostRewardIndexed(token, amount, newIndex, newReserve)
+    end
+```
+
+### Boost Reward Claiming Flow
 ```mermaid
 sequenceDiagram
     participant User
     participant Vault
-    participant USDR
+    participant BoostToken
     
-    User->>Vault: withdrawAll()
-    Vault->>Vault: _settle(user)
-    Vault->>Vault: totalAmount = principal[user] + accrued[user]
+    User->>Vault: withdraw(amount) or claim()
+    Vault->>Vault: _settle(user) // Settle USDR yield
+    Vault->>Vault: _settleBoost(user, token) for each activeBoostTokens
     
-    Vault->>Vault: principal[user] = 0
-    Vault->>Vault: accrued[user] = 0
-    Vault->>Vault: totalPrincipal -= principal[user]
-    Vault->>Vault: claimReserve -= totalAmount
-    Vault->>USDR: transfer(user, totalAmount)
-    Vault-->>User: emit Withdraw(user, originalPrincipal)
-    Vault-->>User: emit InterestClaimed(user, originalAccrued)
+    loop For each activeBoostTokens
+        Vault->>Vault: calculate owed = principal * (boostGlobalIndex[token] - userBoostIndex[user][token]) / RAY
+        Vault->>Vault: userBoostAccrued[user][token] += owed
+        Vault->>Vault: userBoostIndex[user][token] = boostGlobalIndex[token]
+        Vault->>BoostToken: transfer(user, userBoostAccrued[user][token])
+        Vault->>Vault: userBoostAccrued[user][token] = 0
+        Vault->>Vault: boostClaimReserve[token] -= claimedAmount
+        Vault-->>User: emit BoostRewardClaimed(user, token, claimedAmount)
+    end
 ```
 
 ### Emergency Operations Flow
@@ -197,6 +226,45 @@ Yield is distributed with perfect mathematical precision:
 When yield arrives with no deposits (`totalPrincipal = 0`):
 - Yield is **transferred directly to treasury** immediately
 - Treasury take all the yield of free floating USDR
+
+## Boost Rewards System
+
+### Dual Reward Architecture
+The vault supports two types of rewards:
+1. **USDR Yield**: Traditional yield in the same token as deposits
+2. **Boost Rewards**: Additional rewards in other ERC20 tokens (ASTR, DOT, etc.)
+
+### Boost Reward Distribution
+Boost rewards use the **same proportional logic** as USDR yield:
+- **Distribution**: Based on user's USDR principal amount
+- **Precision**: RAY (1e27) precision for exact calculations
+- **Fairness**: Users with more principal get proportionally more boost rewards
+
+### Multi-Token Support
+The vault tracks multiple boost reward tokens:
+- **`activeBoostTokens[]`**: Array of all tokens that have been distributed
+- **Per-token accounting**: Each token has its own global index and claim reserves
+- **Automatic claiming**: All active boost tokens are claimed together
+
+### Boost Reward States
+```solidity
+// Per-token global state
+mapping(address => uint256) public boostGlobalIndex;     // token => global boost index
+mapping(address => uint256) public boostClaimReserve;   // token => claimable boost reserves
+
+// Per-user, per-token state  
+mapping(address => mapping(address => uint256)) public userBoostIndex;    // user => token => last boost index
+mapping(address => mapping(address => uint256)) public userBoostAccrued;  // user => token => accrued boost rewards
+
+// Active tokens tracking
+address[] public activeBoostTokens;  // List of tokens that have been distributed
+```
+
+### Boost Reward Lifecycle
+1. **Distribution**: `onBoostReward(token, amount)` distributes boost rewards
+2. **Accrual**: Users automatically accrue boost rewards based on their principal
+3. **Claiming**: Users claim boost rewards via `withdraw()` or `claim()`
+4. **Automatic**: All active boost tokens are claimed together
 
 ### Role-Based Security
 - **Owner**: Full administrative control, emergency functions
@@ -253,68 +321,109 @@ Given: User has 1000 USDR principal + 100 USDR accrued interest
 
 ## Examples
 
-### Example 1: Basic User Flow
+### Example 1: Basic User Flow with Boost Rewards
 ```solidity
 // Alice deposits 1000 USDR
-vault.deposit(1000e18);
+vault.deposit(1000e6);
 // Result: principal[alice] = 1000, userIndex[alice] = 1e27
 
 // 100 USDR yield is distributed
-yieldRedistributor.transfer(address(vault), 100e18);
-vault.onYield(100e18);
+yieldRedistributor.transfer(address(vault), 100e6);
+vault.onYield(100e6);
 // Result: globalIndex increases proportionally
 
-// Alice checks and claims her yield
-uint256 claimable = vault.claimable(alice);  // Returns 100e18
+// 50 ASTR boost rewards are distributed
+astr.transfer(address(vault), 50e18);
+vault.onBoostReward(address(astr), 50e18);
+// Result: boostGlobalIndex[astr] increases proportionally
+
+// Alice checks and claims everything
+uint256 usdrClaimable = vault.claimable(alice);  // Returns 100e6
+uint256 astrClaimable = vault.getClaimableBoostReward(alice, address(astr));  // Returns 50e18
 vault.claim();
-// Result: Alice receives 100 USDR, principal stays 1000
+// Result: Alice receives 100 USDR + 50 ASTR, principal stays 1000
 ```
 
-### Example 2: Multiple Users
+### Example 2: Multiple Users with Boost Rewards
 ```solidity
 // Alice deposits 1000 USDR (25%), Bob deposits 3000 USDR (75%)
-vault.deposit(1000e18);  // Alice
-vault.deposit(3000e18);  // Bob
+vault.deposit(1000e6);  // Alice
+vault.deposit(3000e6);  // Bob
 
 // 400 USDR yield arrives
-vault.onYield(400e18);
+vault.onYield(400e6);
+
+// 200 ASTR boost rewards arrive
+astr.transfer(address(vault), 200e18);
+vault.onBoostReward(address(astr), 200e18);
 
 // Proportional distribution:
-vault.claimable(alice);  // Returns 100e18 (25% of 400)
-vault.claimable(bob);    // Returns 300e18 (75% of 400)
+vault.claimable(alice);  // Returns 100e6 USDR (25% of 400)
+vault.claimable(bob);    // Returns 300e6 USDR (75% of 400)
+
+vault.getClaimableBoostReward(alice, address(astr));  // Returns 50e18 ASTR (25% of 200)
+vault.getClaimableBoostReward(bob, address(astr));    // Returns 150e18 ASTR (75% of 200)
 ```
 
-### Example 3: Full Withdrawal Options
+### Example 3: Withdrawal with Automatic Boost Claiming
 ```solidity
-// Alice has 1000 principal + 50 claimable
-vault.principal(alice);   // 1000e18
-vault.claimable(alice);   // 50e18
+// Alice has 1000 principal + 50 USDR claimable + 25 ASTR boost rewards
+vault.principal(alice);   // 1000e6
+vault.claimable(alice);   // 50e6 USDR
+vault.getClaimableBoostReward(alice, address(astr));  // 25e18 ASTR
 
-// Option 1: Withdraw exact principal (interest remains)
-vault.withdraw(1000e18);  
-// Result: Alice receives 1000 USDR, 50 USDR interest remains
+// Option 1: Withdraw exact principal (USDR interest + boost rewards claimed automatically)
+vault.withdraw(1000e6);  
+// Result: Alice receives 1000 USDR + 50 USDR + 25 ASTR, nothing remains
 
-// Option 2: Withdraw everything using withdrawAll()
-vault.withdrawAll();      
-// Result: Alice receives 1050 USDR (1000 + 50), nothing remains
+// Option 2: Withdraw everything using withdraw with total value
+uint256 totalValue = vault.totalValue(alice);  // 1050e6
+vault.withdraw(totalValue);      
+// Result: Alice receives 1050 USDR + 25 ASTR, nothing remains
 ```
 
-### Example 4: Direct Treasury Transfer
+### Example 4: Multi-Token Boost Rewards
+```solidity
+// Alice deposits 1000 USDR
+vault.deposit(1000e6);
+
+// Multiple boost rewards are distributed
+astr.transfer(address(vault), 100e18);
+vault.onBoostReward(address(astr), 100e18);
+
+dot.transfer(address(vault), 50e10);
+vault.onBoostReward(address(dot), 50e10);
+
+// Alice claims all rewards at once
+vault.claim();
+// Result: Alice receives 100 ASTR + 50 DOT automatically
+
+// Check individual token rewards
+vault.getClaimableBoostReward(alice, address(astr));  // Returns 0 (claimed)
+vault.getClaimableBoostReward(alice, address(dot));   // Returns 0 (claimed)
+```
+
+### Example 5: Direct Treasury Transfer
 ```solidity
 // Yield arrives when no one has deposited
 uint256 initialTreasuryBalance = usdr.balanceOf(treasury);
-vault.onYield(500e18);    // Yield goes directly to treasury
+vault.onYield(500e6);    // USDR yield goes directly to treasury
 
-// Treasury receives the yield immediately
-usdr.balanceOf(treasury); // Returns initialTreasuryBalance + 500e18
+// Boost rewards also go to treasury when no deposits
+astr.transfer(address(vault), 100e18);
+vault.onBoostReward(address(astr), 100e18);  // ASTR goes to treasury
+
+// Treasury receives both yields immediately
+usdr.balanceOf(treasury); // Returns initialTreasuryBalance + 500e6
+astr.balanceOf(treasury);  // Returns 100e18
 
 // Later, Alice deposits
-vault.deposit(1000e18);   
+vault.deposit(1000e6);   
 vault.claimable(alice);   // Returns 0 (no yield to claim yet)
 
 // When new yield arrives, it gets processed normally
-vault.onYield(200e18);    // Normal yield processing
-vault.claimable(alice);   // Returns 200e18 (Alice gets new yield)
+vault.onYield(200e6);    // Normal USDR yield processing
+vault.claimable(alice);   // Returns 200e6 (Alice gets new yield)
 
 // Simple and fair - no complex parking logic!
 ```
@@ -323,11 +432,17 @@ vault.claimable(alice);   // Returns 200e18 (Alice gets new yield)
 
 ### For Yield Distributors
 ```solidity
-// 1. Transfer yield to vault
+// 1. Transfer USDR yield to vault
 USDR.transfer(vault, yieldAmount);
-
-// 2. Notify vault
 vault.onYield(yieldAmount);
+
+// 2. Transfer boost rewards to vault
+astr.transfer(vault, boostAmount);
+vault.onBoostReward(address(astr), boostAmount);
+
+// 3. Multiple boost tokens supported
+dot.transfer(vault, dotAmount);
+vault.onBoostReward(address(dot), dotAmount);
 ```
 
 ### For Frontend
@@ -336,10 +451,14 @@ vault.onYield(yieldAmount);
 (uint256 principal, uint256 claimable, uint256 total, uint256 lastIndex) = vault.getUserInfo(user);
 
 // Or individual calls
-uint256 claimable = vault.claimable(user);           // Interest only
-uint256 total = vault.totalValue(user);             // Principal + interest
+uint256 claimable = vault.claimable(user);           // USDR interest only
+uint256 total = vault.totalValue(user);             // Principal + USDR interest
 uint256 deposited = vault.principal(user);          // Principal only
 bool blocked = vault.isBlacklisted(user);           // Blacklist status
+
+// Check boost rewards for specific tokens
+uint256 astrRewards = vault.getClaimableBoostReward(user, address(astr));
+uint256 dotRewards = vault.getClaimableBoostReward(user, address(dot));
 
 // Get vault statistics (including pendingDelta)
 (uint256 tvl, uint256 reserves, uint256 index, uint256 pending, uint256 balance) = vault.getVaultStats();
@@ -371,22 +490,35 @@ bool blocked = vault.isBlacklisted(user);           // Blacklist status
 ### Key Events
 - **`Deposit(address indexed user, uint256 amount)`**: User deposits USDR
 - **`Withdraw(address indexed user, uint256 amount)`**: User withdraws principal
-- **`InterestClaimed(address indexed user, uint256 amount)`**: User claims accrued interest
-- **`YieldIndexed(uint256 amount, uint256 newGlobalIndex, uint256 newClaimReserve)`**: Yield distributed to users
-- **`YieldTransferredToTreasury(uint256 amount)`**: Yield transferred to treasury when no deposits exist
+- **`InterestClaimed(address indexed user, uint256 amount)`**: User claims accrued USDR interest
+- **`YieldIndexed(uint256 amount, uint256 newGlobalIndex, uint256 newClaimReserve)`**: USDR yield distributed to users
+- **`YieldTransferredToTreasury(uint256 amount)`**: USDR yield transferred to treasury when no deposits exist
+
+### Boost Reward Events
+- **`BoostRewardIndexed(address indexed token, uint256 amount, uint256 newGlobalIndex, uint256 newClaimReserve)`**: Boost rewards distributed to users
+- **`BoostRewardTransferredToTreasury(address indexed token, uint256 amount)`**: Boost rewards transferred to treasury when no deposits exist
+- **`BoostRewardClaimed(address indexed user, address indexed token, uint256 amount)`**: User claims boost rewards
 
 ## Technical Notes
 
 ### Gas Efficiency
 - **Yield Distribution**: ~200k gas regardless of user count
+- **Boost Distribution**: ~300k gas for boost rewards (includes token transfers)
 - **Ray-Space Carry**: Efficient unchecked arithmetic for perfect precision
 - **getUserInfo**: Inlined calculations avoid external calls
+- **Library Architecture**: Boost logic separated for gas optimization
 
 ### Precision & Safety
 - **RAY Precision**: 1e27 prevents rounding errors
 - **Ray-Space Carry**: Perfect precision with no rounding loss using carry mechanism
 - **Unchecked Arithmetic**: Safe in carry calculations due to RAY precision
 - **Funding Invariant**: `USDR.balance >= claimReserve`
+- **Boost Invariant**: `BoostToken.balance >= boostClaimReserve[token]`
+
+### Library Architecture
+The boost rewards system uses a separate library (`BoostRewardsLib`) for:
+- **Separation of Concerns**: Boost logic isolated from main vault
+- **Reusability**: Library can be used by other contracts
 
 ## Role Hierarchy
 

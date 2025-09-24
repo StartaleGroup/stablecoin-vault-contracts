@@ -34,8 +34,6 @@ interface IEarnVault {
     /// @notice Withdraw any amount up to total value (principal + accrued interest)
     function withdraw(uint256 amountPrincipal) external;
 
-    /// @notice Withdraw all funds (principal + all accrued interest)
-    function withdrawAll() external;
 
     /// @notice Claim all accrued USDR interest to msg.sender
     function claim() external;

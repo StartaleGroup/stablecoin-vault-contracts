@@ -330,7 +330,7 @@ contract EarnVaultTest is Test {
     // Full Withdrawal with Auto-Claim Tests
     // ========================================
     
-    /// @notice Test withdrawAll function withdraws everything
+    /// @notice Test withdraw function with total value withdraws everything
     function test_WithdrawAll() public {
         uint256 depositAmount = 1000e6;
         uint256 yieldAmount = 100e6;
@@ -346,9 +346,9 @@ contract EarnVaultTest is Test {
         uint256 initialBalance = usdr.balanceOf(alice);
         uint256 expectedTotal = depositAmount + yieldAmount;
         
-        // Alice withdraws everything
+        // Alice withdraws everything using withdraw with total value
         vm.prank(alice);
-        vault.withdrawAll();
+        vault.withdraw(expectedTotal);
         
         // Verify Alice received everything
         assertEq(vault.principal(alice), 0, "Alice should have no principal");
@@ -983,10 +983,11 @@ contract EarnVaultTest is Test {
         assertEq(vault.claimable(bob), 400e6, "Bob should have 400 total");
         assertEq(vault.claimable(charlie), 300e6, "Charlie should have 300 from second yield");
         
-        // === Phase 6: Bob does full withdrawal using withdrawAll ===
+        // === Phase 6: Bob does full withdrawal using withdraw with total value ===
         uint256 bobInitialBalance = usdr.balanceOf(bob);
+        uint256 bobTotalValue = vault.totalValue(bob);
         vm.prank(bob);
-        vault.withdrawAll();
+        vault.withdraw(bobTotalValue);
         
         assertEq(_getUserPrincipal(bob), 0, "Bob should have no principal");
         assertEq(vault.claimable(bob), 0, "Bob should have no claimable");

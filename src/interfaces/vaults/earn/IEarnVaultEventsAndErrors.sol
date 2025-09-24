@@ -89,6 +89,23 @@ interface IEarnVaultEventsAndErrors {
     /// @param amount Amount of interest claimed
     event InterestClaimed(address indexed user, uint256 amount);
 
+    /// @notice Emitted when boost rewards are distributed and indexed to users
+    /// @param token Token address that was distributed
+    /// @param amount Amount of boost rewards distributed
+    /// @param newGlobalIndex New global boost index after distribution
+    /// @param newClaimReserve New boost claim reserve amount
+    event BoostRewardIndexed(address indexed token, uint256 amount, uint256 newGlobalIndex, uint256 newClaimReserve);
+    
+    /// @notice Emitted when boost rewards are transferred to treasury (when totalPrincipal = 0)
+    /// @param token Token address that was transferred
+    /// @param amount Amount of boost rewards transferred to treasury
+    event BoostRewardTransferredToTreasury(address indexed token, uint256 amount);
+    
+    /// @notice Emitted when a user claims accrued boost rewards
+    /// @param user Address that claimed boost rewards
+    /// @param token Token address that was claimed
+    /// @param amount Amount of boost rewards claimed
+    event BoostRewardClaimed(address indexed user, address indexed token, uint256 amount);
 
     // ========================================
     // Errors
