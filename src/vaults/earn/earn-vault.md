@@ -2,14 +2,14 @@
 
 ## Overview
 
-Users deposit USDR tokens and earn claimable yield over time, plus additional boost rewards in other ERC20 tokens (ASTR, DOT, etc.). Users maintain full control over their principal and can claim accrued interest and boost rewards separately or withdraw any amount including partial interest and all boost rewards.
+Users deposit USDR tokens and earn claimable yield over time, plus additional boost rewards in other ERC20 tokens (ASTR, DOT, etc.). Users maintain full control over their principal and can withdraw any amount up to their principal, with all accrued rewards (USDR yield + boost rewards) automatically claimed on any withdrawal.
 
 ## Key Features
 
 - **Principal Protection**: Withdraw original deposit anytime
 - **Dual Reward System**: USDR yield + boost rewards in other tokens
-- **Automatic Boost Claiming**: Withdrawals automatically claim all boost rewards
-- **Flexible Withdrawal**: Withdraw any amount (principal + partial interest + all boost rewards)
+- **Automatic Reward Claiming**: Any withdrawal automatically claims ALL rewards (USDR yield + boost rewards)
+- **Simplified Withdrawal**: Withdraw any amount up to principal, get all rewards automatically
 - **Proportional Distribution**: Both USDR yield and boost rewards distributed based on deposit amounts
 - **RAY Precision**: 1e27 precision for zero yield loss (MakerDAO standard)
 - **Direct Treasury Transfer**: Yield goes directly to treasury when no deposits exist
@@ -26,7 +26,7 @@ Users deposit USDR tokens and earn claimable yield over time, plus additional bo
 // Write functions
 deposit(uint256 amount)                    // Deposit USDR
 depositWithPermit(...)                     // Deposit with permit (gasless approval)
-withdraw(uint256 amount)                   // Withdraw any amount (principal + partial interest + all boost rewards)
+withdraw(uint256 amount)                   // Withdraw any amount up to principal (auto-claims all rewards)
 claim()                                    // Claim all accrued interest + all boost rewards
 
 // Read functions
@@ -297,22 +297,20 @@ function getVaultStats() external view returns (
 
 ## Withdrawal Examples
 
-### Withdrawal Scenarios
-Given: User has 1000 USDR principal + 100 USDR accrued interest
+### Simplified Withdrawal Logic
+**Key Rule**: User can only withdraw up to their principal amount, but ANY withdrawal automatically claims ALL rewards (USDR yield + boost rewards).
+
+Given: User has 1000 USDR principal + 100 USDR accrued interest + 50 ASTR boost rewards
 
 | Function Call | Amount | Result | Remaining |
 |---------------|--------|--------|-----------|
-| `withdraw(500)` | 500 USDR | Gets 500 USDR (principal only) | 500 principal + 100 interest |
-| `withdraw(1000)` | 1000 USDR | Gets 1000 USDR (principal only) | 0 principal + 100 interest |
-| `withdraw(1050)` | 1050 USDR | Gets 1050 USDR (1000 principal + 50 interest) | 0 principal + 50 interest |
-| `withdraw(1100)` | 1100 USDR | Gets 1100 USDR (1000 principal + 100 interest) | 0 principal + 0 interest |
-| `withdrawAll()` | - | Gets 1100 USDR (everything) | 0 principal + 0 interest |
-
-### Key Features
-- **Flexible**: `withdraw(amount)` can withdraw any amount up to total value
-- **Precise**: Can withdraw principal + partial interest for exact amounts
-- **Convenience**: `withdrawAll()` for simple "withdraw everything" use cases
-- **Clear separation**: `withdraw()` for specific amounts, `withdrawAll()` for everything
+| `withdraw(500)` | 500 USDR | Gets 500 USDR + 100 USDR interest + 50 ASTR | 500 principal + 0 interest + 0 ASTR |
+| `withdraw(1000)` | 1000 USDR | Gets 1000 USDR + 100 USDR interest + 50 ASTR | 0 principal + 0 interest + 0 ASTR |
+| `withdraw(1100)` | ❌ **REVERT** | Cannot withdraw more than principal | 1000 principal + 100 interest + 50 ASTR |
+### Key Benefits
+- **Simple**: Just withdraw any amount up to principal, get all rewards automatically
+- **No Confusion**: No need to remember different functions or complex logic
+- **Gas Efficient**: Single function call gets everything
 
 ### Important: Principal Withdrawal Impact
 - **Withdrawing principal stops future interest accrual** on that amount
@@ -365,21 +363,24 @@ vault.getClaimableBoostReward(alice, address(astr));  // Returns 50e18 ASTR (25%
 vault.getClaimableBoostReward(bob, address(astr));    // Returns 150e18 ASTR (75% of 200)
 ```
 
-### Example 3: Withdrawal with Automatic Boost Claiming
+### Example 3: Simplified Withdrawal with Automatic Reward Claiming
 ```solidity
 // Alice has 1000 principal + 50 USDR claimable + 25 ASTR boost rewards
 vault.principal(alice);   // 1000e6
 vault.claimable(alice);   // 50e6 USDR
 vault.getClaimableBoostReward(alice, address(astr));  // 25e18 ASTR
 
-// Option 1: Withdraw exact principal (USDR interest + boost rewards claimed automatically)
+// Option 1: Withdraw partial principal (ALL rewards claimed automatically)
+vault.withdraw(500e6);  
+// Result: Alice receives 500 USDR + 50 USDR + 25 ASTR, 500 principal remains
+
+// Option 2: Withdraw all principal (ALL rewards claimed automatically)
 vault.withdraw(1000e6);  
 // Result: Alice receives 1000 USDR + 50 USDR + 25 ASTR, nothing remains
 
-// Option 2: Withdraw everything using withdraw with total value
-uint256 totalValue = vault.totalValue(alice);  // 1050e6
-vault.withdraw(totalValue);      
-// Result: Alice receives 1050 USDR + 25 ASTR, nothing remains
+// Option 3: Claim rewards without withdrawing principal
+vault.claim();
+// Result: Alice receives 50 USDR + 25 ASTR, 1000 principal remains
 ```
 
 ### Example 4: Multi-Token Boost Rewards
@@ -554,3 +555,24 @@ constructor(
 ```
 
 All addresses will be non-zero and carefully chosen for production deployment.
+
+## Summary: Simplified Withdrawal Logic
+
+The EarnVault now features a **simplified withdrawal system** that makes it easy for users to manage their funds:
+
+### **Key Principles:**
+1. **Withdraw up to principal**: Users can only withdraw amounts up to their deposited principal
+2. **Automatic reward claiming**: ANY withdrawal automatically claims ALL accrued rewards (USDR yield + boost rewards)
+3. **Simple user experience**: No complex logic or multiple functions to remember
+
+### **User Actions:**
+- **`withdraw(amount)`**: Withdraw any amount up to principal + get all rewards automatically
+- **`claim()`**: Claim all rewards without withdrawing principal
+
+### **Benefits:**
+- ✅ **Simple**: One function handles everything
+- ✅ **Automatic**: No need to remember to claim rewards separately
+- ✅ **Gas efficient**: Single transaction gets everything
+- ✅ **Clear**: No confusion about what gets claimed when
+
+This design prioritizes **user experience** and **simplicity** while maintaining all the powerful features of the dual reward system.

@@ -285,10 +285,10 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
         emit Deposit(msg.sender, amount);
     }
 
-    /// @notice Withdraw any amount up to total value (principal + accrued interest)
-    /// @param amount Total amount to withdraw (can include accrued interest)
-    /// @dev Automatically claims all accrued interest (USDR + boost rewards) when withdrawing
-    /// @dev To withdraw everything, pass the total value: withdraw(principal + accrued)
+    /// @notice Withdraw any amount up to principal amount
+    /// @param amount Amount of principal to withdraw (max: user's principal)
+    /// @dev Automatically claims ALL accrued interest (USDR + boost rewards) when withdrawing
+    /// @dev User can only withdraw their principal, but gets all rewards automatically
     function withdraw(uint256 amount) external whenNotPaused nonReentrant {
         _checkNotBlacklisted(msg.sender);
         if (amount == 0) revert ZeroAmount();
@@ -296,30 +296,27 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
         _settle(msg.sender);
         
         uint256 p = principal[msg.sender];
-        uint256 userAccrued = accrued[msg.sender];
-        uint256 userTotalValue = p + userAccrued;
-        
-        if (amount > userTotalValue) revert InsufficientPrincipal();
+        if (amount > p) revert InsufficientPrincipal();
 
-        uint256 principalToWithdraw = amount;
-        uint256 interestToClaim = 0;
-        
-        if (amount > p) {
-            // Need to claim some interest
-            principalToWithdraw = p; // Withdraw all principal
-            interestToClaim = amount - p; // Claim remaining from interest
-        }
-        
         // Update state
-        principal[msg.sender] = p - principalToWithdraw;
-        accrued[msg.sender] = userAccrued - interestToClaim;
-        totalPrincipal -= principalToWithdraw;
+        principal[msg.sender] = p - amount;
+        totalPrincipal -= amount;
+        claimReserve -= amount; // Reduce claim reserve by withdrawn principal
         
-        // Transfer funds
-        claimReserve -= amount;
+        // Transfer principal
         USDR.safeTransfer(msg.sender, amount);
         
-        // Automatically claim all boost rewards when withdrawing
+        // Automatically claim ALL USDR yield
+        uint256 usdrYield = accrued[msg.sender];
+        if (usdrYield > 0) {
+            if (claimReserve < usdrYield) revert InsufficientFunding();
+            accrued[msg.sender] = 0;
+            claimReserve -= usdrYield;
+            USDR.safeTransfer(msg.sender, usdrYield);
+            emit InterestClaimed(msg.sender, usdrYield);
+        }
+        
+        // Automatically claim ALL boost rewards
         for (uint256 i = 0; i < activeBoostTokens.length; i++) {
             address token = activeBoostTokens[i];
             _settleBoost(msg.sender, token);
@@ -338,10 +335,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
         }
         
         // Emit events
-        emit Withdraw(msg.sender, principalToWithdraw);
-        if (interestToClaim > 0) {
-            emit InterestClaimed(msg.sender, interestToClaim);
-        }
+        emit Withdraw(msg.sender, amount);
     }
 
 

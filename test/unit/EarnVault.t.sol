@@ -346,9 +346,9 @@ contract EarnVaultTest is Test {
         uint256 initialBalance = usdr.balanceOf(alice);
         uint256 expectedTotal = depositAmount + yieldAmount;
         
-        // Alice withdraws everything using withdraw with total value
+        // Alice withdraws her principal (automatically claims all rewards)
         vm.prank(alice);
-        vault.withdraw(expectedTotal);
+        vault.withdraw(depositAmount);
         
         // Verify Alice received everything
         assertEq(vault.principal(alice), 0, "Alice should have no principal");
@@ -356,90 +356,33 @@ contract EarnVaultTest is Test {
         assertEq(usdr.balanceOf(alice), initialBalance + expectedTotal, "Alice should receive total amount");
     }
 
-    /// @notice Test exact principal withdrawal (no auto-claim)
-    function test_ExactPrincipalWithdrawal() public {
+    
+    /// @notice Test withdrawal with yield (simplified logic - all rewards auto-claimed)
+    function test_WithdrawWithYield() public {
         uint256 depositAmount = 1000e6;
         uint256 yieldAmount = 100e6;
         
         // Setup: Alice deposits and yield is distributed
         vm.prank(alice);
         vault.deposit(depositAmount);
-        
         vm.prank(yieldRedistributor);
         usdr.transfer(address(vault), yieldAmount);
         vm.prank(yieldRedistributor);
         vault.onYield(yieldAmount);
         
         uint256 initialBalance = usdr.balanceOf(alice);
-        uint256 claimableAmount = vault.claimable(alice);
-        
-        // Alice withdraws exact principal amount (no auto-claim)
+        // Alice withdraws her principal (automatically claims all interest)
         vm.prank(alice);
-        vm.expectEmit(true, false, false, true);
-        emit Withdraw(alice, depositAmount);
         vault.withdraw(depositAmount);
         
-        // Verify Alice received only principal, interest remains
-        assertEq(_getUserPrincipal(alice), 0, "Alice's principal should be 0");
-        assertEq(vault.accrued(alice), claimableAmount, "Alice's accrued should remain unchanged");
-        assertEq(usdr.balanceOf(alice), initialBalance + depositAmount, "Alice should receive only principal");
-    }
-    
-    /// @notice Test withdrawal with partial interest claim
-    function test_WithdrawWithPartialInterest() public {
-        uint256 depositAmount = 1000e6;
-        uint256 yieldAmount = 100e6;
-        
-        // Setup: Alice deposits and yield is distributed
-        vm.prank(alice);
-        vault.deposit(depositAmount);
-        vm.prank(yieldRedistributor);
-        usdr.transfer(address(vault), yieldAmount);
-        vm.prank(yieldRedistributor);
-        vault.onYield(yieldAmount);
-        
-        uint256 initialBalance = usdr.balanceOf(alice);
-        uint256 withdrawAmount = 1050e6; // 1000 principal + 50 interest
-        
-        // Alice withdraws 1050 (principal + partial interest)
-        vm.prank(alice);
-        vault.withdraw(withdrawAmount);
-        
-        // Verify Alice received 1050 USDR (1000 principal + 50 interest)
+        // Verify Alice received principal + all interest (1100 USDR total)
         assertEq(_getUserPrincipal(alice), 0, "Alice should have no principal");
-        assertEq(vault.accrued(alice), 50e6, "Alice should have 50 USDR interest remaining");
-        assertEq(usdr.balanceOf(alice), initialBalance + withdrawAmount, "Alice should receive 1050 USDR");
+        assertEq(vault.accrued(alice), 0, "All interest should be auto-claimed");
+        assertEq(usdr.balanceOf(alice), initialBalance + depositAmount + yieldAmount, "Alice should receive 1100 USDR");
     }
 
-    /// @notice Test withdrawal with full interest claim
-    function test_WithdrawWithFullInterest() public {
-        uint256 depositAmount = 1000e6;
-        uint256 yieldAmount = 100e6;
-        
-        // Setup: Alice deposits and yield is distributed
-        vm.prank(alice);
-        vault.deposit(depositAmount);
-        vm.prank(yieldRedistributor);
-        usdr.transfer(address(vault), yieldAmount);
-        vm.prank(yieldRedistributor);
-        vault.onYield(yieldAmount);
-        
-        uint256 initialBalance = usdr.balanceOf(alice);
-        uint256 withdrawAmount = 1100e6; // 1000 principal + 100 interest
-        
-        // Alice withdraws 1100 (principal + all interest)
-        vm.prank(alice);
-        vault.withdraw(withdrawAmount);
-        
-        // Verify Alice received 1100 USDR
-        assertEq(_getUserPrincipal(alice), 0, "Alice should have no principal");
-        assertEq(vault.accrued(alice), 0, "Alice should have no interest remaining");
-        assertEq(usdr.balanceOf(alice), initialBalance + withdrawAmount, "Alice should receive 1100 USDR");
-    }
-
-    /// @notice Test partial withdrawal does not auto-claim interest (with yield)
-    /// TODO: Consult Figma designs for dashboard UI flow expectations
-    function test_PartialWithdrawWithYieldNoAutoClaim() public {
+    /// @notice Test partial withdrawal with yield (auto-claims all rewards)
+    function test_PartialWithdrawWithYield() public {
         uint256 depositAmount = 1000e6;
         uint256 withdrawAmount = 600e6;
         uint256 yieldAmount = 100e6;
@@ -454,18 +397,17 @@ contract EarnVaultTest is Test {
         vault.onYield(yieldAmount);
         
         uint256 initialBalance = usdr.balanceOf(alice);
-        uint256 claimableBefore = vault.claimable(alice);
         
-        // Alice withdraws partial amount
+        // Alice withdraws partial amount (automatically claims all interest)
         vm.prank(alice);
         vault.withdraw(withdrawAmount);
         
-        // Verify interest is NOT auto-claimed
+        // Verify interest IS auto-claimed with new simplified logic
         assertEq(_getUserPrincipal(alice), depositAmount - withdrawAmount, 
                  "Alice should have 400 principal remaining");
-        assertEq(vault.claimable(alice), claimableBefore, "Claimable amount should remain unchanged");
-        assertEq(usdr.balanceOf(alice), initialBalance + withdrawAmount, 
-                 "Alice should only receive withdrawn principal");
+        assertEq(vault.claimable(alice), 0, "All interest should be auto-claimed");
+        assertEq(usdr.balanceOf(alice), initialBalance + withdrawAmount + yieldAmount, 
+                 "Alice should receive withdrawn principal + all interest");
     }
     
     // ========================================
@@ -983,11 +925,11 @@ contract EarnVaultTest is Test {
         assertEq(vault.claimable(bob), 400e6, "Bob should have 400 total");
         assertEq(vault.claimable(charlie), 300e6, "Charlie should have 300 from second yield");
         
-        // === Phase 6: Bob does full withdrawal using withdraw with total value ===
+        // === Phase 6: Bob does full withdrawal (automatically claims all rewards) ===
         uint256 bobInitialBalance = usdr.balanceOf(bob);
-        uint256 bobTotalValue = vault.totalValue(bob);
+        uint256 bobPrincipal = vault.principal(bob);
         vm.prank(bob);
-        vault.withdraw(bobTotalValue);
+        vault.withdraw(bobPrincipal);
         
         assertEq(_getUserPrincipal(bob), 0, "Bob should have no principal");
         assertEq(vault.claimable(bob), 0, "Bob should have no claimable");
