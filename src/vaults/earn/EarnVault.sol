@@ -320,7 +320,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
         for (uint256 i = 0; i < activeBoostTokens.length; i++) {
             address token = activeBoostTokens[i];
             _settleBoost(msg.sender, token);
-            uint256 claimedAmount = BoostRewardsLib.claimBoostReward(
+            BoostRewardsLib.claimBoostReward(
                 msg.sender,
                 token,
                 p, // Use original principal before withdrawal
@@ -329,9 +329,6 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
                 userBoostAccrued,
                 boostClaimReserve
             );
-            if (claimedAmount > 0) {
-                // Boost reward claimed automatically
-            }
         }
         
         // Emit events

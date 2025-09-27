@@ -4,6 +4,7 @@ pragma solidity ^0.8.26;
 import {IERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Math} from "lib/openzeppelin-contracts/contracts/utils/math/Math.sol";
+import {IEarnVaultEventsAndErrors} from "../../interfaces/vaults/earn/IEarnVaultEventsAndErrors.sol";
 
 /// @title BoostRewardsLib - Library for handling boost rewards distribution
 /// @notice Handles boost rewards logic separately from main EarnVault contract
@@ -12,16 +13,7 @@ library BoostRewardsLib {
     using SafeERC20 for IERC20;
 
     // -------- Constants --------
-    uint256 public constant RAY = 1e27;  // High precision for calculations
-
-    // -------- Events --------
-    event BoostRewardIndexed(address indexed token, uint256 amount, uint256 newGlobalIndex, uint256 newClaimReserve);
-    event BoostRewardTransferredToTreasury(address indexed token, uint256 amount);
-    event BoostRewardClaimed(address indexed user, address indexed token, uint256 amount);
-
-    // -------- Errors --------
-    error ZeroAddress();
-    error InsufficientFunding();
+    uint256 public constant RAY = 1e27; 
 
     /// @notice Distribute boost rewards to vault users
     /// @dev Uses same logic as USDR yield - distributed proportionally based on principal
@@ -41,7 +33,7 @@ library BoostRewardsLib {
         mapping(address => uint256) storage boostClaimReserve,
         address[] storage activeBoostTokens
     ) external {
-        if (token == address(0)) revert ZeroAddress();
+        if (token == address(0)) revert IEarnVaultEventsAndErrors.CanNotBeZeroAddress();
         if (amount == 0) return;
         
         // Verify actual balance before updating accounting
@@ -49,17 +41,17 @@ library BoostRewardsLib {
         
         if (totalPrincipal == 0) {
             // No deposits: transfer to treasury
-            if (bal < amount) revert InsufficientFunding();
+            if (bal < amount) revert IEarnVaultEventsAndErrors.InsufficientFunding();
             IERC20(token).safeTransfer(treasury, amount);
-            emit BoostRewardTransferredToTreasury(token, amount);
+            emit IEarnVaultEventsAndErrors.BoostRewardTransferredToTreasury(token, amount);
             return;
         }
         
         // Deposits exist: distribute proportionally based on principal (same as USDR yield)
-        if (bal < boostClaimReserve[token] + amount) revert InsufficientFunding();
+        if (bal < boostClaimReserve[token] + amount) revert IEarnVaultEventsAndErrors.InsufficientFunding();
         
         // Update boost global index for this token (same logic as USDR yield)
-        uint256 carryRay = 0; // For simplicity, we'll use 0 for boost rewards
+        uint256 carryRay = 0; // We use 0 for boost rewards as precision loss is negligible
         unchecked {
             uint256 num = amount * RAY + carryRay;
             uint256 delta = num / totalPrincipal;
@@ -80,7 +72,7 @@ library BoostRewardsLib {
             activeBoostTokens.push(token);
         }
         
-        emit BoostRewardIndexed(token, amount, boostGlobalIndex[token], boostClaimReserve[token]);
+        emit IEarnVaultEventsAndErrors.BoostRewardIndexed(token, amount, boostGlobalIndex[token], boostClaimReserve[token]);
     }
 
     /// @notice Claim boost rewards for a specific token
@@ -100,7 +92,7 @@ library BoostRewardsLib {
         mapping(address => mapping(address => uint256)) storage userBoostAccrued,
         mapping(address => uint256) storage boostClaimReserve
     ) external returns (uint256 claimedAmount) {
-        if (token == address(0)) revert ZeroAddress();
+        if (token == address(0)) revert IEarnVaultEventsAndErrors.CanNotBeZeroAddress();
         
         // Settle user's boost rewards
         uint256 ui = userBoostIndex;
@@ -119,12 +111,12 @@ library BoostRewardsLib {
         }
         
         if (claimedAmount == 0) return 0;
-        if (boostClaimReserve[token] < claimedAmount) revert InsufficientFunding();
+        if (boostClaimReserve[token] < claimedAmount) revert IEarnVaultEventsAndErrors.InsufficientFunding();
         
         userBoostAccrued[user][token] = 0;
         boostClaimReserve[token] -= claimedAmount;
         IERC20(token).safeTransfer(user, claimedAmount);
-        emit BoostRewardClaimed(user, token, claimedAmount);
+        emit IEarnVaultEventsAndErrors.BoostRewardClaimed(user, token, claimedAmount);
     }
 
     /// @notice Get user's claimable boost rewards for a specific token
@@ -166,7 +158,7 @@ library BoostRewardsLib {
         mapping(address => mapping(address => uint256)) storage userBoostAccrued
     ) external {
         if (principal == 0) { 
-            // User has no principal, update index to current
+            // User has no principal, nothing to settle
             return;
         }
         if (boostGlobalIndex >= userBoostIndex) {
@@ -174,7 +166,7 @@ library BoostRewardsLib {
                 uint256 owed = Math.mulDiv(principal, boostGlobalIndex - userBoostIndex, RAY);
                 userBoostAccrued[user][token] += owed;
             }
-            // Update user's boost index to current global index
+            // Note: User's boost index update is handled by the calling contract
         }
     }
 }
