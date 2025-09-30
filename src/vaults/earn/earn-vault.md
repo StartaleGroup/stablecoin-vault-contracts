@@ -569,3 +569,244 @@ constructor(
 ```
 
 All addresses will be non-zero and carefully chosen for production deployment.
+
+## Security: Index-Based Yield System
+
+### Overview
+
+The EarnVault uses a sophisticated **index-based yield system** to ensure fair, secure, and efficient yield distribution. This system prevents common vulnerabilities like double claiming and ensures users receive yield proportional to their principal and time held.
+
+### How the Index System Works
+
+#### Core Components
+
+1. **`globalIndex`** - Tracks total yield distributed across all users (stored as RAY precision)
+2. **`userIndex`** - Tracks the last point when a user's yield was settled (per user)
+3. **`principal[user]`** - User's current principal amount
+4. **`accrued[user]`** - User's accrued but unclaimed yield
+
+#### The Mathematics
+
+```solidity
+// When yield is distributed:
+globalIndex += (yieldAmount * RAY) / totalPrincipal
+
+// When user interacts (deposit/withdraw/claim):
+accruedYield = principal * (globalIndex - userIndex) / RAY
+userIndex = globalIndex  // CRITICAL: Update user's index
+```
+
+### Security Guarantees
+
+#### ✅ No Double Claiming Vulnerability
+
+**The Problem:** Users could potentially withdraw small amounts repeatedly to claim the same yield multiple times.
+
+**The Solution:** The index system prevents this by updating `userIndex` after each interaction:
+
+```solidity
+function _settle(address user) internal {
+    uint256 p = principal[user];
+    uint256 ui = userIndex[user];
+    uint256 gi = globalIndex;
+    
+    if (p == 0) { 
+        userIndex[user] = gi; 
+        return; 
+    }
+    
+    if (gi >= ui) {
+        if (gi > ui) {
+            uint256 owed = Math.mulDiv(p, gi - ui, RAY);
+            accrued[user] += owed;
+        }
+        userIndex[user] = gi;  // ← CRITICAL: Always update index
+    }
+}
+```
+
+**Why This Works:**
+- After each interaction, `userIndex` equals `globalIndex`
+- Future yield calculations only consider NEW distributions
+- Users cannot claim the same yield twice
+
+#### ✅ Proportional Distribution
+
+Yield is distributed proportionally based on:
+- **Principal amount** - Users with more principal get more yield
+- **Time held** - Yield accrues continuously while principal is deposited
+- **Fair allocation** - No user can extract more than their fair share
+
+### Real-World Example
+
+#### Scenario: 6-Hour Yield Cycles
+
+**Week 1: Initial Deposit**
+```
+Alice deposits: 1000 USDR
+Total vault principal: 1000 USDR (Alice is the only user initially)
+userIndex = 1e27 (initial global index)
+globalIndex = 1e27
+```
+
+**28 Cycles of Yield Distribution**
+```
+Each cycle: 1 USDR distributed
+Total yield: 28 USDR
+globalIndex = 1e27 + (28e6 * 1e27) / 1000e6 = 1.028e27
+Alice's accrued: 1000e6 * (1.028e27 - 1e27) / 1e27 = 28e6 USDR
+```
+
+**Alice Withdraws 500 USDR**
+```
+Alice gets: 500 USDR principal + 28 USDR yield = 528 USDR
+Remaining principal: 500 USDR
+Total vault principal: 1000 USDR (Alice: 500 USDR, Others: 500 USDR)
+userIndex updated to current globalIndex (1.028e27)
+```
+
+**Next Yield Cycle**
+```
+1 USDR distributed across 1000 USDR total principal
+Alice gets: 500/1000 × 1 USDR = 0.5 USDR (50% of distribution)
+```
+
+**To Get 28 USDR Again**
+```
+Need 56 more cycles (not 28)
+Each cycle gives 0.5 USDR (Alice's share is halved)
+56 cycles × 0.5 USDR = 28 USDR
+```
+
+### Why This System is Secure
+
+1. **Index-Based Tracking** - Prevents double claiming through mathematical precision
+2. **Automatic Settlement** - User interactions trigger yield calculation and index updates
+3. **Proportional Fairness** - Yield distributed based on principal and time
+4. **No Gaming Possible** - Users cannot exploit the system through repeated small withdrawals
+5. **Gas Efficient** - O(1) operations for yield calculations
+6. **Precision Preserved** - RAY precision (1e27) ensures minimal rounding errors
+
+### Technical Implementation
+
+The index system is implemented in the `_settle()` function, which is called automatically on:
+- `deposit()` - When users deposit
+- `withdraw()` - When users withdraw
+- `claim()` - When users claim yield
+
+This ensures that yield is always calculated fairly and users cannot game the system.
+
+## Advanced Security Analysis: Deposit-Back Attack Scenario
+
+### The Attack Vector
+
+A sophisticated attack vector involves:
+1. User withdraws small amount (1 USDR) to claim all accrued yield
+2. User deposits the same amount back before next yield distribution
+3. User claims full yield again from the new distribution
+
+**Question:** Is this a vulnerability?
+
+**Answer:** **NO** - This is perfectly fair behavior!
+
+### Step-by-Step Analysis
+
+#### Initial Setup
+```
+Alice deposits: 1000 USDR
+globalIndex = 1e27
+userIndex[Alice] = 1e27
+```
+
+#### Phase 1: First Yield Distribution
+```
+100 USDR yield distributed
+globalIndex = 1.1e27
+userIndex[Alice] = 1e27 (unchanged)
+```
+
+#### Phase 2: Alice Withdraws 1 USDR
+```solidity
+// _settle() calculates:
+accruedYield = 1000e6 * (1.1e27 - 1e27) / 1e27 = 100e6 USDR
+userIndex[Alice] = 1.1e27  // ← Updated to current global
+```
+
+**Alice gets:** 1 USDR principal + 100 USDR yield = 101 USDR total
+**Remaining principal:** 999 USDR
+
+#### Phase 3: Alice Deposits 1 USDR Back
+```
+Alice deposits: 1 USDR
+New principal: 999 + 1 = 1000 USDR
+userIndex[Alice] = 1.1e27 (unchanged)
+```
+
+#### Phase 4: Second Yield Distribution
+```
+100 USDR yield distributed
+globalIndex = 1.1e27 + (100e6 * 1e27) / 1000e6 = 1.2e27
+userIndex[Alice] = 1.1e27 (unchanged)
+```
+
+#### Phase 5: Alice Withdraws 1 USDR Again
+```solidity
+// _settle() calculates:
+accruedYield = 1000e6 * (1.2e27 - 1.1e27) / 1e27 = 100e6 USDR
+userIndex[Alice] = 1.2e27  // ← Updated again
+```
+
+**Alice gets:** 1 USDR principal + 100 USDR yield = 101 USDR total again!
+
+### Why This is NOT a Vulnerability
+
+#### ✅ Mathematical Fairness
+
+**First Yield Distribution:**
+```
+100 USDR distributed across 1000 USDR total principal
+Alice gets: 1000/1000 × 100 USDR = 100 USDR ✅
+```
+
+**Second Yield Distribution:**
+```
+100 USDR distributed across 1000 USDR total principal
+Alice gets: 1000/1000 × 100 USDR = 100 USDR ✅
+```
+
+**Total:** Alice received 200 USDR from 200 USDR distributed = **100% fair!**
+
+#### ✅ No Double Claiming
+
+- **First 100 USDR:** From first yield distribution
+- **Second 100 USDR:** From second yield distribution
+- **Each yield is from a DIFFERENT distribution cycle**
+- **No double claiming possible**
+
+#### ✅ Proportional Distribution
+
+- Alice had 1000 USDR principal during both distributions
+- She's entitled to 100% of each distribution (she's the only user)
+- The system correctly calculates her proportional share
+
+### Real-World Analogy
+
+Think of it like **dividend payments**:
+
+1. **We (as user) own 1000 shares** of a company
+2. **Company pays $100 dividend** → We get $100 (we own 100% of shares)
+3. **We sell 1 share, then buy 1 share back** → We still own 1000 shares
+4. **Company pays $100 dividend again** → We get $100 again (We still own 100% of shares)
+5. **This is fair!** We owned 1000 shares during both dividend periods
+
+
+### Key Security Principles
+
+1. **Yield is calculated based on principal at distribution time** - not when user last interacted
+2. **Proportional distribution ensures fairness** - users get exactly their fair share
+3. **Index system prevents double claiming** - but allows legitimate yield accrual
+4. **No gaming possible** - the system works as mathematically designed
+
+### Conclusion
+
+**The system correctly ensures that users receive yield proportional to their principal at the time of distribution, which is exactly how it should work.**
