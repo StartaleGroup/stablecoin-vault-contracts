@@ -619,7 +619,7 @@ contract EarnVaultTest is Test {
     }
     
     /// @notice Test asset view function
-    function test_AssetViewFunction() public {
+    function test_AssetViewFunction() public view {
         assertEq(vault.asset(), address(usdr), "Asset should return USDR address");
     }
     

@@ -194,7 +194,7 @@ contract RewardRedistributorIntegrationTest is Test {
         uint256 T_yield = susdrVault.totalAssets();
         uint256 S_base = usdr.totalSupply(); // Will be adjusted after minting
         
-        (uint256 minted, uint256 feeToStartale, uint256 toEarn, uint256 toYield, uint256 toExtra, , , ) = rr.previewDistribute();
+        (uint256 minted, uint256 feeToStartale, uint256 toEarn, uint256 toYield, , , , ) = rr.previewDistribute();
         
         S_base = S_base - minted; // Adjust for the minting that will happen
         uint256 net = minted - feeToStartale;
@@ -218,7 +218,7 @@ contract RewardRedistributorIntegrationTest is Test {
     
     function testIntegration_DepositsWithdrawalsAroundDistribution() public {
         // Initial state
-        uint256 aliceEarnPrincipalBefore = earnVault.principal(alice);
+        // uint256 aliceEarnPrincipalBefore = earnVault.principal(alice);
         uint256 bobSUSDRSharesBefore = susdrVault.balanceOf(bob);
         
         // Add yield and distribute
@@ -386,7 +386,7 @@ contract RewardRedistributorIntegrationTest is Test {
     function testIntegration_SUSDRVaultRedemptionsAfterDistribution() public {
         // Get initial state
         uint256 bobInitialShares = susdrVault.balanceOf(bob);
-        uint256 charlieInitialShares = susdrVault.balanceOf(charlie);
+        // uint256 charlieInitialShares = susdrVault.balanceOf(charlie);
         uint256 initialPPS = susdrVault.totalSupply() > 0 ? 
             (susdrVault.totalAssets() * 1e18) / susdrVault.totalSupply() : 1e18;
         
@@ -460,7 +460,7 @@ contract RewardRedistributorIntegrationTest is Test {
         
         // Alice claims yield but keeps principal
         vm.startPrank(alice);
-        uint256 aliceFirstClaimable = earnVault.claimable(alice);
+        // uint256 aliceFirstClaimable = earnVault.claimable(alice);
         earnVault.claim();
         vm.stopPrank();
         
@@ -477,7 +477,7 @@ contract RewardRedistributorIntegrationTest is Test {
         
         // Alice does partial withdrawal
         vm.startPrank(alice);
-        uint256 aliceSecondClaimable = earnVault.claimable(alice);
+        // uint256 aliceSecondClaimable = earnVault.claimable(alice);
         uint256 alicePartialWithdraw = aliceInitialEarnPrincipal / 4;
         uint256 aliceBalanceBefore = usdr.balanceOf(alice);
         
@@ -495,7 +495,7 @@ contract RewardRedistributorIntegrationTest is Test {
         // Bob redeems remaining shares
         vm.startPrank(bob);
         uint256 bobRemainingShares = susdrVault.balanceOf(bob);
-        uint256 bobFinalBalance = usdr.balanceOf(bob);
+        // uint256 bobFinalBalance = usdr.balanceOf(bob);
         
         uint256 bobFinalAssets = susdrVault.redeem(bobRemainingShares, bob, bob);
         
