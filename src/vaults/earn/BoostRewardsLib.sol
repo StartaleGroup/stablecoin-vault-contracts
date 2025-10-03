@@ -24,6 +24,7 @@ library BoostRewardsLib {
     /// @param boostGlobalIndex Global boost index for this token
     /// @param boostClaimReserve Claimable boost reserves for this token
     /// @param activeBoostTokens Array of active boost tokens
+    /// @param boostTokenIndex Mapping of token to index in activeBoostTokens array
     function distributeBoostReward(
         address token,
         uint256 amount,
@@ -31,7 +32,8 @@ library BoostRewardsLib {
         address treasury,
         mapping(address => uint256) storage boostGlobalIndex,
         mapping(address => uint256) storage boostClaimReserve,
-        address[] storage activeBoostTokens
+        address[] storage activeBoostTokens,
+        mapping(address => uint256) storage boostTokenIndex
     ) external {
         if (token == address(0)) revert IEarnVaultEventsAndErrors.CanNotBeZeroAddress();
         if (amount == 0) return;
@@ -41,14 +43,14 @@ library BoostRewardsLib {
         
         if (totalPrincipal == 0) {
             // No deposits: transfer to treasury
-            if (bal < amount) revert IEarnVaultEventsAndErrors.InsufficientFunding();
+            if (bal < amount) revert IEarnVaultEventsAndErrors.InsufficientBoostTokenBalance();
             IERC20(token).safeTransfer(treasury, amount);
             emit IEarnVaultEventsAndErrors.BoostRewardTransferredToTreasury(token, amount);
             return;
         }
         
         // Deposits exist: distribute proportionally based on principal (same as USDR yield)
-        if (bal < boostClaimReserve[token] + amount) revert IEarnVaultEventsAndErrors.InsufficientFunding();
+        if (bal < boostClaimReserve[token] + amount) revert IEarnVaultEventsAndErrors.InsufficientBoostClaimReserve();
         
         // Update boost global index for this token (same logic as USDR yield)
         uint256 carryRay = 0; // We use 0 for boost rewards as precision loss is negligible
@@ -61,15 +63,10 @@ library BoostRewardsLib {
         boostClaimReserve[token] += amount;
         
         // Track active boost tokens (only add if not already tracked)
-        bool tokenExists = false;
-        for (uint256 i = 0; i < activeBoostTokens.length; i++) {
-            if (activeBoostTokens[i] == token) {
-                tokenExists = true;
-                break;
-            }
-        }
-        if (!tokenExists) {
+        if (boostTokenIndex[token] == 0) {
+            // Token not tracked yet, add to array and set index
             activeBoostTokens.push(token);
+            boostTokenIndex[token] = activeBoostTokens.length; // 1-based index
         }
         
         emit IEarnVaultEventsAndErrors.BoostRewardIndexed(token, amount, boostGlobalIndex[token], boostClaimReserve[token]);
@@ -111,12 +108,14 @@ library BoostRewardsLib {
         }
         
         if (claimedAmount == 0) return 0;
-        if (boostClaimReserve[token] < claimedAmount) revert IEarnVaultEventsAndErrors.InsufficientFunding();
+        if (boostClaimReserve[token] < claimedAmount) revert IEarnVaultEventsAndErrors.InsufficientBoostClaimReserve();
         
         userBoostAccrued[user][token] = 0;
         boostClaimReserve[token] -= claimedAmount;
         IERC20(token).safeTransfer(user, claimedAmount);
         emit IEarnVaultEventsAndErrors.BoostRewardClaimed(user, token, claimedAmount);
+        
+        return claimedAmount;
     }
 
     /// @notice Get user's claimable boost rewards for a specific token

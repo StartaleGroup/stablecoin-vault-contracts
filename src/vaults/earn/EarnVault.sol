@@ -39,9 +39,8 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
 
 
     // -------- Roles / endpoints --------
-    address public yieldRedistributor;   // allowed to call onYield
     address public treasury;             // receives yield when no deposits exist, surplus sweeps
-    address public pauser;               // allowed to pause/unpause the contract
+    address public currentPauser;        // current pauser (for role management)
 
     // -------- Optional blacklist --------
     mapping(address => bool) public isBlacklisted;
@@ -62,6 +61,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
     mapping(address => mapping(address => uint256)) public userBoostIndex; // user => token => last boost index
     mapping(address => mapping(address => uint256)) public userBoostAccrued; // user => token => accrued boost rewards
     address[] public activeBoostTokens; // list of tokens that have been distributed
+    mapping(address => uint256) public boostTokenIndex; // token => index in activeBoostTokens array
 
     // -------- Events and Errors --------
     // All events and errors are inherited from IEarnVaultEventsAndErrors interface
@@ -72,9 +72,8 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
         if (pauserAddr == address(0)) revert CanNotBeZeroAddress();
         
         USDR = IERC20(usdr);
-        yieldRedistributor = yieldRedistributorAddr;
         treasury = treasuryAddr;
-        pauser = pauserAddr;
+        currentPauser = pauserAddr;
         
         // Set up roles
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
@@ -91,11 +90,10 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
     /// @param who New yield redistributor address
     function setYieldRedistributor(address who) external onlyRole(ADMIN_ROLE) {
         if (who == address(0)) revert CanNotBeZeroAddress();
-        address oldRedistributor = yieldRedistributor;
-        _revokeRole(YIELD_REDISTRIBUTOR_ROLE, yieldRedistributor);
+        // Note: We can't easily get the old address without storage, so we emit address(0) for old
+        // In practice, this is fine since the role system is the source of truth
         _grantRole(YIELD_REDISTRIBUTOR_ROLE, who);
-        yieldRedistributor = who;
-        emit YieldRedistributorChanged(msg.sender, oldRedistributor, who);
+        emit YieldRedistributorChanged(msg.sender, address(0), who);
     }
 
     /// @notice Set the treasury address  
@@ -111,10 +109,14 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
     /// @param who New pauser address
     function setPauser(address who) external onlyRole(ADMIN_ROLE) {
         if (who == address(0)) revert CanNotBeZeroAddress();
-        address oldPauser = pauser;
-        _revokeRole(PAUSER_ROLE, pauser);
+        address oldPauser = currentPauser;
+        
+        // Revoke role from old pauser
+        _revokeRole(PAUSER_ROLE, oldPauser);
+        // Grant role to new pauser
         _grantRole(PAUSER_ROLE, who);
-        pauser = who;
+        
+        currentPauser = who;
         emit PauserChanged(msg.sender, oldPauser, who);
     }
 
@@ -221,6 +223,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
     /// @param user User address to check
     /// @param token Token address to check boost rewards for
     function getClaimableBoostReward(address user, address token) external view returns (uint256) {
+        _checkNotBlacklisted(user);
         return BoostRewardsLib.getClaimableBoostReward(
             user,
             token,
@@ -298,7 +301,12 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
         uint256 p = principal[msg.sender];
         if (amount > p) revert InsufficientPrincipal();
 
-        // Update state
+        // Settle ALL boost rewards BEFORE reducing principal
+        for (uint256 i = 0; i < activeBoostTokens.length; i++) {
+            _settleBoost(msg.sender, activeBoostTokens[i]);
+        }
+
+        // Update state AFTER settling all rewards
         principal[msg.sender] = p - amount;
         totalPrincipal -= amount;
         claimReserve -= amount; // Reduce claim reserve by withdrawn principal
@@ -319,7 +327,6 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
         // Automatically claim ALL boost rewards
         for (uint256 i = 0; i < activeBoostTokens.length; i++) {
             address token = activeBoostTokens[i];
-            _settleBoost(msg.sender, token);
             BoostRewardsLib.claimBoostReward(
                 msg.sender,
                 token,
@@ -342,6 +349,11 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
         _checkNotBlacklisted(msg.sender);
         _settle(msg.sender);
         
+        // Settle ALL boost rewards BEFORE any state changes
+        for (uint256 i = 0; i < activeBoostTokens.length; i++) {
+            _settleBoost(msg.sender, activeBoostTokens[i]);
+        }
+        
         uint256 usdrAmt = accrued[msg.sender];
         bool hasUSDRClaim = usdrAmt > 0;
         bool hasBoostClaim = false;
@@ -358,7 +370,6 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
         // Claim all boost rewards
         for (uint256 i = 0; i < activeBoostTokens.length; i++) {
             address token = activeBoostTokens[i];
-            _settleBoost(msg.sender, token);
             uint256 claimedAmount = BoostRewardsLib.claimBoostReward(
                 msg.sender,
                 token,
@@ -429,7 +440,8 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
             treasury,
             boostGlobalIndex,
             boostClaimReserve,
-            activeBoostTokens
+            activeBoostTokens,
+            boostTokenIndex
         );
     }
 

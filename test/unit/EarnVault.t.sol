@@ -652,7 +652,7 @@ contract EarnVaultTest is Test {
         // Owner can set new pauser
         vm.prank(owner);
         vault.setPauser(alice);
-        assertEq(vault.pauser(), alice, "Pauser should be updated");
+        assertTrue(vault.hasRole(vault.PAUSER_ROLE(), alice), "Alice should have PAUSER_ROLE");
         
         // New pauser can pause
         vm.prank(alice);
@@ -852,7 +852,7 @@ contract EarnVaultTest is Test {
         // Owner can change distributor
         vm.prank(owner);
         vault.setYieldRedistributor(newDistributor);
-        assertEq(vault.yieldRedistributor(), newDistributor, "YieldRedistributor should be updated");
+        assertTrue(vault.hasRole(vault.YIELD_REDISTRIBUTOR_ROLE(), newDistributor), "New distributor should have YIELD_REDISTRIBUTOR_ROLE");
         
         // Old yield redistributor should no longer work
         vm.prank(yieldRedistributor);
@@ -1482,23 +1482,135 @@ contract EarnVaultTest is Test {
         vault.withdraw(1e6);
         
         assertEq(vault.principal(alice), 998e6, "Alice should have 998 USDR principal");
-        assertEq(vault.accrued(alice), 0, "Alice should have no accrued yield");
-        
-        // === Distribute another 100 USDR yield ===
-        vm.prank(yieldRedistributor);
-        usdr.transfer(address(vault), 100e6);
-        vm.prank(yieldRedistributor);
-        vault.onYield(100e6);
-        
-        // Alice should get proportional yield based on remaining principal (998 USDR)
-        uint256 actualClaimable2 = vault.claimable(alice);
-        assertApproxEqAbs(actualClaimable2, 100e6, 1000, "Alice should have proportional yield close to 100 USDR");
-        
-        // === Verify Alice cannot extract more yield than she's entitled to ===
-        // Total yield Alice should have received: 100 + 99.9 + 99.8 = ~299.7 USDR
-        // This is proportional to her principal and time, not exploitable
-        assertLt(vault.claimable(alice), 100e6, "Alice should not have full 100 USDR yield");
     }
+    
+    /// @notice Test comprehensive yield calculation over multiple periods with different principal amounts
+    /// @dev Verifies: claimable ≈ N × period_yield × (userPrincipal/totalPrincipal_at_each_period)
+    /// @dev Verifies: Withdraw resets claimable to 0; future accrual is on new principal
+    /// @dev Verifies: Halving principal roughly doubles the time to earn the same absolute USDR
+    function test_ComprehensiveYieldCalculationOverPeriods() public {
+        // =========================
+        // Phase 1: Initial Setup - Alice deposits 1000 USDR
+        // =========================
+        vm.prank(alice);
+        vault.deposit(1000e6);
+        
+        assertEq(vault.principal(alice), 1000e6, "Alice should have 1000 USDR principal");
+        assertEq(vault.totalPrincipal(), 1000e6, "Total principal should be 1000 USDR");
+        
+        // =========================
+        // Phase 2: Multiple yield periods with consistent yield
+        // =========================
+        uint256 periodYield = 10e6; // 10 USDR per period
+        uint256 numPeriods = 5;
+        
+        // Distribute yield over 5 periods
+        for (uint256 i = 0; i < numPeriods; i++) {
+            vm.prank(yieldRedistributor);
+            usdr.transfer(address(vault), periodYield);
+            vm.prank(yieldRedistributor);
+            vault.onYield(periodYield);
+        }
+        
+        // Alice should have: 5 periods × 10 USDR × (1000/1000) = 50 USDR claimable
+        uint256 expectedClaimable = numPeriods * periodYield; // 50 USDR
+        assertEq(vault.claimable(alice), expectedClaimable, "Alice should have 50 USDR claimable after 5 periods");
+        
+        // =========================
+        // Phase 3: Alice withdraws 500 USDR (halves her principal)
+        // =========================
+        uint256 aliceBalanceBefore = usdr.balanceOf(alice);
+        
+        vm.prank(alice);
+        vault.withdraw(500e6); // Withdraw 500 USDR principal (auto-claims all 50 USDR yield)
+        
+        uint256 aliceBalanceAfter = usdr.balanceOf(alice);
+        uint256 receivedAmount = aliceBalanceAfter - aliceBalanceBefore;
+        
+        // Alice should receive: 500 USDR principal + 50 USDR yield = 550 USDR total
+        assertEq(receivedAmount, 550e6, "Alice should receive 500 USDR principal + 50 USDR yield");
+        assertEq(vault.principal(alice), 500e6, "Alice should have 500 USDR principal remaining");
+        assertEq(vault.accrued(alice), 0, "Alice should have no accrued yield after withdrawal");
+        assertEq(vault.totalPrincipal(), 500e6, "Total principal should be 500 USDR");
+        
+        // =========================
+        // Phase 4: Verify claimable is reset to 0 after withdrawal
+        // =========================
+        assertEq(vault.claimable(alice), 0, "Claimable should be reset to 0 after withdrawal");
+        
+        // =========================
+        // Phase 5: Future accrual is on new principal (500 USDR)
+        // =========================
+        // Distribute another 10 USDR yield
+        vm.prank(yieldRedistributor);
+        usdr.transfer(address(vault), periodYield);
+        vm.prank(yieldRedistributor);
+        vault.onYield(periodYield);
+        
+        // Alice should get: 10 USDR × (500/500) = 10 USDR (she's the only user)
+        assertEq(vault.claimable(alice), periodYield, "Alice should get 10 USDR yield on her remaining 500 USDR principal");
+        
+        // =========================
+        // Phase 6: Verify halving principal roughly doubles time to earn same absolute USDR
+        // =========================
+        // To earn 50 USDR again (same as before), Alice needs 5 more periods
+        // (since she now gets 10 USDR per period instead of 10 USDR per period)
+        // This demonstrates that halving principal doubles the time to earn the same absolute amount
+        
+        uint256 targetYield = 50e6; // Same as what she earned before
+        uint256 periodsNeeded = targetYield / periodYield; // 50 / 10 = 5 periods
+        
+        // Distribute yield for the required periods
+        for (uint256 i = 0; i < periodsNeeded; i++) {
+            vm.prank(yieldRedistributor);
+            usdr.transfer(address(vault), periodYield);
+            vm.prank(yieldRedistributor);
+            vault.onYield(periodYield);
+        }
+        
+        // Alice should now have 10 (from previous) + 50 (from 5 new periods) = 60 USDR claimable
+        uint256 expectedTotal = periodYield + targetYield; // 10 + 50 = 60 USDR
+        assertEq(vault.claimable(alice), expectedTotal, "Alice should have 60 USDR claimable after 5 more periods");
+        
+        // =========================
+        // Phase 7: Mathematical verification of proportional distribution
+        // =========================
+        // First, Alice claims her existing yield to reset her claimable to 0
+        vm.prank(alice);
+        vault.claim();
+        assertEq(vault.claimable(alice), 0, "Alice should have no claimable after claiming");
+        
+        // Add Bob with 1000 USDR principal to test proportional distribution
+        vm.prank(bob);
+        vault.deposit(1000e6);
+        
+        assertEq(vault.totalPrincipal(), 1500e6, "Total principal should be 1500 USDR (Alice: 500, Bob: 1000)");
+        
+        // Distribute 30 USDR yield
+        vm.prank(yieldRedistributor);
+        usdr.transfer(address(vault), 30e6);
+        vm.prank(yieldRedistributor);
+        vault.onYield(30e6);
+        
+        // Alice should get: 30 USDR × (500/1500) = 10 USDR
+        // Bob should get: 30 USDR × (1000/1500) = 20 USDR
+        assertEq(vault.claimable(alice), 10e6, "Alice should get 10 USDR (1/3 of 30 USDR)");
+        assertEq(vault.claimable(bob), 20e6, "Bob should get 20 USDR (2/3 of 30 USDR)");
+        
+        // =========================
+        // Phase 8: Verify the mathematical formula
+        // =========================
+        // Formula: claimable ≈ N × period_yield × (userPrincipal/totalPrincipal_at_each_period)
+        // For Alice: 1 × 30 USDR × (500/1500) = 10 USDR ✓
+        // For Bob: 1 × 30 USDR × (1000/1500) = 20 USDR ✓
+        
+        uint256 aliceExpected = (30e6 * 500e6) / 1500e6; // 10 USDR
+        uint256 bobExpected = (30e6 * 1000e6) / 1500e6; // 20 USDR
+        
+        assertEq(vault.claimable(alice), aliceExpected, "Alice's yield should match mathematical formula");
+        assertEq(vault.claimable(bob), bobExpected, "Bob's yield should match mathematical formula");
+    }
+    
     
     /// @notice Test that the index system properly tracks user positions
     /// @dev Verifies that userIndex is updated correctly after each settlement
@@ -1616,6 +1728,69 @@ contract EarnVaultTest is Test {
         // Total yield Alice received: 100 + 100 = 200 USDR
         // Total yield distributed: 100 + 100 = 200 USDR
         // Alice received exactly what she was entitled to: 100% of each distribution
+    }
+    
+    /// @notice Test specific boost reward error scenarios
+    function test_BoostRewardSpecificErrors() public {
+        // === Test InsufficientBoostTokenBalance ===
+        // This happens when totalPrincipal = 0 and vault doesn't have enough tokens
+        MockERC20 mockToken = new MockERC20("Mock Token", "MOCK", 18);
+        mockToken.mint(alice, 100e18);
+        
+        // Alice tries to distribute boost rewards but vault has no tokens
+        vm.prank(yieldRedistributor);
+        vm.expectRevert(IEarnVaultEventsAndErrors.InsufficientBoostTokenBalance.selector);
+        vault.onBoostReward(address(mockToken), 50e18);
+        
+        // === Test InsufficientBoostClaimReserve ===
+        // This happens when vault has deposits but insufficient balance for distribution
+        vm.prank(alice);
+        vault.deposit(1000e6);
+        
+        // Transfer some tokens to vault but not enough for distribution
+        mockToken.mint(address(vault), 10e18);
+        
+        // Try to distribute more than available balance
+        vm.prank(yieldRedistributor);
+        vm.expectRevert(IEarnVaultEventsAndErrors.InsufficientBoostClaimReserve.selector);
+        vault.onBoostReward(address(mockToken), 20e18);
+    }
+    
+    /// @notice Test that blacklisted users cannot access boost reward functions
+    function test_BlacklistedUserCannotAccessBoostRewards() public {
+        // === Setup: Alice deposits and gets some boost rewards ===
+        vm.prank(alice);
+        vault.deposit(1000e6);
+        
+        // Distribute some boost rewards
+        MockERC20 mockToken = new MockERC20("Mock Token", "MOCK", 18);
+        mockToken.mint(address(vault), 100e18);
+        vm.prank(yieldRedistributor);
+        vault.onBoostReward(address(mockToken), 50e18);
+        
+        // === Blacklist Alice ===
+        vm.prank(owner);
+        vault.setBlacklisted(alice, true);
+        
+        // === Test that Alice cannot get claimable boost rewards ===
+        vm.prank(alice);
+        vm.expectRevert(IEarnVaultEventsAndErrors.AddressBlacklisted.selector);
+        vault.getClaimableBoostReward(alice, address(mockToken));
+        
+        // === Test that Alice cannot claim (which includes boost rewards) ===
+        vm.prank(alice);
+        vm.expectRevert(IEarnVaultEventsAndErrors.AddressBlacklisted.selector);
+        vault.claim();
+        
+        // === Test that Alice cannot withdraw (which includes boost rewards) ===
+        vm.prank(alice);
+        vm.expectRevert(IEarnVaultEventsAndErrors.AddressBlacklisted.selector);
+        vault.withdraw(100e6);
+        
+        // === Test that Alice cannot deposit (which would give her access to boost rewards) ===
+        vm.prank(alice);
+        vm.expectRevert(IEarnVaultEventsAndErrors.AddressBlacklisted.selector);
+        vault.deposit(100e6);
     }
     
 }

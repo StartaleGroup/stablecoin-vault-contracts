@@ -92,9 +92,9 @@ interface IEarnVaultEventsAndErrors {
     /// @notice Emitted when boost rewards are distributed and indexed to users
     /// @param token Token address that was distributed
     /// @param amount Amount of boost rewards distributed
-    /// @param newGlobalIndex New global boost index after distribution
-    /// @param newClaimReserve New boost claim reserve amount
-    event BoostRewardIndexed(address indexed token, uint256 amount, uint256 newGlobalIndex, uint256 newClaimReserve);
+    /// @param newBoostGlobalIndex New boost global index after distribution
+    /// @param newBoostClaimReserve New boost claim reserve amount
+    event BoostRewardIndexed(address indexed token, uint256 amount, uint256 newBoostGlobalIndex, uint256 newBoostClaimReserve);
     
     /// @notice Emitted when boost rewards are transferred to treasury (when totalPrincipal = 0)
     /// @param token Token address that was transferred
@@ -149,4 +149,10 @@ interface IEarnVaultEventsAndErrors {
     
     /// @notice Thrown when contract receives ETH but shouldn't accept it
     error EthNotAccepted();
+    
+    /// @notice Thrown when boost reward distribution fails due to insufficient token balance
+    error InsufficientBoostTokenBalance();
+    
+    /// @notice Thrown when boost reward distribution fails due to insufficient claim reserve
+    error InsufficientBoostClaimReserve();
 }

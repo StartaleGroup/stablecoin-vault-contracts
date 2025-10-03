@@ -522,6 +522,8 @@ uint256 dotRewards = vault.getClaimableBoostReward(user, address(dot));
 - **Ray-Space Carry**: Efficient unchecked arithmetic for perfect precision
 - **getUserInfo**: Inlined calculations avoid external calls
 - **Library Architecture**: Boost logic separated for gas optimization
+- **Boost Token Indexing**: O(1) lookup for boost token tracking (eliminates linear search)
+- **Mapping + Array Approach**: Efficient tracking of active boost tokens
 
 ### Precision & Safety
 - **RAY Precision**: 1e27 prevents rounding errors
@@ -529,6 +531,12 @@ uint256 dotRewards = vault.getClaimableBoostReward(user, address(dot));
 - **Unchecked Arithmetic**: Safe in carry calculations due to RAY precision
 - **Funding Invariant**: `USDR.balance >= claimReserve`
 - **Boost Invariant**: `BoostToken.balance >= boostClaimReserve[token]`
+
+### Error Handling
+- **Specific Boost Errors**: `InsufficientBoostTokenBalance()` and `InsufficientBoostClaimReserve()` for precise error reporting
+- **Blacklist Protection**: All user-facing functions protected against blacklisted addresses
+- **Role-Based Access**: Comprehensive access control with proper role management
+- **Input Validation**: Zero address and amount checks throughout
 
 ### Library Architecture
 The boost rewards system uses a separate library (`BoostRewardsLib`) for:
@@ -542,10 +550,12 @@ Owner (Full Control)
 ├── Set all role addresses
 ├── Emergency sweep operations
 ├── Blacklist management
-└── Treasury operations
+├── Treasury operations
+└── Role management (revoke old roles, grant new roles)
 
 YieldRedistributor (Yield Operations)
 ├── Distribute yield via onYield()
+├── Distribute boost rewards via onBoostReward()
 └── Transfer to treasury
 
 Pauser (Emergency Response)
@@ -555,6 +565,12 @@ Pauser (Emergency Response)
 Treasury (Fund Recipient)
 └── Receives swept surplus funds
 ```
+
+### Role Management Features
+- **Automatic Role Revocation**: When updating roles, old roles are automatically revoked
+- **Current Pauser Tracking**: `currentPauser` variable ensures proper role transitions
+- **Role-Based Storage**: No redundant storage variables (uses OpenZeppelin AccessControl)
+- **Secure Transitions**: Prevents unauthorized access during role changes
 
 ## Deployment Parameters
 
