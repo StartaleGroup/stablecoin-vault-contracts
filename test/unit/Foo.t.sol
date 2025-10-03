@@ -21,7 +21,7 @@ contract FooTest is Test {
   }
 
   /// @dev Simple test. Run Forge with `-vvvv` to see stack traces.
-  function test() external {
+  function test() external view{
     string memory foo = fooContract.getFoo();
 
     assertEq(foo, 'Foo');

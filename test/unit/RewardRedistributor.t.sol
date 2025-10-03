@@ -60,10 +60,10 @@ contract RewardRedistributorTest is Test {
         // Preview exact
         (
             uint256 minted,
-            uint256 feeToStartale,
-            uint256 toEarn,
-            uint256 to4626,
-            uint256 toStartaleExtra,
+            ,
+            ,
+            ,
+            ,
             uint256 S_base,
             uint256 Tearn,
             uint256 T4626
@@ -205,7 +205,7 @@ contract RewardRedistributorTest is Test {
         ext.addPending(30_000e6);
         
         // Denominator & proportionality pattern from specification
-        (uint minted, uint fee, uint toEarn, uint toYield, uint toExtra,,,) = rr.previewDistribute();
+        (uint minted, uint fee, uint toEarn, uint toYield,,,,) = rr.previewDistribute();
         
         uint S_base = usdr.totalSupply() - minted;
         uint T_earn = earnV.totalPrincipal();
@@ -251,7 +251,7 @@ contract RewardRedistributorTest is Test {
     function testInvariant1_ConservationOfValue() public {
         ext.addPending(50_000e6);
         
-        uint256 balanceBefore = usdr.balanceOf(address(rr));
+        // uint256 balanceBefore = usdr.balanceOf(address(rr));
         
         vm.prank(operator);
         rr.distribute();
@@ -421,7 +421,7 @@ contract RewardRedistributorTest is Test {
         // Calculate initial PPS (price per share)
         uint256 initialAssets = sVault.totalAssets();
         uint256 initialSupply = sVault.totalSupply(); // This is 0 in our mock
-        
+        assertEq(initialSupply, 0, "initial supply is 0");
         ext.addPending(30_000e6);
         
         vm.prank(operator);
