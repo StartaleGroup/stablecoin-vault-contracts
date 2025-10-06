@@ -166,6 +166,8 @@ contract ForkUSDR is Test {
         uint256 zeldaInitialBalance = usdrToken.balanceOf(zelda);
         uint256 adminInitialBalance = usdrToken.balanceOf(SEPOLIA_USDR_ADMIN);
         uint256 bobInitialBalance = usdrToken.balanceOf(bob);
+        // We have externally minted some USDR tokens, so total supply is not 0
+        uint256 earlierTotalSupply = usdrToken.totalSupply();
         
         console2.log("=== Initial Balances ===");
         console2.log("Zelda Balance:", zeldaInitialBalance);
@@ -231,8 +233,8 @@ contract ForkUSDR is Test {
         // Note: deal() artificially sets balances but doesn't change total supply
         uint256 currentTotalSupply = usdrToken.totalSupply();
         console2.log("=== Total Supply Check ===");
-        console2.log("Total Supply (should still be 0):", currentTotalSupply);
-        assertEq(currentTotalSupply, 0, "Total supply should remain 0 as deal() doesn't affect it");
+        console2.log("Total Supply (should still be earlierTotalSupply):", earlierTotalSupply);
+        assertEq(currentTotalSupply, earlierTotalSupply, "Total supply should remain earlierTotalSupply as deal() doesn't affect it");
     }
     
     function test_roleBasedAccess() external {

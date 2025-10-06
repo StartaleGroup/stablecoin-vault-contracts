@@ -7,6 +7,7 @@ import "../../src/vaults/earn/EarnVault.sol";
 import "../../src/vaults/4626/SUSDRVault.sol";
 import "../../src/interfaces/vaults/earn/IEarnVault.sol";
 import "lib/evm-m-extensions/src/projects/yieldToOne/IMYieldToOne.sol";
+import "lib/openzeppelin-contracts/contracts/interfaces/IERC4626.sol";
 import "../mocks/MockUSDR.sol";
 import "../mocks/MockExtension.sol";
 
@@ -355,10 +356,10 @@ contract RewardRedistributorIntegrationTest is Test {
         uint256 charlieNewPrincipal = earnVault.principal(charlie);
         uint256 charlieClaimableAfter = earnVault.claimable(charlie);
         
-        // Verify partial withdrawal (EarnVault partial withdrawals do NOT auto-claim interest)
+        // Verify partial withdrawal (EarnVault partial withdrawals now AUTO-CLAIM all interest)
         assertEq(charlieNewPrincipal, charlieInitialPrincipal - partialWithdrawAmount, "Charlie principal reduced by withdrawal amount");
-        assertEq(charlieBalanceAfter - charlieBalanceBefore, partialWithdrawAmount, "Charlie received only principal (partial withdrawal)");
-        assertEq(charlieClaimableAfter, charlieClaimableBefore, "Charlie accrued yield unchanged after partial withdrawal");
+        assertEq(charlieBalanceAfter - charlieBalanceBefore, partialWithdrawAmount + charlieClaimableBefore, "Charlie received principal + all accrued yield");
+        assertEq(charlieClaimableAfter, 0, "Charlie has no remaining claimable yield after withdrawal");
         vm.stopPrank();
         
         // Test 3: Add more yield and test full withdrawal
@@ -366,13 +367,13 @@ contract RewardRedistributorIntegrationTest is Test {
         vm.prank(operator);
         rr.distribute();
         
-        // Charlie does full withdrawal (remaining principal + new accrued yield)
+        // Charlie does full withdrawal (remaining principal only, yield auto-claimed)
         vm.startPrank(charlie);
         uint256 charlieRemainingPrincipal = earnVault.principal(charlie);
         uint256 charlieNewClaimable = earnVault.claimable(charlie);
         uint256 charlieBalanceBeforeFullWithdraw = usdr.balanceOf(charlie);
         
-        earnVault.withdraw(charlieRemainingPrincipal + charlieNewClaimable);
+        earnVault.withdraw(charlieRemainingPrincipal); // Only withdraw principal, yield auto-claimed
         
         uint256 charlieBalanceAfterFullWithdraw = usdr.balanceOf(charlie);
         
@@ -477,7 +478,7 @@ contract RewardRedistributorIntegrationTest is Test {
         
         // Alice does partial withdrawal
         vm.startPrank(alice);
-        // uint256 aliceSecondClaimable = earnVault.claimable(alice);
+        uint256 aliceSecondClaimable = earnVault.claimable(alice);
         uint256 alicePartialWithdraw = aliceInitialEarnPrincipal / 4;
         uint256 aliceBalanceBefore = usdr.balanceOf(alice);
         
@@ -485,11 +486,12 @@ contract RewardRedistributorIntegrationTest is Test {
         
         uint256 aliceBalanceAfter = usdr.balanceOf(alice);
         
-        // Alice should receive only partial principal (partial withdrawal doesn't auto-claim)
-        assertEq(aliceBalanceAfter - aliceBalanceBefore, alicePartialWithdraw, 
-                "Alice received only partial principal (partial withdrawal)");
+        // Alice should receive partial principal + all accrued yield (partial withdrawal now auto-claims)
+        assertEq(aliceBalanceAfter - aliceBalanceBefore, alicePartialWithdraw + aliceSecondClaimable, 
+                "Alice received partial principal + all accrued yield");
         assertEq(earnVault.principal(alice), aliceInitialEarnPrincipal - alicePartialWithdraw, 
                 "Alice principal reduced correctly");
+        assertEq(earnVault.claimable(alice), 0, "Alice has no remaining claimable yield after withdrawal");
         vm.stopPrank();
         
         // Bob redeems remaining shares
