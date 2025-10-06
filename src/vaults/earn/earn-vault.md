@@ -34,6 +34,7 @@ claimable(address user) → uint256          // View claimable USDR interest amo
 totalValue(address user) → uint256         // View total USDR value (principal + claimable)
 getUserInfo(address user) → (uint256 principal, uint256 claimable, uint256 total, uint256 lastIndex)
 getClaimableBoostReward(address user, address token) → uint256  // View claimable boost rewards for specific token
+getAllClaimables(address user) → (uint256 usdrClaimable, address[] boostTokens, uint256[] boostAmounts)  // Get all claimable rewards in one call
 ```
 
 ### Admin Functions

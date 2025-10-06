@@ -234,6 +234,40 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
         );
     }
 
+    /// @notice Get all claimable rewards for a user (USDR yield + all boost rewards)
+    /// @param user User address to check
+    /// @return usdrClaimable Claimable USDR yield
+    /// @return boostTokens Array of boost token addresses
+    /// @return boostAmounts Array of claimable amounts for each boost token
+    function getAllClaimables(address user) external view returns (
+        uint256 usdrClaimable,
+        address[] memory boostTokens,
+        uint256[] memory boostAmounts
+    ) {
+        _checkNotBlacklisted(user);
+        
+        // Get USDR claimable yield
+        usdrClaimable = this.claimable(user);
+        
+        // Get all active boost tokens
+        boostTokens = new address[](activeBoostTokens.length);
+        boostAmounts = new uint256[](activeBoostTokens.length);
+        
+        // Calculate claimable amounts for each boost token
+        for (uint256 i = 0; i < activeBoostTokens.length; i++) {
+            address token = activeBoostTokens[i];
+            boostTokens[i] = token;
+            boostAmounts[i] = BoostRewardsLib.getClaimableBoostReward(
+                user,
+                token,
+                principal[user],
+                userBoostIndex[user][token],
+                boostGlobalIndex[token],
+                userBoostAccrued
+            );
+        }
+    }
+
     // =========================
     // User flows
     // =========================

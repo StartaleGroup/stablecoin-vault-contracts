@@ -1,7 +1,7 @@
 Test Coverage Tree for Stablecoin Contracts
 ============================================
 
-📁 EARNVAULT TESTS (65 tests)
+📁 EARNVAULT TESTS (67 tests)
 ├── 📁 Core Functionality (15 tests)
 │   ├── test_BasicDeposit() - Basic deposit functionality
 │   ├── test_MultiUserDeposit() - Multiple users depositing
@@ -59,7 +59,7 @@ Test Coverage Tree for Stablecoin Contracts
 │   ├── test_SetYieldRedistributor() - Yield redistributor management
 │   └── test_SetTreasury() - Treasury management
 │
-├── 📁 View Functions & State (8 tests)
+├── 📁 View Functions & State (10 tests)
 │   ├── test_ClaimableViewFunction() - Claimable yield view function
 │   ├── test_AssetViewFunction() - Asset view function
 │   ├── test_Asset() - Asset getter
@@ -67,7 +67,9 @@ Test Coverage Tree for Stablecoin Contracts
 │   ├── test_TotalValueNoDeposits() - Total value with no deposits
 │   ├── test_GetUserInfoNoDeposits() - User info with no deposits
 │   ├── test_GetVaultStats() - Vault statistics
-│   └── test_GetClaimableBoostRewardNoRewards() - Boost reward view with no rewards
+│   ├── test_GetClaimableBoostRewardNoRewards() - Boost reward view with no rewards
+│   ├── test_GetAllClaimables() - Get all claimable rewards (USDR + boost)
+│   └── test_GetAllClaimablesNoBoostRewards() - Get all claimables with no boost rewards
 │
 ├── 📁 Index System Security (4 tests)
 │   ├── test_IndexSystemPreventsDoubleClaiming() - Index system preventing double claiming
@@ -241,8 +243,8 @@ Test Coverage Tree for Stablecoin Contracts
 
 📊 TEST SUMMARY
 ===============
-Total Tests: 201
-├── EarnVault Tests: 65
+Total Tests: 203
+├── EarnVault Tests: 67
 ├── EarnVault Boost Tests: 6
 ├── EarnVault Invariant Tests: 10
 ├── SUSDRVault Tests: 53

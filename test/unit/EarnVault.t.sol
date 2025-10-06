@@ -1282,6 +1282,82 @@ contract EarnVaultTest is Test {
         assertEq(vault.getClaimableBoostReward(alice, mockToken), 0);
     }
     
+    /// @notice Test getAllClaimables function
+    /// @dev Verifies the function returns all claimable rewards (USDR + boost rewards)
+    function test_GetAllClaimables() public {
+        // === Setup: Create mock boost tokens ===
+        MockERC20 tokenA = new MockERC20("Token A", "TOKENA", 18);
+        MockERC20 tokenB = new MockERC20("Token B", "TOKENB", 18);
+        
+        // Mint tokens to yield redistributor
+        tokenA.mint(yieldRedistributor, 1000e18);
+        tokenB.mint(yieldRedistributor, 1000e18);
+        
+        // === Alice deposits ===
+        vm.prank(alice);
+        vault.deposit(1000e6);
+        
+        // === Distribute USDR yield ===
+        vm.prank(yieldRedistributor);
+        usdr.transfer(address(vault), 100e6);
+        vm.prank(yieldRedistributor);
+        vault.onYield(100e6);
+        
+        // === Distribute boost rewards ===
+        uint256 amountA = 50e18;
+        uint256 amountB = 75e18;
+        
+        vm.startPrank(yieldRedistributor);
+        tokenA.approve(address(vault), amountA);
+        tokenA.transfer(address(vault), amountA);
+        vault.onBoostReward(address(tokenA), amountA);
+        
+        tokenB.approve(address(vault), amountB);
+        tokenB.transfer(address(vault), amountB);
+        vault.onBoostReward(address(tokenB), amountB);
+        vm.stopPrank();
+        
+        // === Test getAllClaimables ===
+        (uint256 usdrClaimable, address[] memory boostTokens, uint256[] memory boostAmounts) = vault.getAllClaimables(alice);
+        
+        // Verify USDR claimable
+        assertEq(usdrClaimable, 100e6, "Alice should have 100 USDR claimable");
+        
+        // Verify boost tokens array
+        assertEq(boostTokens.length, 2, "Should have 2 boost tokens");
+        assertEq(boostTokens[0], address(tokenA), "First token should be tokenA");
+        assertEq(boostTokens[1], address(tokenB), "Second token should be tokenB");
+        
+        // Verify boost amounts
+        assertEq(boostAmounts.length, 2, "Should have 2 boost amounts");
+        assertEq(boostAmounts[0], amountA, "Alice should get all tokenA rewards");
+        assertEq(boostAmounts[1], amountB, "Alice should get all tokenB rewards");
+    }
+    
+    /// @notice Test getAllClaimables with no boost rewards
+    /// @dev Verifies the function works when only USDR yield is available
+    function test_GetAllClaimablesNoBoostRewards() public {
+        // === Alice deposits ===
+        vm.prank(alice);
+        vault.deposit(1000e6);
+        
+        // === Distribute USDR yield ===
+        vm.prank(yieldRedistributor);
+        usdr.transfer(address(vault), 50e6);
+        vm.prank(yieldRedistributor);
+        vault.onYield(50e6);
+        
+        // === Test getAllClaimables ===
+        (uint256 usdrClaimable, address[] memory boostTokens, uint256[] memory boostAmounts) = vault.getAllClaimables(alice);
+        
+        // Verify USDR claimable
+        assertEq(usdrClaimable, 50e6, "Alice should have 50 USDR claimable");
+        
+        // Verify no boost tokens
+        assertEq(boostTokens.length, 0, "Should have no boost tokens");
+        assertEq(boostAmounts.length, 0, "Should have no boost amounts");
+    }
+    
     /// @notice Test onYield function with zero amount
     function test_OnYieldZeroAmount() public {
         // Setup: Alice deposits

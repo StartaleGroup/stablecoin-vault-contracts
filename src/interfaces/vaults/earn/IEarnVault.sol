@@ -22,6 +22,14 @@ interface IEarnVault {
         uint256 vaultBalance,
         uint256 vaultCarryRay
     );
+    
+    // ---- Boost reward view functions ----
+    function getClaimableBoostReward(address user, address token) external view returns (uint256);
+    function getAllClaimables(address user) external view returns (
+        uint256 usdrClaimable,
+        address[] memory boostTokens,
+        uint256[] memory boostAmounts
+    );
 
     // ---- user flows (OFF path) ----
     function deposit(uint256 amount) external;
