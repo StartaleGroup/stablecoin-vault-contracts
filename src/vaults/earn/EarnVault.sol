@@ -40,7 +40,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
 
     // -------- Roles / endpoints --------
     address public treasury;             // receives yield when no deposits exist, surplus sweeps
-    address public currentPauser;        // current pauser (for role management)
+    address private _currentPauser;      // tracks current pauser for role management
 
     // -------- Optional blacklist --------
     mapping(address => bool) public isBlacklisted;
@@ -73,7 +73,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
         
         USDR = IERC20(usdr);
         treasury = treasuryAddr;
-        currentPauser = pauserAddr;
+        _currentPauser = pauserAddr;
         
         // Set up roles
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
@@ -109,14 +109,18 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
     /// @param who New pauser address
     function setPauser(address who) external onlyRole(ADMIN_ROLE) {
         if (who == address(0)) revert CanNotBeZeroAddress();
-        address oldPauser = currentPauser;
         
-        // Revoke role from old pauser
-        _revokeRole(PAUSER_ROLE, oldPauser);
+        address oldPauser = _currentPauser;
+        
+        // Revoke role from old pauser if any
+        if (oldPauser != address(0)) {
+            _revokeRole(PAUSER_ROLE, oldPauser);
+        }
+        
         // Grant role to new pauser
         _grantRole(PAUSER_ROLE, who);
+        _currentPauser = who;
         
-        currentPauser = who;
         emit PauserChanged(msg.sender, oldPauser, who);
     }
 
@@ -154,9 +158,10 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
 
     function claimable(address user) external view returns (uint256) {
         uint256 p = principal[user];
+        if (p == 0) return accrued[user];
+        
         uint256 ui = userIndex[user];
         uint256 gi = globalIndex;
-        if (p == 0) return accrued[user];
         if (gi > ui) {
             uint256 owed = Math.mulDiv(p, gi - ui, RAY);
             return accrued[user] + owed;
@@ -167,9 +172,10 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
     /// @notice Get user's total value (principal + claimable interest)
     function totalValue(address user) external view returns (uint256) {
         uint256 p = principal[user];
+        if (p == 0) return accrued[user];
+        
         uint256 ui = userIndex[user];
         uint256 gi = globalIndex;
-        if (p == 0) return accrued[user];
         if (gi > ui) {
             uint256 owed = Math.mulDiv(p, gi - ui, RAY);
             return p + accrued[user] + owed;
@@ -335,9 +341,19 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
         uint256 p = principal[msg.sender];
         if (amount > p) revert InsufficientPrincipal();
 
-        // Settle ALL boost rewards BEFORE reducing principal
+        // Settle and claim ALL boost rewards in single loop
         for (uint256 i = 0; i < activeBoostTokens.length; i++) {
-            _settleBoost(msg.sender, activeBoostTokens[i]);
+            address token = activeBoostTokens[i];
+            _settleBoost(msg.sender, token);
+            BoostRewardsLib.claimBoostReward(
+                msg.sender,
+                token,
+                p, // Use original principal before withdrawal
+                userBoostIndex[msg.sender][token],
+                boostGlobalIndex[token],
+                userBoostAccrued,
+                boostClaimReserve
+            );
         }
 
         // Update state AFTER settling all rewards
@@ -358,20 +374,6 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
             emit InterestClaimed(msg.sender, usdrYield);
         }
         
-        // Automatically claim ALL boost rewards
-        for (uint256 i = 0; i < activeBoostTokens.length; i++) {
-            address token = activeBoostTokens[i];
-            BoostRewardsLib.claimBoostReward(
-                msg.sender,
-                token,
-                p, // Use original principal before withdrawal
-                userBoostIndex[msg.sender][token],
-                boostGlobalIndex[token],
-                userBoostAccrued,
-                boostClaimReserve
-            );
-        }
-        
         // Emit events
         emit Withdraw(msg.sender, amount);
     }
@@ -382,11 +384,6 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
     function claim() external whenNotPaused nonReentrant {
         _checkNotBlacklisted(msg.sender);
         _settle(msg.sender);
-        
-        // Settle ALL boost rewards BEFORE any state changes
-        for (uint256 i = 0; i < activeBoostTokens.length; i++) {
-            _settleBoost(msg.sender, activeBoostTokens[i]);
-        }
         
         uint256 usdrAmt = accrued[msg.sender];
         bool hasUSDRClaim = usdrAmt > 0;
@@ -401,9 +398,10 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
             emit InterestClaimed(msg.sender, usdrAmt);
         }
         
-        // Claim all boost rewards
+        // Settle and claim all boost rewards in single loop
         for (uint256 i = 0; i < activeBoostTokens.length; i++) {
             address token = activeBoostTokens[i];
+            _settleBoost(msg.sender, token);
             uint256 claimedAmount = BoostRewardsLib.claimBoostReward(
                 msg.sender,
                 token,
@@ -489,19 +487,18 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
     /// @param user Address to settle
     function _settle(address user) internal {
         uint256 p = principal[user];
-        uint256 ui = userIndex[user];
-        uint256 gi = globalIndex;
         if (p == 0) { 
-            userIndex[user] = gi; 
+            userIndex[user] = globalIndex; 
             return; 
         }
-        if (gi >= ui) {
-            if (gi > ui) {
-                uint256 owed = Math.mulDiv(p, gi - ui, RAY);
-                accrued[user] += owed;
-            }
-            userIndex[user] = gi;  // Always update index for consistency
+        
+        uint256 ui = userIndex[user];
+        uint256 gi = globalIndex;
+        if (gi > ui) {
+            uint256 owed = Math.mulDiv(p, gi - ui, RAY);
+            accrued[user] += owed;
         }
+        userIndex[user] = gi;  // Always update index for consistency
     }
 
     /// @dev Settles user's accrued boost rewards for a specific token

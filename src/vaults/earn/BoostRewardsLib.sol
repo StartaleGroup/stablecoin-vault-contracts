@@ -92,18 +92,16 @@ library BoostRewardsLib {
         if (token == address(0)) revert IEarnVaultEventsAndErrors.CanNotBeZeroAddress();
         
         // Settle user's boost rewards
-        uint256 ui = userBoostIndex;
-        uint256 gi = boostGlobalIndex;
         if (principal == 0) { 
             // User has no principal, just return accrued amount
             claimedAmount = userBoostAccrued[user][token];
-        } else if (gi >= ui) {
+        } else {
+            uint256 ui = userBoostIndex;
+            uint256 gi = boostGlobalIndex;
             if (gi > ui) {
                 uint256 owed = Math.mulDiv(principal, gi - ui, RAY);
                 userBoostAccrued[user][token] += owed;
             }
-            claimedAmount = userBoostAccrued[user][token];
-        } else {
             claimedAmount = userBoostAccrued[user][token];
         }
         
