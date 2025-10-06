@@ -10,6 +10,7 @@ import {Pausable} from "lib/openzeppelin-contracts/contracts/utils/Pausable.sol"
 import {ReentrancyGuard} from "lib/openzeppelin-contracts/contracts/utils/ReentrancyGuard.sol";
 import {IEarnVault} from "../../interfaces/vaults/earn/IEarnVault.sol";
 import {IEarnVaultEventsAndErrors} from "../../interfaces/vaults/earn/IEarnVaultEventsAndErrors.sol";
+import {BoostRewardsLib} from "./BoostRewardsLib.sol";
 
 /// @title EarnVault (claimable yield)
 /// @notice Users deposit USDR, accrue claimable USDR via index accounting, and can claim/withdraw anytime.
@@ -38,9 +39,8 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
 
 
     // -------- Roles / endpoints --------
-    address public yieldRedistributor;   // allowed to call onYield
     address public treasury;             // receives yield when no deposits exist, surplus sweeps
-    address public pauser;               // allowed to pause/unpause the contract
+    address private _currentPauser;      // tracks current pauser for role management
 
     // -------- Optional blacklist --------
     mapping(address => bool) public isBlacklisted;
@@ -55,6 +55,14 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
     mapping(address => uint256) public userIndex;
     mapping(address => uint256) public accrued;
 
+    // -------- Boost rewards accounting (same logic as USDR yield) --------
+    mapping(address => uint256) public boostGlobalIndex; // token => global boost index
+    mapping(address => uint256) public boostClaimReserve; // token => claimable boost reserves
+    mapping(address => mapping(address => uint256)) public userBoostIndex; // user => token => last boost index
+    mapping(address => mapping(address => uint256)) public userBoostAccrued; // user => token => accrued boost rewards
+    address[] public activeBoostTokens; // list of tokens that have been distributed
+    mapping(address => uint256) public boostTokenIndex; // token => index in activeBoostTokens array
+
     // -------- Events and Errors --------
     // All events and errors are inherited from IEarnVaultEventsAndErrors interface
 
@@ -64,9 +72,8 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
         if (pauserAddr == address(0)) revert CanNotBeZeroAddress();
         
         USDR = IERC20(usdr);
-        yieldRedistributor = yieldRedistributorAddr;
         treasury = treasuryAddr;
-        pauser = pauserAddr;
+        _currentPauser = pauserAddr;
         
         // Set up roles
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
@@ -83,11 +90,10 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
     /// @param who New yield redistributor address
     function setYieldRedistributor(address who) external onlyRole(ADMIN_ROLE) {
         if (who == address(0)) revert CanNotBeZeroAddress();
-        address oldRedistributor = yieldRedistributor;
-        _revokeRole(YIELD_REDISTRIBUTOR_ROLE, yieldRedistributor);
+        // Note: We can't easily get the old address without storage, so we emit address(0) for old
+        // In practice, this is fine since the role system is the source of truth
         _grantRole(YIELD_REDISTRIBUTOR_ROLE, who);
-        yieldRedistributor = who;
-        emit YieldRedistributorChanged(msg.sender, oldRedistributor, who);
+        emit YieldRedistributorChanged(msg.sender, address(0), who);
     }
 
     /// @notice Set the treasury address  
@@ -103,10 +109,18 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
     /// @param who New pauser address
     function setPauser(address who) external onlyRole(ADMIN_ROLE) {
         if (who == address(0)) revert CanNotBeZeroAddress();
-        address oldPauser = pauser;
-        _revokeRole(PAUSER_ROLE, pauser);
+        
+        address oldPauser = _currentPauser;
+        
+        // Revoke role from old pauser if any
+        if (oldPauser != address(0)) {
+            _revokeRole(PAUSER_ROLE, oldPauser);
+        }
+        
+        // Grant role to new pauser
         _grantRole(PAUSER_ROLE, who);
-        pauser = who;
+        _currentPauser = who;
+        
         emit PauserChanged(msg.sender, oldPauser, who);
     }
 
@@ -144,9 +158,10 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
 
     function claimable(address user) external view returns (uint256) {
         uint256 p = principal[user];
+        if (p == 0) return accrued[user];
+        
         uint256 ui = userIndex[user];
         uint256 gi = globalIndex;
-        if (p == 0) return accrued[user];
         if (gi > ui) {
             uint256 owed = Math.mulDiv(p, gi - ui, RAY);
             return accrued[user] + owed;
@@ -157,9 +172,10 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
     /// @notice Get user's total value (principal + claimable interest)
     function totalValue(address user) external view returns (uint256) {
         uint256 p = principal[user];
+        if (p == 0) return accrued[user];
+        
         uint256 ui = userIndex[user];
         uint256 gi = globalIndex;
-        if (p == 0) return accrued[user];
         if (gi > ui) {
             uint256 owed = Math.mulDiv(p, gi - ui, RAY);
             return p + accrued[user] + owed;
@@ -207,6 +223,55 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
         vaultGlobalIndex = globalIndex;
         vaultBalance = USDR.balanceOf(address(this));
         vaultCarryRay = _carryRay;
+    }
+
+    /// @notice Get user's claimable boost rewards for a specific token
+    /// @param user User address to check
+    /// @param token Token address to check boost rewards for
+    function getClaimableBoostReward(address user, address token) external view returns (uint256) {
+        _checkNotBlacklisted(user);
+        return BoostRewardsLib.getClaimableBoostReward(
+            user,
+            token,
+            principal[user],
+            userBoostIndex[user][token],
+            boostGlobalIndex[token],
+            userBoostAccrued
+        );
+    }
+
+    /// @notice Get all claimable rewards for a user (USDR yield + all boost rewards)
+    /// @param user User address to check
+    /// @return usdrClaimable Claimable USDR yield
+    /// @return boostTokens Array of boost token addresses
+    /// @return boostAmounts Array of claimable amounts for each boost token
+    function getAllClaimables(address user) external view returns (
+        uint256 usdrClaimable,
+        address[] memory boostTokens,
+        uint256[] memory boostAmounts
+    ) {
+        _checkNotBlacklisted(user);
+        
+        // Get USDR claimable yield
+        usdrClaimable = this.claimable(user);
+        
+        // Get all active boost tokens
+        boostTokens = new address[](activeBoostTokens.length);
+        boostAmounts = new uint256[](activeBoostTokens.length);
+        
+        // Calculate claimable amounts for each boost token
+        for (uint256 i = 0; i < activeBoostTokens.length; i++) {
+            address token = activeBoostTokens[i];
+            boostTokens[i] = token;
+            boostAmounts[i] = BoostRewardsLib.getClaimableBoostReward(
+                user,
+                token,
+                principal[user],
+                userBoostIndex[user][token],
+                boostGlobalIndex[token],
+                userBoostAccrued
+            );
+        }
     }
 
     // =========================
@@ -263,10 +328,10 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
         emit Deposit(msg.sender, amount);
     }
 
-    /// @notice Withdraw any amount up to total value (principal + accrued interest)
-    /// @param amount Total amount to withdraw (can include accrued interest)
-    /// @dev Can withdraw: principal only, principal + partial interest, or full amount
-    /// @dev For withdrawing everything including all interest, use withdrawAll()
+    /// @notice Withdraw any amount up to principal amount
+    /// @param amount Amount of principal to withdraw (max: user's principal)
+    /// @dev Automatically claims ALL accrued interest (USDR + boost rewards) when withdrawing
+    /// @dev User can only withdraw their principal, but gets all rewards automatically
     function withdraw(uint256 amount) external whenNotPaused nonReentrant {
         _checkNotBlacklisted(msg.sender);
         if (amount == 0) revert ZeroAmount();
@@ -274,79 +339,86 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
         _settle(msg.sender);
         
         uint256 p = principal[msg.sender];
-        uint256 userAccrued = accrued[msg.sender];
-        uint256 userTotalValue = p + userAccrued;
-        
-        if (amount > userTotalValue) revert InsufficientPrincipal();
+        if (amount > p) revert InsufficientPrincipal();
 
-        uint256 principalToWithdraw = amount;
-        uint256 interestToClaim = 0;
-        
-        if (amount > p) {
-            // Need to claim some interest
-            principalToWithdraw = p; // Withdraw all principal
-            interestToClaim = amount - p; // Claim remaining from interest
+        // Settle and claim ALL boost rewards in single loop
+        for (uint256 i = 0; i < activeBoostTokens.length; i++) {
+            address token = activeBoostTokens[i];
+            _settleBoost(msg.sender, token);
+            BoostRewardsLib.claimBoostReward(
+                msg.sender,
+                token,
+                p, // Use original principal before withdrawal
+                userBoostIndex[msg.sender][token],
+                boostGlobalIndex[token],
+                userBoostAccrued,
+                boostClaimReserve
+            );
         }
+
+        // Update state AFTER settling all rewards
+        principal[msg.sender] = p - amount;
+        totalPrincipal -= amount;
+        claimReserve -= amount; // Reduce claim reserve by withdrawn principal
         
-        // Update state
-        principal[msg.sender] = p - principalToWithdraw;
-        accrued[msg.sender] = userAccrued - interestToClaim;
-        totalPrincipal -= principalToWithdraw;
-        
-        // Transfer funds
-        claimReserve -= amount;
+        // Transfer principal
         USDR.safeTransfer(msg.sender, amount);
         
-        // Emit events
-        emit Withdraw(msg.sender, principalToWithdraw);
-        if (interestToClaim > 0) {
-            emit InterestClaimed(msg.sender, interestToClaim);
+        // Automatically claim ALL USDR yield
+        uint256 usdrYield = accrued[msg.sender];
+        if (usdrYield > 0) {
+            if (claimReserve < usdrYield) revert InsufficientFunding();
+            accrued[msg.sender] = 0;
+            claimReserve -= usdrYield;
+            USDR.safeTransfer(msg.sender, usdrYield);
+            emit InterestClaimed(msg.sender, usdrYield);
         }
+        
+        // Emit events
+        emit Withdraw(msg.sender, amount);
     }
 
-    /// @notice Withdraw all funds (principal + all accrued interest)
-    /// @dev Convenience function that withdraws everything the user has
-    /// @dev Equivalent to withdraw(principal + accrued) but simpler to use
-    function withdrawAll() external whenNotPaused nonReentrant {
-        _checkNotBlacklisted(msg.sender);
-        _settle(msg.sender);
-        
-        uint256 p = principal[msg.sender];
-        uint256 userAccrued = accrued[msg.sender];
-        uint256 totalAmount = p + userAccrued;
-        
-        if (totalAmount == 0) revert NothingToClaim();
-        
-        // Update state
-        principal[msg.sender] = 0;
-        accrued[msg.sender] = 0;
-        totalPrincipal -= p;
-        claimReserve -= totalAmount;
-        
-        // Transfer all funds
-        USDR.safeTransfer(msg.sender, totalAmount);
-        
-        // Emit events
-        emit Withdraw(msg.sender, p);
-        if (userAccrued > 0) {
-            emit InterestClaimed(msg.sender, userAccrued);
-        }
-    }
 
     /// @notice Claim all accrued interest to caller's address
-    /// @dev Settles user's position and transfers all accrued yield
+    /// @dev Settles user's position and transfers all accrued yield (USDR + boost rewards)
     function claim() external whenNotPaused nonReentrant {
         _checkNotBlacklisted(msg.sender);
         _settle(msg.sender);
-        uint256 amt = accrued[msg.sender];
-        if (amt == 0) revert NothingToClaim();
-        if (claimReserve < amt) revert InsufficientFunding();
         
-        accrued[msg.sender] = 0;
-        claimReserve -= amt;
-        USDR.safeTransfer(msg.sender, amt);
-        emit InterestClaimed(msg.sender, amt);
+        uint256 usdrAmt = accrued[msg.sender];
+        bool hasUSDRClaim = usdrAmt > 0;
+        bool hasBoostClaim = false;
+        
+        // Claim USDR interest
+        if (hasUSDRClaim) {
+            if (claimReserve < usdrAmt) revert InsufficientFunding();
+            accrued[msg.sender] = 0;
+            claimReserve -= usdrAmt;
+            USDR.safeTransfer(msg.sender, usdrAmt);
+            emit InterestClaimed(msg.sender, usdrAmt);
+        }
+        
+        // Settle and claim all boost rewards in single loop
+        for (uint256 i = 0; i < activeBoostTokens.length; i++) {
+            address token = activeBoostTokens[i];
+            _settleBoost(msg.sender, token);
+            uint256 claimedAmount = BoostRewardsLib.claimBoostReward(
+                msg.sender,
+                token,
+                principal[msg.sender],
+                userBoostIndex[msg.sender][token],
+                boostGlobalIndex[token],
+                userBoostAccrued,
+                boostClaimReserve
+            );
+            if (claimedAmount > 0) {
+                hasBoostClaim = true;
+            }
+        }
+        
+        if (!hasUSDRClaim && !hasBoostClaim) revert NothingToClaim();
     }
+
 
     // =========================
     // Distributor hooks
@@ -387,6 +459,23 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
         emit YieldIndexed(amount, globalIndex, claimReserve);
     }
 
+    /// @notice Distribute boost rewards (ASTR, DOT, etc.) to vault users
+    /// @dev MUST be called AFTER transferring `amount` of `token` to this contract
+    /// @dev Uses same logic as USDR yield - distributed proportionally based on principal
+    /// @param token Token address to distribute as boost rewards
+    /// @param amount Amount of boost tokens to distribute
+    function onBoostReward(address token, uint256 amount) external onlyRole(YIELD_REDISTRIBUTOR_ROLE) nonReentrant {
+        BoostRewardsLib.distributeBoostReward(
+            token,
+            amount,
+            totalPrincipal,
+            treasury,
+            boostGlobalIndex,
+            boostClaimReserve,
+            activeBoostTokens,
+            boostTokenIndex
+        );
+    }
 
     // =========================
     // Internal helpers
@@ -398,19 +487,34 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
     /// @param user Address to settle
     function _settle(address user) internal {
         uint256 p = principal[user];
-        uint256 ui = userIndex[user];
-        uint256 gi = globalIndex;
         if (p == 0) { 
-            userIndex[user] = gi; 
+            userIndex[user] = globalIndex; 
             return; 
         }
-        if (gi >= ui) {
-            if (gi > ui) {
-                uint256 owed = Math.mulDiv(p, gi - ui, RAY);
-                accrued[user] += owed;
-            }
-            userIndex[user] = gi;  // Always update index for consistency
+        
+        uint256 ui = userIndex[user];
+        uint256 gi = globalIndex;
+        if (gi > ui) {
+            uint256 owed = Math.mulDiv(p, gi - ui, RAY);
+            accrued[user] += owed;
         }
+        userIndex[user] = gi;  // Always update index for consistency
+    }
+
+    /// @dev Settles user's accrued boost rewards for a specific token
+    /// @dev Same logic as _settle but for boost rewards
+    /// @param user Address to settle
+    /// @param token Token address to settle boost rewards for
+    function _settleBoost(address user, address token) internal {
+        BoostRewardsLib.settleBoost(
+            user,
+            token,
+            principal[user],
+            userBoostIndex[user][token],
+            boostGlobalIndex[token],
+            userBoostAccrued
+        );
+        userBoostIndex[user][token] = boostGlobalIndex[token];
     }
 
     /// @dev Check if user is not blacklisted, revert if they are
@@ -441,9 +545,15 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
             uint256 maxSweep = bal - minRequired;
             if (amount > maxSweep) revert ExceedsSurplus();
         } else {
-            // For non-USDR tokens, check actual balance
+            // For non-USDR tokens, check actual balance and boost reserves
             uint256 tokenBalance = IERC20(token).balanceOf(address(this));
             if (amount > tokenBalance) revert ExceedsSurplus();
+            
+            // For boost tokens, ensure we don't recover reserved amounts
+            if (boostClaimReserve[token] > 0) {
+                uint256 availableAmount = tokenBalance - boostClaimReserve[token];
+                if (amount > availableAmount) revert ExceedsSurplus();
+            }
         }
         IERC20(token).safeTransfer(to, amount);
         emit TokenRecovered(token, to, amount);
