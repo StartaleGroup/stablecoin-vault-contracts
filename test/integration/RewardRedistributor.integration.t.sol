@@ -59,8 +59,7 @@ contract RewardRedistributorIntegrationTest is Test {
         
         // Deploy RewardRedistributor
         rr = new RewardRedistributor(
-            IERC20(address(usdr)),
-            IMYieldToOne(address(ext)),
+            address(ext),  // MockExtension address (implements both IERC20 and IMYieldToOne)
             startale,
             IEarnVault(address(earnVault)),
             IERC4626(address(susdrVault)),
@@ -601,8 +600,7 @@ contract RewardRedistributorIntegrationTest is Test {
         
         // Create new redistributor with empty vaults
         RewardRedistributor rrEmpty = new RewardRedistributor(
-            IERC20(address(usdr)),
-            IMYieldToOne(address(ext)),
+            address(ext),  // MockExtension address (implements both IERC20 and IMYieldToOne)
             startale,
             IEarnVault(address(emptyEarnVault)),
             IERC4626(address(emptySUSDRVault)),
@@ -1249,7 +1247,7 @@ contract RewardRedistributorIntegrationTest is Test {
         address newTreasury = makeAddr("newTreasury");
         rr.setParams(newTreasury, IEarnVault(address(earnVault)), IERC4626(address(susdrVault)), 500);
         
-        assertEq(rr.startaleTreasury(), newTreasury, "Treasury updated");
+        assertEq(rr.treasury(), newTreasury, "Treasury updated");
         assertEq(rr.fee_on_yield_bps(), 500, "Fee updated");
         
         // Reset for other tests
@@ -1273,7 +1271,7 @@ contract RewardRedistributorIntegrationTest is Test {
         rr.setParams(newTreasury, IEarnVault(address(earnVault)), IERC4626(address(susdrVault)), 100);
         
         // Verify parameters were updated
-        assertEq(rr.startaleTreasury(), newTreasury, "Treasury updated");
+        assertEq(rr.treasury(), newTreasury, "Treasury updated");
         assertEq(rr.fee_on_yield_bps(), 100, "Fee updated");
         
         // Reset

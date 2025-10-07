@@ -20,23 +20,24 @@ import {IMYieldToOne} from "m-extensions/projects/yieldToOne/IMYieldToOne.sol";
 /// @dev    Uses per-cohort integer carry to remove long-run rounding bias.
 ///         Delivers to EarnVault with transfer→onYield ordering to satisfy its funding invariant.
 ///         Delivers to sUSDR via raw transfer, which raises PPS in ERC-4626.
+///         
+///         Architecture:
+///         - USDR_ADDRESS: Single USDR token address that implements both IERC20 and IMYieldToOne interfaces
+///         - Cast to IERC20 for transfers and supply queries (totalSupply, safeTransfer)
+///         - Cast to IMYieldToOne for yield operations (claimYield, yield)
 contract RewardRedistributor is AccessControl, Pausable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     // Keeper allowed to call distribute()
     bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
 
-    // Notw: could combine both these ASSET & USDR_EXTENSION into a single interface and one asset
-
-    /// @notice Yield asset handled by this redistributor (USDR).
-    IERC20           public immutable ASSET;           // USDR
-
-    /// @notice USDR M0 extension (e.g., MYieldToOne) that mints yield to this contract when {claimYield} is called.
-    IMYieldToOne  public immutable USDR_EXTENSION;  // MYieldToOne
+    /// @notice USDR token address - used for both transfers/supply queries (IERC20) and yield operations (IMYieldToOne).
+    /// @dev    The same address implements both IERC20 and IMYieldToOne interfaces.
+    address          public immutable USDR_ADDRESS;
 
 
-    /// @notice Startale treasury recipient for fees and ineligible cohort yield.
-    address          public startaleTreasury;          // Startale
+    /// @notice Treasury recipient for fees and ineligible cohort yield.
+    address          public treasury;          // Treasury
 
     /// @notice Earn vault (checkbox OFF) that indexes yield via {IEarnVault.onYield}.
     IEarnVault       public earnVault;                 // checkbox OFF vault
@@ -81,40 +82,37 @@ contract RewardRedistributor is AccessControl, Pausable, ReentrancyGuard {
     );
 
     /// @notice Emitted when Startale/earn/sUSDR addresses or fee are updated.
-    /// @param startale          New Startale treasury.
+    /// @param treasury          New Treasury address.
     /// @param earnVault         New EarnVault address.
     /// @param susdrVault        New sUSDR (ERC-4626) vault address.
     /// @param fee_on_yield_bps  New fee on yield (bps).
     event ParamsUpdated(
-        address startale,
+        address treasury,
         address earnVault,
         address susdrVault,
         uint16  fee_on_yield_bps
     );
 
     /// @notice Initializes the redistributor.
-    /// @param asset      USDR token address (the asset being distributed).
-    /// @param usdrExt    M0 USDR extension that mints yield to this contract (must set this as yieldRecipient).
-    /// @param startale   Startale treasury recipient.
-    /// @param earnV      EarnVault (checkbox OFF) recipient.
-    /// @param sVault     sUSDR ERC-4626 vault (checkbox ON) recipient.
-    /// @param admin      Admin address; receives DEFAULT_ADMIN_ROLE and OPERATOR_ROLE initially.
+    /// @param usdrAddress    USDR token address (implements both IERC20 and IMYieldToOne interfaces).
+    /// @param treasuryAddr   Treasury recipient.
+    /// @param earnV          EarnVault (checkbox OFF) recipient.
+    /// @param sVault         sUSDR ERC-4626 vault (checkbox ON) recipient.
+    /// @param admin          Admin address; receives DEFAULT_ADMIN_ROLE and OPERATOR_ROLE initially.
     /// @dev Note: could take keeper address and give it OPERATOR_ROLE
     constructor(
-        IERC20 asset,
-        IMYieldToOne usdrExt,
-        address startale,
+        address usdrAddress,
+        address treasuryAddr,
         IEarnVault earnV,
         IERC4626 sVault,
         address admin
     ) {
-        require(address(asset)!=address(0) && address(usdrExt)!=address(0)
-            && startale!=address(0) && address(earnV)!=address(0)
-            && address(sVault)!=address(0) && admin!=address(0), "zero");
+        require(usdrAddress!=address(0) && treasuryAddr!=address(0) 
+            && address(earnV)!=address(0) && address(sVault)!=address(0) 
+            && admin!=address(0), "zero");
 
-        ASSET = asset;
-        USDR_EXTENSION = usdrExt;
-        startaleTreasury = startale;
+        USDR_ADDRESS = usdrAddress;
+        treasury = treasuryAddr;
         earnVault = earnV;
         susdrVault = sVault;
 
@@ -124,24 +122,24 @@ contract RewardRedistributor is AccessControl, Pausable, ReentrancyGuard {
 
     /// @notice Updates Startale/EarnVault/sUSDR addresses and the fee on yield.
     /// @dev    Fee is capped by {MAX_FEE_BPS}. Callable by DEFAULT_ADMIN_ROLE.
-    /// @param startale   New Startale treasury address.
+    /// @param treasuryAddr   New Treasury address.
     /// @param earnV          New EarnVault (OFF) address.
     /// @param sVault         New sUSDR ERC-4626 vault (ON) address.
     /// @param newFeeBps      New fee on yield in bps (≤ MAX_FEE_BPS).
     /// @dev Note: could make this as separeate functions for each parameter.
     function setParams(
-        address startale,
+        address treasuryAddr,
         IEarnVault earnV,
         IERC4626 sVault,
         uint16 newFeeBps
     ) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        require(startale!=address(0) && address(earnV)!=address(0) && address(sVault)!=address(0), "zero");
+        require(treasuryAddr!=address(0) && address(earnV)!=address(0) && address(sVault)!=address(0), "zero");
         require(newFeeBps <= MAX_FEE_BPS, "fee too high");
-        startaleTreasury   = startale;
+        treasury   = treasuryAddr;
         earnVault          = earnV;
         susdrVault         = sVault;
         fee_on_yield_bps   = newFeeBps;
-        emit ParamsUpdated(startale, address(earnV), address(sVault), newFeeBps);
+        emit ParamsUpdated(treasuryAddr, address(earnV), address(sVault), newFeeBps);
     }
 
     function pause(bool p) external onlyRole(DEFAULT_ADMIN_ROLE) { p ? _pause() : _unpause(); }
@@ -170,27 +168,7 @@ contract RewardRedistributor is AccessControl, Pausable, ReentrancyGuard {
             uint256 T_yield
         )
     {
-        if (minted == 0) {
-            return (0,0,0,0,_supplyBase(0), earnVault.totalPrincipal(), susdrVault.totalAssets());
-        }
-
-        feeToStartale = (minted * fee_on_yield_bps) / 10_000;
-        uint256 net   = minted - feeToStartale;
-
-        uint256 SNow  = ASSET.totalSupply();
-        S_base        = SNow > minted ? SNow - minted : 0;
-
-        T_earn = earnVault.totalPrincipal();
-        T_yield   = susdrVault.totalAssets();
-
-        if (S_base == 0) {
-            toStartaleExtra = net;
-            return (feeToStartale, 0, 0, toStartaleExtra, S_base, T_earn, T_yield);
-        }
-
-        toEarn = (net * T_earn) / S_base;
-        toOn   = (net * T_yield)   / S_base;
-        toStartaleExtra = net - (toEarn + toOn);
+        return _calculateSplit(minted, false);
     }
 
     /// @notice Preview a split using the extension’s **current pending** yield (no carries).
@@ -216,27 +194,8 @@ contract RewardRedistributor is AccessControl, Pausable, ReentrancyGuard {
             uint256 T_yield
         )
     {
-        minted = USDR_EXTENSION.yield();
-        if (minted == 0) {
-            return (0,0,0,0,0,_supplyBase(0), earnVault.totalPrincipal(), susdrVault.totalAssets());
-        }
-        feeToStartale = (minted * fee_on_yield_bps) / 10_000;
-        uint256 net   = minted - feeToStartale;
-
-        uint256 SNow  = ASSET.totalSupply();
-        S_base        = SNow > minted ? SNow - minted : 0;
-
-        T_earn = earnVault.totalPrincipal();
-        T_yield   = susdrVault.totalAssets();
-
-        if (S_base == 0) {
-            toStartaleExtra = net;
-            return (minted, feeToStartale, 0, 0, toStartaleExtra, S_base, T_earn, T_yield);
-        }
-
-        toEarn = (net * T_earn) / S_base;
-        toOn   = (net * T_yield)   / S_base;
-        toStartaleExtra = net - (toEarn + toOn);
+        minted = IMYieldToOne(USDR_ADDRESS).yield();
+        (feeToStartale, toEarn, toOn, toStartaleExtra, S_base, T_earn, T_yield) = _calculateSplit(minted, false);
     }
 
     /// @notice Exact dry-run of {distribute} against current chain state (includes carries).
@@ -262,46 +221,17 @@ contract RewardRedistributor is AccessControl, Pausable, ReentrancyGuard {
             uint256 T_yield
         )
     {
-        minted = USDR_EXTENSION.yield();
-        if (minted == 0) {
-            return (0,0,0,0,0,_supplyBase(0), earnVault.totalPrincipal(), susdrVault.totalAssets());
-        }
-
-        feeToStartale = (minted * fee_on_yield_bps) / 10_000;
-        uint256 net   = minted - feeToStartale;
-
-        uint256 SNow  = ASSET.totalSupply();
-        S_base        = SNow > minted ? SNow - minted : 0;
-
-        T_earn = earnVault.totalPrincipal();
-        T_yield   = susdrVault.totalAssets();
-
-        if (S_base == 0) {
-            toStartaleExtra = net;
-            return (minted, feeToStartale, 0, 0, toStartaleExtra, S_base, T_earn, T_yield);
-        }
-
-        uint256 _carryEarn = carryEarn;
-        uint256 _carryOn   = carryOn;
-
-        uint256 numEarn = net * T_earn + _carryEarn;
-        toEarn          = numEarn / S_base;
-        _carryEarn      = numEarn % S_base;
-
-        uint256 numOn = net * T_yield + _carryOn;
-        toOn          = numOn / S_base;
-        _carryOn      = numOn % S_base;
-
-        toStartaleExtra = net - (toEarn + toOn);
+        minted = IMYieldToOne(USDR_ADDRESS).yield();
+        (feeToStartale, toEarn, toOn, toStartaleExtra, S_base, T_earn, T_yield) = _calculateSplit(minted, true);
     }
 
     // ---------- core ----------
 
     /// @notice Claims pending USDR yield from the extension and distributes it per policy.
     /// @dev    Sequence:
-    ///         1) `minted = USDR_EXTENSION.claimYield()` mints fresh USDR to this contract (must be yieldRecipient).
+    ///         1) `minted = IMYieldToOne(USDR_ADDRESS).claimYield()` mints fresh USDR to this contract (must be yieldRecipient).
     ///         2) `feeToStartale = minted * fee_on_yield_bps / 10_000`.
-    ///         3) Compute `S_base = totalSupply() - minted` (supply **before** this mint).
+    ///         3) Compute `S_base = IERC20(USDR_ADDRESS).totalSupply() - minted` (supply **before** this mint).
     ///         4) Read TVLs: `T_earn = earnVault.totalPrincipal()`, `T_yield = susdrVault.totalAssets()`.
     ///         5) Allocate net using carries:
     ///            `toEarn = floor((net*T_earn + carryEarn)/S_base)`, `carryEarn = (net*T_earn + carryEarn) % S_base`
@@ -314,44 +244,49 @@ contract RewardRedistributor is AccessControl, Pausable, ReentrancyGuard {
     /// @custom:security nonReentrant and Pausable.
     function distribute() external whenNotPaused onlyRole(OPERATOR_ROLE) nonReentrant {
         // Review: Need to check if only specific role (yield recipient OR yield recipient manager) can call this
-        uint256 minted = USDR_EXTENSION.claimYield();
+        uint256 minted = IMYieldToOne(USDR_ADDRESS).claimYield();
         if (minted == 0) return;
 
-        uint256 feeToStartale = (minted * fee_on_yield_bps) / 10_000;
-        uint256 net = minted - feeToStartale;
+        uint256 feeToStartale;
+        uint256 toEarn;
+        uint256 toOn;
+        uint256 toStartaleExtra;
+        uint256 S_base;
+        uint256 T_earn;
+        uint256 T_yield;
 
-        uint256 SNow  = ASSET.totalSupply();
-        uint256 S_base = SNow - minted; // supply prior to this mint
+        // Use helper for calculation, but we need to handle carries separately since we update state
+        (feeToStartale, toEarn, toOn, toStartaleExtra, S_base, T_earn, T_yield) = _calculateSplit(minted, true);
+
+        // Update carry state variables (helper doesn't modify state)
+        if (S_base > 0) {
+            uint256 net = minted - feeToStartale;
+            uint256 numEarn = net * T_earn + carryEarn;
+            carryEarn = numEarn % S_base;
+
+            uint256 numOn = net * T_yield + carryOn;
+            carryOn = numOn % S_base;
+        }
+
+        // Handle zero S_base case
         if (S_base == 0) {
-            if (feeToStartale > 0) ASSET.safeTransfer(startaleTreasury, feeToStartale);
-            if (net > 0)           ASSET.safeTransfer(startaleTreasury, net);
-            emit Distributed(minted, feeToStartale, 0, 0, net, 0, 0, 0);
+            if (feeToStartale > 0) IERC20(USDR_ADDRESS).safeTransfer(treasury, feeToStartale);
+            if (toStartaleExtra > 0) IERC20(USDR_ADDRESS).safeTransfer(treasury, toStartaleExtra);
+            emit Distributed(minted, feeToStartale, 0, 0, toStartaleExtra, 0, 0, 0);
             return;
         }
 
-        uint256 T_earn = earnVault.totalPrincipal();
-        uint256 T_yield   = susdrVault.totalAssets();
-
-        uint256 numEarn = net * T_earn + carryEarn;
-        uint256 toEarn  = numEarn / S_base;
-        carryEarn       = numEarn % S_base;
-
-        uint256 numOn = net * T_yield + carryOn;
-        uint256 toOn  = numOn / S_base;
-        carryOn       = numOn % S_base;
-
-        uint256 toStartaleExtra = net - (toEarn + toOn);
-
+        // Execute transfers
         uint256 startaleTotal = feeToStartale + toStartaleExtra;
-        if (startaleTotal > 0) ASSET.safeTransfer(startaleTreasury, startaleTotal);
+        if (startaleTotal > 0) IERC20(USDR_ADDRESS).safeTransfer(treasury, startaleTotal);
 
         if (toEarn > 0) {
-            ASSET.safeTransfer(address(earnVault), toEarn);
+            IERC20(USDR_ADDRESS).safeTransfer(address(earnVault), toEarn);
             // Immediately triggers onYield
             earnVault.onYield(toEarn);
         }
         if (toOn > 0) {
-            ASSET.safeTransfer(address(susdrVault), toOn);
+            IERC20(USDR_ADDRESS).safeTransfer(address(susdrVault), toOn);
             // optional: susdrVault.syncDonation(toOn);
         }
 
@@ -360,12 +295,74 @@ contract RewardRedistributor is AccessControl, Pausable, ReentrancyGuard {
 
     // ---------- helpers ----------
 
+    /// @notice Internal helper to calculate yield distribution split.
+    /// @dev    Core calculation logic shared by preview functions and distribute().
+    /// @param minted            Amount of fresh yield to allocate (pre-fee).
+    /// @param useCarries        Whether to include carry calculations (true for distribute/previewDistribute).
+    /// @return feeToStartale    Fee portion (bps of `minted`) to Startale.
+    /// @return toEarn           Portion of net allocated to EarnVault (OFF).
+    /// @return toOn             Portion of net allocated to sUSDR (ON).
+    /// @return toStartaleExtra  Remainder of net: ineligible cohorts + rounding.
+    /// @return S_base           Total USDR supply **before** this mint.
+    /// @return T_earn           EarnVault TVL used for allocation.
+    /// @return T_yield          sUSDRVault TVL used for allocation.
+    function _calculateSplit(uint256 minted, bool useCarries)
+        internal view
+        returns (
+            uint256 feeToStartale,
+            uint256 toEarn,
+            uint256 toOn,
+            uint256 toStartaleExtra,
+            uint256 S_base,
+            uint256 T_earn,
+            uint256 T_yield
+        )
+    {
+        if (minted == 0) {
+            return (0, 0, 0, 0, _supplyBase(0), earnVault.totalPrincipal(), susdrVault.totalAssets());
+        }
+
+        feeToStartale = (minted * fee_on_yield_bps) / 10_000;
+        uint256 net = minted - feeToStartale;
+
+        uint256 SNow = IERC20(USDR_ADDRESS).totalSupply();
+        S_base = SNow > minted ? SNow - minted : 0;
+
+        T_earn = earnVault.totalPrincipal();
+        T_yield = susdrVault.totalAssets();
+
+        if (S_base == 0) {
+            toStartaleExtra = net;
+            return (feeToStartale, 0, 0, toStartaleExtra, S_base, T_earn, T_yield);
+        }
+
+        if (useCarries) {
+            // Include carry calculations (for distribute/previewDistribute)
+            uint256 _carryEarn = carryEarn;
+            uint256 _carryOn = carryOn;
+
+            uint256 numEarn = net * T_earn + _carryEarn;
+            toEarn = numEarn / S_base;
+            // Note: _carryEarn update not needed here as this is view function
+
+            uint256 numOn = net * T_yield + _carryOn;
+            toOn = numOn / S_base;
+            // Note: _carryOn update not needed here as this is view function
+        } else {
+            // Simple calculation without carries (for previewSplit/previewSplitCurrent)
+            toEarn = (net * T_earn) / S_base;
+            toOn = (net * T_yield) / S_base;
+        }
+
+        toStartaleExtra = net - (toEarn + toOn);
+    }
+
     /// @notice Computes the **base supply** used for allocation for a hypothetical `minted` amount.
     /// @dev    Defined as `totalSupply() > minted ? totalSupply() - minted : 0`.
     /// @param minted  Hypothetical fresh yield.
     /// @return        Total USDR supply **before** the hypothetical mint.
     function _supplyBase(uint256 minted) internal view returns (uint256) {
-        uint256 SNow = ASSET.totalSupply();
+        uint256 SNow = IERC20(USDR_ADDRESS).totalSupply();
         return SNow > minted ? SNow - minted : 0;
     }
 }

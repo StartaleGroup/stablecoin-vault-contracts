@@ -26,8 +26,7 @@ contract RewardRedistributorTest is Test {
         sVault = new MockERC4626Vault(usdr);
 
         rr = new RewardRedistributor(
-            IERC20(address(usdr)),
-            IMYieldToOne(address(ext)),
+            address(ext),  // MockExtension address (implements both IERC20 and IMYieldToOne)
             startale,
             IEarnVault(address(earnV)),
             IERC4626(address(sVault)),
