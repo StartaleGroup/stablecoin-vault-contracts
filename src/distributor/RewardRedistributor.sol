@@ -258,6 +258,14 @@ contract RewardRedistributor is AccessControl, Pausable, ReentrancyGuard {
         // Use helper for calculation, but we need to handle carries separately since we update state
         (feeToStartale, toEarn, toOn, toStartaleExtra, S_base, T_earn, T_yield) = _calculateSplit(minted, true);
 
+        // Handle zero S_base case
+        if (S_base == 0) {
+            if (feeToStartale > 0) IERC20(USDR_ADDRESS).safeTransfer(treasury, feeToStartale);
+            if (toStartaleExtra > 0) IERC20(USDR_ADDRESS).safeTransfer(treasury, toStartaleExtra);
+            emit Distributed(minted, feeToStartale, 0, 0, toStartaleExtra, 0, 0, 0);
+            return;
+        }
+
         // Update carry state variables (helper doesn't modify state)
         if (S_base > 0) {
             uint256 net = minted - feeToStartale;
@@ -266,14 +274,6 @@ contract RewardRedistributor is AccessControl, Pausable, ReentrancyGuard {
 
             uint256 numOn = net * T_yield + carryOn;
             carryOn = numOn % S_base;
-        }
-
-        // Handle zero S_base case
-        if (S_base == 0) {
-            if (feeToStartale > 0) IERC20(USDR_ADDRESS).safeTransfer(treasury, feeToStartale);
-            if (toStartaleExtra > 0) IERC20(USDR_ADDRESS).safeTransfer(treasury, toStartaleExtra);
-            emit Distributed(minted, feeToStartale, 0, 0, toStartaleExtra, 0, 0, 0);
-            return;
         }
 
         // Execute transfers
