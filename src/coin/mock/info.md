@@ -5,3 +5,9 @@
 #### Can be moved to foundry mocks.
 
 #### We could deploy this on hub and spoke chains to interact with hub M token and make cross-chain transfer (mint and burn / transfer M like token) through hub.
+
+#### progress
+
+1. USDR deployed on sepolia
+
+forge test --match-path "test/fork/USDR.fork.t.sol" -vv --fork-url https://ethereum-sepolia-rpc.publicnode.com

@@ -15,17 +15,18 @@ contract MockSpokePortal {
 
   function transfer(
     uint256 amount,
-    uint16 recipientChain,
-    bytes32 recipient,
-    bytes32 refundAddress,
-    bool shouldQueue,
-    bytes memory transceiverInstructions
+    uint16 /*recipientChain*/,
+    bytes32 /*recipient*/,
+    bytes32 /*refundAddress*/,
+    bool /*shouldQueue*/,
+    bytes memory /*transceiverInstructions*/
   ) external payable returns (uint64) {
     IERC20(mToken).transferFrom(msg.sender, address(this), amount);
 
     // Simulate ETH refund
     if (msg.value > 1) {
-      msg.sender.call{value: msg.value - 1}('');
+      (bool success, ) = msg.sender.call{value: msg.value - 1}('');
+      require(success, "ETH refund failed");
     }
 
     return uint64(1);
