@@ -1,6 +1,6 @@
 # Notes
 
-#### This is just a placeholder folder to keep mock USDR and related token contracts for doing the tests. The actual would be imported from M0 repos to perform the tests.
+#### This is just a placeholder folder to keep mock USDSC and related token contracts for doing the tests. The actual would be imported from M0 repos to perform the tests.
 
 #### Can be moved to foundry mocks.
 
@@ -8,6 +8,6 @@
 
 #### progress
 
-1. USDR deployed on sepolia
+1. USDSC deployed on sepolia
 
-forge test --match-path "test/fork/USDR.fork.t.sol" -vv --fork-url https://ethereum-sepolia-rpc.publicnode.com
+forge test --match-path "test/fork/USDSC.fork.t.sol" -vv --fork-url https://ethereum-sepolia-rpc.publicnode.com

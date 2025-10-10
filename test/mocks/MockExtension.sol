@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.26;
 
-import "./MockUSDR.sol";
+import "./MockUSDSC.sol";
 import {IMYieldToOne} from "m-extensions/projects/yieldToOne/IMYieldToOne.sol";
 import {IERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 
 contract MockExtension is IMYieldToOne, IERC20 {
-    MockUSDR public immutable usdr;
+    MockUSDSC public immutable usdsc;
     address  public yieldRecipient;
     uint256  public pending; // pending yield
 
-    constructor(MockUSDR _usdr, address _recipient) {
-        usdr = _usdr;
+    constructor(MockUSDSC _usdsc, address _recipient) {
+        usdsc = _usdsc;
         yieldRecipient = _recipient;
     }
 
@@ -29,41 +29,41 @@ contract MockExtension is IMYieldToOne, IERC20 {
         uint256 m = pending;
         if (m > 0) {
             pending = 0;
-            usdr.mint(msg.sender, m);
+            usdsc.mint(msg.sender, m);
         }
         return m;
     }
 
-    // IERC20 methods - delegate to underlying USDR
+    // IERC20 methods - delegate to underlying USDSC
     function totalSupply() external view returns (uint256) {
-        return usdr.totalSupply();
+        return usdsc.totalSupply();
     }
 
     function balanceOf(address account) external view returns (uint256) {
-        return usdr.balanceOf(account);
+        return usdsc.balanceOf(account);
     }
 
     function allowance(address owner, address spender) external view returns (uint256) {
-        return usdr.allowance(owner, spender);
+        return usdsc.allowance(owner, spender);
     }
 
     function approve(address spender, uint256 amount) external returns (bool) {
-        return usdr.approve(spender, amount);
+        return usdsc.approve(spender, amount);
     }
 
     function transfer(address to, uint256 amount) external returns (bool) {
-        // MockExtension acts as a proxy - transfer from caller's MockUSDR balance
+        // MockExtension acts as a proxy - transfer from caller's MockUSDSC balance
         // We need to use transferFrom since we're acting on behalf of the caller
-        require(usdr.balanceOf(msg.sender) >= amount, "bal");
+        require(usdsc.balanceOf(msg.sender) >= amount, "bal");
         
-        // Since we can't directly modify MockUSDR's internal state,
+        // Since we can't directly modify MockUSDSC's internal state,
         // we'll use a different approach: mint to recipient and burn from sender
-        usdr.mint(to, amount);
-        usdr.burn(msg.sender, amount);
+        usdsc.mint(to, amount);
+        usdsc.burn(msg.sender, amount);
         return true;
     }
 
     function transferFrom(address from, address to, uint256 amount) external returns (bool) {
-        return usdr.transferFrom(from, to, amount);
+        return usdsc.transferFrom(from, to, amount);
     }
 }

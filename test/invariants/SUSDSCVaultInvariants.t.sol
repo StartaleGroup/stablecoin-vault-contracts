@@ -4,8 +4,8 @@ pragma solidity ^0.8.26;
 import {Test} from 'forge-std/Test.sol';
 import {StdInvariant} from 'forge-std/StdInvariant.sol';
 import {console2} from 'forge-std/console2.sol';
-import {SUSDRVault} from '../../src/vaults/4626/SUSDRVault.sol';
-import {USDR} from '../../src/coin/mock/USDR.sol';
+import {SUSDSCVault} from '../../src/vaults/4626/SUSDSCVault.sol';
+import {USDSC} from '../../src/coin/mock/USDSC.sol';
 import {MockMToken} from '../mocks/MockMToken.sol';
 import {MockSwapFacility} from 'm-extensions-test/utils/Mocks.sol';
 import {MockM} from 'm-extensions-test/utils/Mocks.sol';
@@ -13,9 +13,9 @@ import {ProxyAdmin} from '@openzeppelin/contracts/proxy/transparent/ProxyAdmin.s
 import {TransparentUpgradeableProxy} from '@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol';
 import {IERC20} from '@openzeppelin/contracts/token/ERC20/IERC20.sol';
 
-contract SUSDRVaultHandler is Test {
-    SUSDRVault public vault;
-    USDR public usdr;
+contract SUSDSCVaultHandler is Test {
+    SUSDSCVault public vault;
+    USDSC public usdr;
     
     address[] public users;
     uint256 public constant MAX_USERS = 20;
@@ -24,7 +24,7 @@ contract SUSDRVaultHandler is Test {
     mapping(address => uint256) public userShares;
     uint256 public totalUserShares;
     
-    constructor(SUSDRVault _vault, USDR _usdr) {
+    constructor(SUSDSCVault _vault, USDSC _usdr) {
         vault = _vault;
         usdr = _usdr;
         
@@ -126,12 +126,12 @@ contract SUSDRVaultHandler is Test {
     }
 }
 
-contract SUSDRVaultInvariants is StdInvariant, Test {
-    SUSDRVault internal vault;
-    USDR internal usdr;
+contract SUSDSCVaultInvariants is StdInvariant, Test {
+    SUSDSCVault internal vault;
+    USDSC internal usdr;
     MockM internal mToken;
     MockSwapFacility internal swapFacility;
-    SUSDRVaultHandler internal handler;
+    SUSDSCVaultHandler internal handler;
     
     address internal admin = makeAddr('admin');
     address internal pauser = makeAddr('pauser');
@@ -147,26 +147,26 @@ contract SUSDRVaultInvariants is StdInvariant, Test {
         swapFacility = new MockSwapFacility();
         ProxyAdmin proxyAdmin = new ProxyAdmin(admin);
 
-        USDR implementation = new USDR(address(mToken), address(swapFacility));
+        USDSC implementation = new USDSC(address(mToken), address(swapFacility));
         TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(
             address(implementation),
             address(proxyAdmin),
-            abi.encodeWithSelector(USDR.initialize.selector, 'USDR', 'USDR', admin, yieldRecipient)
+            abi.encodeWithSelector(USDSC.initialize.selector, 'USDSC', 'USDSC', admin, yieldRecipient)
         );
-        usdr = USDR(address(proxy));
+        usdr = USDSC(address(proxy));
 
-        vault = new SUSDRVault(IERC20(address(usdr)), admin, pauser);
+        vault = new SUSDSCVault(IERC20(address(usdr)), admin, pauser);
     }
     
     function _setupHandler() internal {
-        handler = new SUSDRVaultHandler(vault, usdr);
+        handler = new SUSDSCVaultHandler(vault, usdr);
         
         bytes4[] memory selectors = new bytes4[](5);
-        selectors[0] = SUSDRVaultHandler.deposit.selector;
-        selectors[1] = SUSDRVaultHandler.mint.selector;
-        selectors[2] = SUSDRVaultHandler.redeem.selector;
-        selectors[3] = SUSDRVaultHandler.withdraw.selector;
-        selectors[4] = SUSDRVaultHandler.addYield.selector;
+        selectors[0] = SUSDSCVaultHandler.deposit.selector;
+        selectors[1] = SUSDSCVaultHandler.mint.selector;
+        selectors[2] = SUSDSCVaultHandler.redeem.selector;
+        selectors[3] = SUSDSCVaultHandler.withdraw.selector;
+        selectors[4] = SUSDSCVaultHandler.addYield.selector;
         
         targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
         targetContract(address(handler));

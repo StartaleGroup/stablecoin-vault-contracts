@@ -2,7 +2,7 @@
 pragma solidity ^0.8.26;
 
 import {Test} from 'forge-std/Test.sol';
-import {USDR} from '../../src/coin/mock/USDR.sol';
+import {USDSC} from '../../src/coin/mock/USDSC.sol';
 import {MockMToken} from '../mocks/MockMToken.sol';
 import {ProxyAdmin} from '@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol';
 import {TransparentUpgradeableProxy} from '@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol';
@@ -10,8 +10,8 @@ import {MockSwapFacility} from 'm-extensions-test/utils/Mocks.sol';
 import {MockM} from 'm-extensions-test/utils/Mocks.sol';
 import {console2} from 'forge-std/console2.sol';
 
-contract UnitUSDR is Test {
-  USDR internal usdr;
+contract UnitUSDSC is Test {
+  USDSC internal usdsc;
   MockM internal mToken;
   MockSwapFacility internal swapFacility;
   ProxyAdmin internal proxyAdmin;
@@ -30,46 +30,46 @@ contract UnitUSDR is Test {
     proxyAdmin = new ProxyAdmin(admin);
 
     // Deploy implementation
-    USDR implementation = new USDR(address(mToken), address(swapFacility));
+    USDSC implementation = new USDSC(address(mToken), address(swapFacility));
 
     // Deploy proxy with initialization
     TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(
       address(implementation),
       address(proxyAdmin),
-      abi.encodeWithSelector(USDR.initialize.selector, 'USDR', 'USDR', admin, yieldRecipient)
+      abi.encodeWithSelector(USDSC.initialize.selector, 'USDSC', 'USDSC', admin, yieldRecipient)
     );
 
-    usdr = USDR(address(proxy));
+    usdsc = USDSC(address(proxy));
 
     vm.deal(bob, 10000 ether);
     // deal some m token to bob
     deal(address(mToken), bob, 10000 ether);
 
-    // If needed,transfer some m tokens to usdr contract address
+    // If needed,transfer some m tokens to usdsc contract address
     // vm.startPrank(bob);
-    // mToken.transfer(address(usdr), 10000 ether);
+    // mToken.transfer(address(usdsc), 10000 ether);
     // vm.stopPrank();
   }
 
   function test_initialize() public view {
-    assertEq(usdr.name(), 'USDR');
-    assertEq(usdr.symbol(), 'USDR');
-    assertEq(usdr.yieldRecipient(), yieldRecipient);
+    assertEq(usdsc.name(), 'USDSC');
+    assertEq(usdsc.symbol(), 'USDSC');
+    assertEq(usdsc.yieldRecipient(), yieldRecipient);
   }
 
   function test_freezing() public {
     // Test freezing functionality
     vm.prank(admin);
-    usdr.freeze(user);
-    assertTrue(usdr.isFrozen(user));
+    usdsc.freeze(user);
+    assertTrue(usdsc.isFrozen(user));
   }
 
   function test_yieldRecipientChange() public {
     // Test changing yield recipient
     address newTreasury = makeAddr('newTreasury');
     vm.prank(admin);
-    usdr.setYieldRecipient(newTreasury);
-    assertEq(usdr.yieldRecipient(), newTreasury);
+    usdsc.setYieldRecipient(newTreasury);
+    assertEq(usdsc.yieldRecipient(), newTreasury);
   }
 
   function test_claimYield() external {
@@ -85,17 +85,17 @@ contract UnitUSDR is Test {
     mToken.transfer(address(swapFacility), 10000 ether);
     vm.stopPrank();
 
-    // Below will take M from swapFacility and transfer to USDR contract and mint USDR
+    // Below will take M from swapFacility and transfer to USDSC contract and mint USDSC
     vm.startPrank(address(swapFacility));
-    usdr.wrap(charlie, 5000 ether);
+    usdsc.wrap(charlie, 5000 ether);
     vm.stopPrank();
 
-    // check balance of usdr contract is 5000 ether m tokens
-    assertEq(mToken.balanceOf(address(usdr)), 5000 ether);
+    // check balance of usdsc contract is 5000 ether m tokens
+    assertEq(mToken.balanceOf(address(usdsc)), 5000 ether);
 
-    // check charlie has 5000 ether usdr tokens
-    // totalsupply of usdr should be 5000 ether now
-     assertEq(usdr.balanceOf(charlie), 5000 ether);
+    // check charlie has 5000 ether usdsc tokens
+    // totalsupply of usdsc should be 5000 ether now
+     assertEq(usdsc.balanceOf(charlie), 5000 ether);
 
     // Mock the yield accrual 
     mToken.setCurrentIndex(1056091682480);
@@ -104,33 +104,33 @@ contract UnitUSDR is Test {
     mToken.setEarnerRate(425);
     assertEq(mToken.earnerRate(), 425);
 
-    // make our usdr contract earning 
-    // (Normally we'd call enableEarning() on USDR which will call startEarning on M if it's approved by TTG )
-    mToken.setIsEarning(address(usdr), true);
-    assertEq(mToken.isEarning(address(usdr)), true);
+    // make our usdsc contract earning 
+    // (Normally we'd call enableEarning() on USDSC which will call startEarning on M if it's approved by TTG )
+    mToken.setIsEarning(address(usdsc), true);
+    assertEq(mToken.isEarning(address(usdsc)), true);
 
     uint128 newCurrentIndex = mToken.currentIndex();
     console2.log('newCurrentIndex', newCurrentIndex);
 
     // Balance is not reflected because MockM does not have dual accounting balance.
-    assertEq(mToken.balanceOf(address(usdr)), 5000 ether);
+    assertEq(mToken.balanceOf(address(usdsc)), 5000 ether);
 
-    // Manually update balance of usdr contract
+    // Manually update balance of usdsc contract
     // Note: I wouldn't need to do this and just update index and add set earning if MockM was more like real M.
-    mToken.setBalanceOf(address(usdr), 5000 ether + 1 ether);
-    assertEq(mToken.balanceOf(address(usdr)), 5000 ether + 1 ether);
+    mToken.setBalanceOf(address(usdsc), 5000 ether + 1 ether);
+    assertEq(mToken.balanceOf(address(usdsc)), 5000 ether + 1 ether);
     
-    // check yield recipient M and USDR balance 
-    assertEq(usdr.balanceOf(yieldRecipient), 0);
+    // check yield recipient M and USDSC balance 
+    assertEq(usdsc.balanceOf(yieldRecipient), 0);
 
     // Call claimYield()
     // Note: anyone can call and that would go to set yieldRecipient 
-    usdr.claimYield();
+    usdsc.claimYield();
     // it sends balance - totalsupply worth of tokens.
 
-    console2.log('usdr.balanceOf(yieldRecipient)', usdr.balanceOf(yieldRecipient));
+    console2.log('usdsc.balanceOf(yieldRecipient)', usdsc.balanceOf(yieldRecipient));
 
-    // check yield recipient M and USDR balance 
-    assertEq(usdr.balanceOf(yieldRecipient), 1 ether);
+    // check yield recipient M and USDSC balance 
+    assertEq(usdsc.balanceOf(yieldRecipient), 1 ether);
   }
 }

@@ -4,7 +4,7 @@ pragma solidity ^0.8.26;
 interface IEarnVault {
     // ---- TVL & asset introspection ----
     function totalPrincipal() external view returns (uint256);
-    function asset() external view returns (address);           // address(USDR)
+    function asset() external view returns (address);           // address(USDSC)
     function claimable(address user) external view returns (uint256);
     
     // ---- Enhanced view functions ----
@@ -26,7 +26,7 @@ interface IEarnVault {
     // ---- Boost reward view functions ----
     function getClaimableBoostReward(address user, address token) external view returns (uint256);
     function getAllClaimables(address user) external view returns (
-        uint256 usdrClaimable,
+        uint256 usdscClaimable,
         address[] memory boostTokens,
         uint256[] memory boostAmounts
     );
@@ -43,16 +43,16 @@ interface IEarnVault {
     function withdraw(uint256 amountPrincipal) external;
 
 
-    /// @notice Claim all accrued USDR interest to msg.sender
+    /// @notice Claim all accrued USDSC interest to msg.sender
     function claim() external;
 
     // ---- yield redistributor hook ----
-    /// @notice MUST be called AFTER transferring `amount` of USDR to the vault.
+    /// @notice MUST be called AFTER transferring `amount` of USDSC to the vault.
     /// Access-controlled (yieldRedistributor only).
     function onYield(uint256 amount) external;
 
     
-    /// @notice Sweep excess USDR yield to treasury (when vault has surplus above reserves)
+    /// @notice Sweep excess USDSC yield to treasury (when vault has surplus above reserves)
     function sweepSurplusToTreasury() external;
     
     /// @notice Recover ERC20 tokens sent to this contract (admin only)

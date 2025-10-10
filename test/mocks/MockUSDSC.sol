@@ -3,9 +3,9 @@ pragma solidity ^0.8.26;
 
 import {Test} from "forge-std/Test.sol";
 
-contract MockUSDR {
-    string public constant name = "Mock USDR";
-    string public constant symbol = "USDR";
+contract MockUSDSC {
+    string public constant name = "Mock USDSC";
+    string public constant symbol = "USDSC";
     uint8  public constant decimals = 6;
 
     mapping(address => uint256) public balanceOf;

@@ -2,37 +2,37 @@
 
 ## Overview
 
-The **RewardRedistributor** is a core component of the USDR stablecoin ecosystem that manages the distribution of freshly minted USDR yield to eligible recipients. It pulls yield from the M0 extension (MYieldToOne), applies an optional fee to Startale, and allocates the remaining yield proportionally to two main vaults based on their share of the base USDR supply.
+The **RewardRedistributor** is a core component of the USDSC stablecoin ecosystem that manages the distribution of freshly minted USDSC yield to eligible recipients. It pulls yield from the M0 extension (MYieldToOne), applies an optional fee to Startale, and allocates the remaining yield proportionally to two main vaults based on their share of the base USDSC supply.
 
 ## Architecture
 
 ### Core Components
 
-1. **USDR Extension (M0)**: Source of freshly minted yield via `claimYield()`
+1. **USDSC Extension (M0)**: Source of freshly minted yield via `claimYield()`
 2. **EarnVault**: Checkbox OFF vault using index accounting (RAY precision)
-3. **sUSDR Vault**: Checkbox ON ERC-4626 vault where donations increase PPS
+3. **sUSDSC Vault**: Checkbox ON ERC-4626 vault where donations increase PPS
 4. **Treasury**: Recipient of fees and remainder yield
 
 ### Key Addresses
 
-- `USDR_ADDRESS`: USDR token address implementing both IERC20 and IMYieldToOne interfaces (immutable)
+- `USDSC_ADDRESS`: USDSC token address implementing both IERC20 and IMYieldToOne interfaces (immutable)
 - `treasury`: Treasury address (configurable)
 - `earnVault`: EarnVault contract (configurable)
-- `susdrVault`: sUSDR ERC-4626 vault contract (configurable)
+- `susdscVault`: sUSDSC ERC-4626 vault contract (configurable)
 
 ### Interface Architecture
 
-The RewardRedistributor uses a single USDR token address (`USDR_ADDRESS`) that implements both required interfaces:
+The RewardRedistributor uses a single USDSC token address (`USDSC_ADDRESS`) that implements both required interfaces:
 
 - **IERC20 Interface**: Used for token transfers and supply queries
-  - `IERC20(USDR_ADDRESS).totalSupply()` - Get total USDR supply
-  - `IERC20(USDR_ADDRESS).safeTransfer()` - Transfer USDR tokens
+  - `IERC20(USDSC_ADDRESS).totalSupply()` - Get total USDSC supply
+  - `IERC20(USDSC_ADDRESS).safeTransfer()` - Transfer USDSC tokens
   
 - **IMYieldToOne Interface**: Used for yield operations
-  - `IMYieldToOne(USDR_ADDRESS).claimYield()` - Mint fresh yield to contract
-  - `IMYieldToOne(USDR_ADDRESS).yield()` - Preview pending yield
+  - `IMYieldToOne(USDSC_ADDRESS).claimYield()` - Mint fresh yield to contract
+  - `IMYieldToOne(USDSC_ADDRESS).yield()` - Preview pending yield
 
-This design eliminates redundancy since both interfaces point to the same USDR token contract, while maintaining clear separation of concerns through explicit interface casting.
+This design eliminates redundancy since both interfaces point to the same USDSC token contract, while maintaining clear separation of concerns through explicit interface casting.
 
 ## Yield Distribution Algorithm
 
@@ -42,14 +42,14 @@ The RewardRedistributor uses the following allocation formulas:
 
 ```solidity
 // Base calculations
-minted = IMYieldToOne(USDR_ADDRESS).claimYield()
+minted = IMYieldToOne(USDSC_ADDRESS).claimYield()
 feeToStartale = minted * fee_on_yield_bps / 10_000
 net = minted - feeToStartale
-S_base = IERC20(USDR_ADDRESS).totalSupply() - minted  // Supply BEFORE this mint
+S_base = IERC20(USDSC_ADDRESS).totalSupply() - minted  // Supply BEFORE this mint
 
 // TVL calculations
 T_earn = earnVault.totalPrincipal()
-T_yield = susdrVault.totalAssets()
+T_yield = susdscVault.totalAssets()
 
 // Basic allocation (without carry)
 toEarn_basic = (net * T_earn) / S_base
@@ -85,12 +85,12 @@ toStartaleExtra = net - (toEarn + toYield)
 
 ### Step-by-Step Flow
 
-1. **Claim Yield**: Call `IMYieldToOne(USDR_ADDRESS).claimYield()` to mint fresh yield of USDR
+1. **Claim Yield**: Call `IMYieldToOne(USDSC_ADDRESS).claimYield()` to mint fresh yield of USDSC
 2. **Calculate Allocations**: Apply formulas with carry logic
 3. **Transfer to Startale**: Send `feeToStartale + toStartaleExtra`
 4. **Transfer to EarnVault**: Send `toEarn` amount first
 5. **Call EarnVault.onYield()**: Trigger index update (funding invariant)
-6. **Transfer to sUSDR Vault**: Send `toOn` amount (increases PPS)
+6. **Transfer to sUSDSC Vault**: Send `toOn` amount (increases PPS)
 7. **Update Carries**: Store remainder for next epoch
 8. **Emit Event**: Log all distribution details
 
@@ -129,7 +129,7 @@ uint16 public constant MAX_FEE_BPS = 2000; // Maximum: 20%
 Only `DEFAULT_ADMIN_ROLE` can update:
 - Treasury address
 - EarnVault address
-- sUSDR vault address
+- sUSDSC vault address
 - Fee on yield (within MAX_FEE_BPS limit)
 
 ## Events
@@ -138,14 +138,14 @@ Only `DEFAULT_ADMIN_ROLE` can update:
 
 ```solidity
 event Distributed(
-    uint256 minted,          // Total USDR minted this epoch
+    uint256 minted,          // Total USDSC minted this epoch
     uint256 feeToStartale,   // Fee portion to Startale
     uint256 toEarnVault,     // Yield to EarnVault
-    uint256 toSUSDRVault,    // Yield to sUSDR vault
+    uint256 toSUSDSCVault,    // Yield to sUSDSC vault
     uint256 toStartaleExtra, // Remainder to Startale
     uint256 S_base,          // Base supply (before mint)
     uint256 T_earn,          // EarnVault TVL
-    uint256 T_yield          // sUSDR vault TVL
+    uint256 T_yield          // sUSDSC vault TVL
 );
 ```
 
@@ -155,7 +155,7 @@ event Distributed(
 event ParamsUpdated(
     address startale,
     address earnVault,
-    address susdrVault,
+    address susdscVault,
     uint16  fee_on_yield_bps
 );
 ```
@@ -168,44 +168,44 @@ event ParamsUpdated(
 - **Yield Delivery**: Transfer → `earnVault.onYield(amount)`
 - **Funding Invariant**: Must maintain sufficient balance for claims
 
-### sUSDR Vault Integration
+### sUSDSC Vault Integration
 
-- **TVL Source**: `susdrVault.totalAssets()`
+- **TVL Source**: `susdscVault.totalAssets()`
 - **Yield Delivery**: Raw transfer (increases PPS)
 - **ERC-4626 Standard**: Standard vault interface
 
 ### M0 Extension Integration
 
-- **Yield Source**: `IMYieldToOne(USDR_ADDRESS).claimYield()`
+- **Yield Source**: `IMYieldToOne(USDSC_ADDRESS).claimYield()`
 - **Recipient Setup**: This contract must be set as `yieldRecipient`
 
 ## Invariants
 
 ### Conservation of Value
 ```
-minted == feeToStartale + toEarnVault + toSUSDRVault + toStartaleExtra
+minted == feeToStartale + toEarnVault + toSUSDSCVault + toStartaleExtra
 ```
 
 ### Correct Denominator
 ```
-S_base == IERC20(USDR_ADDRESS).totalSupply() - minted
+S_base == IERC20(USDSC_ADDRESS).totalSupply() - minted
 ```
 
 ### Proportional Allocation (per epoch)
 ```
 toEarnVault ≈ net * T_earn / S_base  (within rounding tolerance)
-toSUSDRVault ≈ net * T_yield / S_base  (within rounding tolerance)
+toSUSDSCVault ≈ net * T_yield / S_base  (within rounding tolerance)
 ```
 
 ### Long-Run Fairness (across epochs)
 ```
 |Σ(toEarnVault) - Σ(net * T_earn / S_base)| ≤ S_base - 1
-|Σ(toSUSDRVault) - Σ(net * T_yield / S_base)| ≤ S_base - 1
+|Σ(toSUSDSCVault) - Σ(net * T_yield / S_base)| ≤ S_base - 1
 ```
 
 ### Post-Distribution State
 ```
-IERC20(USDR_ADDRESS).balanceOf(address(this)) == 0  // No dust retention
+IERC20(USDSC_ADDRESS).balanceOf(address(this)) == 0  // No dust retention
 ```
 
 ## Usage Examples
@@ -224,7 +224,7 @@ rewardRedistributor.distribute();
 rewardRedistributor.setParams(
     newStartaleAddress,
     newEarnVaultAddress,
-    newSUSDRVaultAddress,
+    newSUSDSCVaultAddress,
     newFeeBps
 );
 ```
@@ -267,16 +267,16 @@ The RewardRedistributor has comprehensive test coverage including:
 ## Deployment Considerations
 
 ### Prerequisites
-// Note: Todo: USDR itself is MYieldToOne extension
-1. Deploy USDR token contract (implements both IERC20 and IMYieldToOne)
+// Note: Todo: USDSC itself is MYieldToOne extension
+1. Deploy USDSC token contract (implements both IERC20 and IMYieldToOne)
 2. Deploy EarnVault with proper initialization
-3. Deploy sUSDR ERC-4626 vault
+3. Deploy sUSDSC ERC-4626 vault
 4. Set up Treasury address
 
 ### Initialization Steps
-1. Deploy RewardRedistributor with USDR address and other parameters
+1. Deploy RewardRedistributor with USDSC address and other parameters
 2. Grant OPERATOR_ROLE to keeper/automation system
-3. Set RewardRedistributor as yieldRecipient in USDR token contract
+3. Set RewardRedistributor as yieldRecipient in USDSC token contract
 4. Configure fee parameters if needed
 5. Verify all integrations work correctly
 

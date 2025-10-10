@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.26;
 
-import "./MockUSDR.sol";
+import "./MockUSDSC.sol";
 import "lib/openzeppelin-contracts/contracts/interfaces/IERC4626.sol";
 
 contract MockERC4626Vault is IERC4626 {
-    MockUSDR public immutable usdr;
+    MockUSDSC public immutable usdsc;
 
-    constructor(MockUSDR _usdr) { usdr = _usdr; }
+    constructor(MockUSDSC _usdsc) { usdsc = _usdsc; }
 
     // We implement only what's needed by the redistributor: totalAssets()
     function totalAssets() public view returns (uint256) {
-        return usdr.balanceOf(address(this));
+        return usdsc.balanceOf(address(this));
     }
 
     // ---- ERC20 Metadata functions ----
@@ -20,7 +20,7 @@ contract MockERC4626Vault is IERC4626 {
     function decimals() external pure returns (uint8) { return 6; }
 
     // ---- Unused IERC4626 funcs (stubs to satisfy interface) ----
-    function asset() external view returns (address) { return address(usdr); }
+    function asset() external view returns (address) { return address(usdsc); }
     function totalSupply() external pure returns (uint256) { return 0; }
     function balanceOf(address) external pure returns (uint256) { return 0; }
     function convertToShares(uint256) external pure returns (uint256) { return 0; }

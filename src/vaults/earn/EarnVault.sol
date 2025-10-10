@@ -13,14 +13,14 @@ import {IEarnVaultEventsAndErrors} from "../../interfaces/vaults/earn/IEarnVault
 import {BoostRewardsLib} from "./BoostRewardsLib.sol";
 
 /// @title EarnVault (claimable yield)
-/// @notice Users deposit USDR, accrue claimable USDR via index accounting, and can claim/withdraw anytime.
-///         A distributor pushes yield: transfer USDR to this contract, then call onYield(amount).
+/// @notice Users deposit USDSC, accrue claimable USDSC via index accounting, and can claim/withdraw anytime.
+///         A distributor pushes yield: transfer USDSC to this contract, then call onYield(amount).
 /// Accounting:
 ///   - globalIndex is in RAY (1e27) for precision.
 ///   - User state: principal, userIndex, accrued.
 ///   - When yield arrives and totalPrincipal>0: globalIndex += amount*RAY/totalPrincipal.
 ///   - If totalPrincipal==0 at yield time: amount is transferred directly to treasury.
-/// Invariant (funding): USDR balance >= claimReserve.
+/// Invariant (funding): USDSC balance >= claimReserve.
 contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Pausable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
@@ -35,7 +35,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
 
     // -------- Immutables --------
-    IERC20 public immutable USDR;
+    IERC20 public immutable USDSC;
 
 
     // -------- Roles / endpoints --------
@@ -55,7 +55,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
     mapping(address => uint256) public userIndex;
     mapping(address => uint256) public accrued;
 
-    // -------- Boost rewards accounting (same logic as USDR yield) --------
+    // -------- Boost rewards accounting (same logic as USDSC yield) --------
     mapping(address => uint256) public boostGlobalIndex; // token => global boost index
     mapping(address => uint256) public boostClaimReserve; // token => claimable boost reserves
     mapping(address => mapping(address => uint256)) public userBoostIndex; // user => token => last boost index
@@ -66,12 +66,12 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
     // -------- Events and Errors --------
     // All events and errors are inherited from IEarnVaultEventsAndErrors interface
 
-    constructor(address usdr, address admin, address yieldRedistributorAddr, address treasuryAddr, address pauserAddr) {
-        if (usdr == address(0) || admin == address(0)) revert CanNotBeZeroAddress();
+    constructor(address usdsc, address admin, address yieldRedistributorAddr, address treasuryAddr, address pauserAddr) {
+        if (usdsc == address(0) || admin == address(0)) revert CanNotBeZeroAddress();
         if (yieldRedistributorAddr == address(0) || treasuryAddr == address(0)) revert CanNotBeZeroAddress();
         if (pauserAddr == address(0)) revert CanNotBeZeroAddress();
         
-        USDR = IERC20(usdr);
+        USDSC = IERC20(usdsc);
         treasury = treasuryAddr;
         _currentPauser = pauserAddr;
         
@@ -153,7 +153,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
     // =========================
 
     function asset() external view returns (address) {
-        return address(USDR);
+        return address(USDSC);
     }
 
     function claimable(address user) external view returns (uint256) {
@@ -221,7 +221,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
         vaultTotalPrincipal = totalPrincipal;
         vaultClaimReserve = claimReserve;
         vaultGlobalIndex = globalIndex;
-        vaultBalance = USDR.balanceOf(address(this));
+        vaultBalance = USDSC.balanceOf(address(this));
         vaultCarryRay = _carryRay;
     }
 
@@ -240,20 +240,20 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
         );
     }
 
-    /// @notice Get all claimable rewards for a user (USDR yield + all boost rewards)
+    /// @notice Get all claimable rewards for a user (USDSC yield + all boost rewards)
     /// @param user User address to check
-    /// @return usdrClaimable Claimable USDR yield
+    /// @return usdscClaimable Claimable USDSC yield
     /// @return boostTokens Array of boost token addresses
     /// @return boostAmounts Array of claimable amounts for each boost token
     function getAllClaimables(address user) external view returns (
-        uint256 usdrClaimable,
+        uint256 usdscClaimable,
         address[] memory boostTokens,
         uint256[] memory boostAmounts
     ) {
         _checkNotBlacklisted(user);
         
-        // Get USDR claimable yield
-        usdrClaimable = this.claimable(user);
+        // Get USDSC claimable yield
+        usdscClaimable = this.claimable(user);
         
         // Get all active boost tokens
         boostTokens = new address[](activeBoostTokens.length);
@@ -278,16 +278,16 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
     // User flows
     // =========================
 
-    /// @notice Deposit USDR tokens to earn yield
+    /// @notice Deposit USDSC tokens to earn yield
     /// @dev Reserves principal 1:1 in claimReserve to ensure withdrawals are always possible
-    /// @param amount Amount of USDR tokens to deposit
+    /// @param amount Amount of USDSC tokens to deposit
     function deposit(uint256 amount) external whenNotPaused nonReentrant {
         _checkNotBlacklisted(msg.sender);
         if (amount == 0) revert ZeroAmount();
 
         _settle(msg.sender);
         
-        USDR.safeTransferFrom(msg.sender, address(this), amount);
+        USDSC.safeTransferFrom(msg.sender, address(this), amount);
         principal[msg.sender] += amount;
         totalPrincipal += amount;
         claimReserve += amount;  // reserve principal 1:1
@@ -295,10 +295,10 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
         emit Deposit(msg.sender, amount);
     }
 
-    /// @notice Deposit USDR tokens using permit (gasless approval)
+    /// @notice Deposit USDSC tokens using permit (gasless approval)
     /// @dev Same as deposit() but uses permit for approval in same transaction
     /// @dev Safely handles tokens that may not implement IERC20Permit
-    /// @param amount Amount of USDR tokens to deposit
+    /// @param amount Amount of USDSC tokens to deposit
     /// @param deadline Permit deadline timestamp
     /// @param v Permit signature parameter v
     /// @param r Permit signature parameter r  
@@ -312,7 +312,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
         if (amount == 0) revert ZeroAmount();
 
         // Safely attempt permit - revert with clear error if not supported
-        try IERC20Permit(address(USDR)).permit(msg.sender, address(this), amount, deadline, v, r, s) {
+        try IERC20Permit(address(USDSC)).permit(msg.sender, address(this), amount, deadline, v, r, s) {
             // Permit succeeded, continue with deposit
         } catch {
             revert PermitFailed();
@@ -320,7 +320,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
 
         _settle(msg.sender);
         
-        USDR.safeTransferFrom(msg.sender, address(this), amount);
+        USDSC.safeTransferFrom(msg.sender, address(this), amount);
         principal[msg.sender] += amount;
         totalPrincipal += amount;
         claimReserve += amount;  // reserve principal 1:1
@@ -330,7 +330,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
 
     /// @notice Withdraw any amount up to principal amount
     /// @param amount Amount of principal to withdraw (max: user's principal)
-    /// @dev Automatically claims ALL accrued interest (USDR + boost rewards) when withdrawing
+    /// @dev Automatically claims ALL accrued interest (USDSC + boost rewards) when withdrawing
     /// @dev User can only withdraw their principal, but gets all rewards automatically
     function withdraw(uint256 amount) external whenNotPaused nonReentrant {
         _checkNotBlacklisted(msg.sender);
@@ -362,16 +362,16 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
         claimReserve -= amount; // Reduce claim reserve by withdrawn principal
         
         // Transfer principal
-        USDR.safeTransfer(msg.sender, amount);
+        USDSC.safeTransfer(msg.sender, amount);
         
-        // Automatically claim ALL USDR yield
-        uint256 usdrYield = accrued[msg.sender];
-        if (usdrYield > 0) {
-            if (claimReserve < usdrYield) revert InsufficientFunding();
+        // Automatically claim ALL USDSC yield
+        uint256 usdscYield = accrued[msg.sender];
+        if (usdscYield > 0) {
+            if (claimReserve < usdscYield) revert InsufficientFunding();
             accrued[msg.sender] = 0;
-            claimReserve -= usdrYield;
-            USDR.safeTransfer(msg.sender, usdrYield);
-            emit InterestClaimed(msg.sender, usdrYield);
+            claimReserve -= usdscYield;
+            USDSC.safeTransfer(msg.sender, usdscYield);
+            emit InterestClaimed(msg.sender, usdscYield);
         }
         
         // Emit events
@@ -380,22 +380,22 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
 
 
     /// @notice Claim all accrued interest to caller's address
-    /// @dev Settles user's position and transfers all accrued yield (USDR + boost rewards)
+    /// @dev Settles user's position and transfers all accrued yield (USDSC + boost rewards)
     function claim() external whenNotPaused nonReentrant {
         _checkNotBlacklisted(msg.sender);
         _settle(msg.sender);
         
-        uint256 usdrAmt = accrued[msg.sender];
-        bool hasUSDRClaim = usdrAmt > 0;
+        uint256 usdscAmt = accrued[msg.sender];
+        bool hasUSDSCClaim = usdscAmt > 0;
         bool hasBoostClaim = false;
         
-        // Claim USDR interest
-        if (hasUSDRClaim) {
-            if (claimReserve < usdrAmt) revert InsufficientFunding();
+        // Claim USDSC interest
+        if (hasUSDSCClaim) {
+            if (claimReserve < usdscAmt) revert InsufficientFunding();
             accrued[msg.sender] = 0;
-            claimReserve -= usdrAmt;
-            USDR.safeTransfer(msg.sender, usdrAmt);
-            emit InterestClaimed(msg.sender, usdrAmt);
+            claimReserve -= usdscAmt;
+            USDSC.safeTransfer(msg.sender, usdscAmt);
+            emit InterestClaimed(msg.sender, usdscAmt);
         }
         
         // Settle and claim all boost rewards in single loop
@@ -416,7 +416,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
             }
         }
         
-        if (!hasUSDRClaim && !hasBoostClaim) revert NothingToClaim();
+        if (!hasUSDSCClaim && !hasBoostClaim) revert NothingToClaim();
     }
 
 
@@ -425,19 +425,19 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
     // =========================
 
     /// @notice Distribute yield to vault users (callable only by yield redistributor)
-    /// @dev MUST be called AFTER transferring `amount` USDR to this contract
-    /// @dev Enforces funding invariant: USDR.balance >= claimReserve + amount
-    /// @param amount Amount of USDR yield to distribute
+    /// @dev MUST be called AFTER transferring `amount` USDSC to this contract
+    /// @dev Enforces funding invariant: USDSC.balance >= claimReserve + amount
+    /// @param amount Amount of USDSC yield to distribute
     function onYield(uint256 amount) external onlyRole(YIELD_REDISTRIBUTOR_ROLE) nonReentrant {
         if (amount == 0) return;
         
         // Verify actual balance before updating accounting
-        uint256 bal = USDR.balanceOf(address(this));
+        uint256 bal = USDSC.balanceOf(address(this));
         
         if (totalPrincipal == 0) {
             // No deposits: just need enough for treasury transfer
             if (bal < amount) revert InsufficientFunding();
-            USDR.safeTransfer(treasury, amount);
+            USDSC.safeTransfer(treasury, amount);
             emit YieldTransferredToTreasury(amount);
             return;
         }
@@ -461,7 +461,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
 
     /// @notice Distribute boost rewards (ASTR, DOT, etc.) to vault users
     /// @dev MUST be called AFTER transferring `amount` of `token` to this contract
-    /// @dev Uses same logic as USDR yield - distributed proportionally based on principal
+    /// @dev Uses same logic as USDSC yield - distributed proportionally based on principal
     /// @param token Token address to distribute as boost rewards
     /// @param amount Amount of boost tokens to distribute
     function onBoostReward(address token, uint256 amount) external onlyRole(YIELD_REDISTRIBUTOR_ROLE) nonReentrant {
@@ -529,23 +529,23 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
     // =========================
 
     /// @notice Recover ERC20 tokens sent to this contract
-    /// @dev For non-USDR tokens or USDR surplus when paused
+    /// @dev For non-USDSC tokens or USDSC surplus when paused
     /// @param token Token address to recover
     /// @param to Address to send tokens to
     /// @param amount Amount to recover
     function recoverERC20(address token, address to, uint256 amount) external onlyRole(ADMIN_ROLE) {
         if (to == address(0)) revert CanNotBeZeroAddress();
 
-        if (token == address(USDR)) {
+        if (token == address(USDSC)) {
             if (!paused()) revert ContractNotPaused();
             // allow sweeping only true surplus
-            uint256 bal = USDR.balanceOf(address(this));
+            uint256 bal = USDSC.balanceOf(address(this));
             uint256 minRequired = claimReserve;
             if (bal <= minRequired) revert InsufficientFunding();
             uint256 maxSweep = bal - minRequired;
             if (amount > maxSweep) revert ExceedsSurplus();
         } else {
-            // For non-USDR tokens, check actual balance and boost reserves
+            // For non-USDSC tokens, check actual balance and boost reserves
             uint256 tokenBalance = IERC20(token).balanceOf(address(this));
             if (amount > tokenBalance) revert ExceedsSurplus();
             
@@ -559,16 +559,16 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
         emit TokenRecovered(token, to, amount);
     }
 
-    /// @notice Sweep excess USDR yield to treasury (when vault has surplus above reserves)
+    /// @notice Sweep excess USDSC yield to treasury (when vault has surplus above reserves)
     /// @dev Sweeps all surplus above minimum required reserves
     function sweepSurplusToTreasury() external onlyRole(ADMIN_ROLE) {
-        uint256 bal = USDR.balanceOf(address(this));
+        uint256 bal = USDSC.balanceOf(address(this));
         uint256 minRequired = claimReserve;
         
         if (bal <= minRequired) return; // No surplus to sweep
         
         uint256 surplus = bal - minRequired;
-        USDR.safeTransfer(treasury, surplus);
+        USDSC.safeTransfer(treasury, surplus);
         emit SurplusSweptToTreasury(surplus);
     }
 
