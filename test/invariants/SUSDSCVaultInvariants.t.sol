@@ -15,7 +15,7 @@ import {IERC20} from '@openzeppelin/contracts/token/ERC20/IERC20.sol';
 
 contract SUSDSCVaultHandler is Test {
     SUSDSCVault public vault;
-    USDSC public usdr;
+    USDSC public usdsc;
     
     address[] public users;
     uint256 public constant MAX_USERS = 20;
@@ -24,25 +24,25 @@ contract SUSDSCVaultHandler is Test {
     mapping(address => uint256) public userShares;
     uint256 public totalUserShares;
     
-    constructor(SUSDSCVault _vault, USDSC _usdr) {
+    constructor(SUSDSCVault _vault, USDSC _usdsc) {
         vault = _vault;
-        usdr = _usdr;
+        usdsc = _usdsc;
         
         for (uint i = 0; i < MAX_USERS; i++) {
             address user = makeAddr(string(abi.encodePacked("user", i)));
             users.push(user);
-            deal(address(usdr), user, MAX_AMOUNT);
+            deal(address(usdsc), user, MAX_AMOUNT);
         }
     }
     
     function deposit(uint256 userIndex, uint256 assets) external {
         userIndex = bound(userIndex, 0, users.length - 1);
-        assets = bound(assets, 1, _min(MAX_AMOUNT / 10, usdr.balanceOf(users[userIndex])));
+        assets = bound(assets, 1, _min(MAX_AMOUNT / 10, usdsc.balanceOf(users[userIndex])));
         
         address user = users[userIndex];
         
         vm.startPrank(user);
-        usdr.approve(address(vault), assets);
+        usdsc.approve(address(vault), assets);
         uint256 shares = vault.deposit(assets, user);
         vm.stopPrank();
         
@@ -57,10 +57,10 @@ contract SUSDSCVaultHandler is Test {
         address user = users[userIndex];
         uint256 assets = vault.previewMint(shares);
         
-        if (assets > usdr.balanceOf(user)) return;
+        if (assets > usdsc.balanceOf(user)) return;
         
         vm.startPrank(user);
-        usdr.approve(address(vault), assets);
+        usdsc.approve(address(vault), assets);
         vault.mint(shares, user);
         vm.stopPrank();
         
@@ -114,10 +114,10 @@ contract SUSDSCVaultHandler is Test {
         yieldAmount = bound(yieldAmount, 1 ether, maxYield);
         
         address yieldDistributor = makeAddr('yieldDistributor');
-        deal(address(usdr), yieldDistributor, yieldAmount);
+        deal(address(usdsc), yieldDistributor, yieldAmount);
         
         vm.startPrank(yieldDistributor);
-        usdr.transfer(address(vault), yieldAmount);
+        usdsc.transfer(address(vault), yieldAmount);
         vm.stopPrank();
     }
     
@@ -128,7 +128,7 @@ contract SUSDSCVaultHandler is Test {
 
 contract SUSDSCVaultInvariants is StdInvariant, Test {
     SUSDSCVault internal vault;
-    USDSC internal usdr;
+    USDSC internal usdsc;
     MockM internal mToken;
     MockSwapFacility internal swapFacility;
     SUSDSCVaultHandler internal handler;
@@ -153,13 +153,13 @@ contract SUSDSCVaultInvariants is StdInvariant, Test {
             address(proxyAdmin),
             abi.encodeWithSelector(USDSC.initialize.selector, 'USDSC', 'USDSC', admin, yieldRecipient)
         );
-        usdr = USDSC(address(proxy));
+        usdsc = USDSC(address(proxy));
 
-        vault = new SUSDSCVault(IERC20(address(usdr)), admin, pauser);
+        vault = new SUSDSCVault(IERC20(address(usdsc)), admin, pauser);
     }
     
     function _setupHandler() internal {
-        handler = new SUSDSCVaultHandler(vault, usdr);
+        handler = new SUSDSCVaultHandler(vault, usdsc);
         
         bytes4[] memory selectors = new bytes4[](5);
         selectors[0] = SUSDSCVaultHandler.deposit.selector;
@@ -173,7 +173,7 @@ contract SUSDSCVaultInvariants is StdInvariant, Test {
     }
     
     function invariant_assetConservation() external view {
-        assertEq(vault.totalAssets(), usdr.balanceOf(address(vault)));
+        assertEq(vault.totalAssets(), usdsc.balanceOf(address(vault)));
     }
     
     function invariant_shareSupplyConsistency() external view {
@@ -268,12 +268,12 @@ contract SUSDSCVaultInvariants is StdInvariant, Test {
     function invariant_noNegativeBalances() external view {
         assertGe(vault.totalSupply(), 0);
         assertGe(vault.totalAssets(), 0);
-        assertGe(usdr.balanceOf(address(vault)), 0);
+        assertGe(usdsc.balanceOf(address(vault)), 0);
         
         for (uint i = 0; i < handler.MAX_USERS(); i++) {
             address user = handler.users(i);
             assertGe(vault.balanceOf(user), 0);
-            assertGe(usdr.balanceOf(user), 0);
+            assertGe(usdsc.balanceOf(user), 0);
         }
     }
     
@@ -326,8 +326,8 @@ contract SUSDSCVaultInvariants is StdInvariant, Test {
     }
     
     function invariant_assetIntegrity() external view {
-        assertEq(address(vault.asset()), address(usdr));
-        assertEq(vault.decimals(), usdr.decimals());
+        assertEq(address(vault.asset()), address(usdsc));
+        assertEq(vault.decimals(), usdsc.decimals());
     }
     
     function invariant_erc4626Compliance() external view {
@@ -358,7 +358,7 @@ contract SUSDSCVaultInvariants is StdInvariant, Test {
     }
     
     function invariant_noArbitraryMinting() external view {
-        uint256 vaultBalance = usdr.balanceOf(address(vault));
+        uint256 vaultBalance = usdsc.balanceOf(address(vault));
         uint256 totalAssets = vault.totalAssets();
         
         assertEq(vaultBalance, totalAssets);
