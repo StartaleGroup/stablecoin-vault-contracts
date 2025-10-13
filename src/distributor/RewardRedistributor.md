@@ -34,6 +34,47 @@ The RewardRedistributor uses a single USDSC token address (`USDSC_ADDRESS`) that
 
 This design eliminates redundancy since both interfaces point to the same USDSC token contract, while maintaining clear separation of concerns through explicit interface casting.
 
+## Preview Functions
+
+The RewardRedistributor provides three preview functions for different use cases:
+
+### previewSplit(uint256 minted)
+- **Purpose**: Preview allocation for a hypothetical yield amount
+- **Parameters**: `minted` - hypothetical yield amount to allocate
+- **S_base Calculation**: Uses current total supply (since `minted` is hypothetical)
+- **Carry Logic**: No carries (pure mathematical preview)
+- **Use Case**: "What if we had X amount of yield to distribute?"
+
+### previewSplitCurrent()
+- **Purpose**: Preview allocation using current pending yield from extension
+- **Parameters**: None (reads `IMYieldToOne(USDSC_ADDRESS).yield()`)
+- **S_base Calculation**: Uses current total supply (since yield is pending, not yet minted)
+- **Carry Logic**: No carries (pure mathematical preview)
+- **Use Case**: "What would the current pending yield allocation look like?"
+
+### previewDistribute()
+- **Purpose**: Exact dry-run of actual `distribute()` function
+- **Parameters**: None (reads `IMYieldToOne(USDSC_ADDRESS).yield()`)
+- **S_base Calculation**: Uses supply before mint (simulates actual distribution)
+- **Carry Logic**: Includes carries (exact simulation of real distribution)
+- **Use Case**: "What would happen if we called `distribute()` right now?"
+
+### Key Distinction: S_base Calculation
+
+The critical difference between preview and distribution functions is how `S_base` is calculated:
+
+```solidity
+// Preview functions (previewSplit, previewSplitCurrent)
+S_base = IERC20(USDSC_ADDRESS).totalSupply()  // Current supply
+
+// Distribution functions (previewDistribute, distribute)  
+S_base = IERC20(USDSC_ADDRESS).totalSupply() - minted  // Supply before mint
+```
+
+This distinction is important because:
+- **Preview functions** deal with pending/hypothetical yield that hasn't been minted yet
+- **Distribution functions** deal with actual minted yield that increases total supply
+
 ## Yield Distribution Algorithm
 
 ### Mathematical Formulas
@@ -45,7 +86,12 @@ The RewardRedistributor uses the following allocation formulas:
 minted = IMYieldToOne(USDSC_ADDRESS).claimYield()
 feeToStartale = minted * fee_on_yield_bps / 10_000
 net = minted - feeToStartale
-S_base = IERC20(USDSC_ADDRESS).totalSupply() - minted  // Supply BEFORE this mint
+
+// S_base calculation depends on context:
+// - For actual distribution: S_base = totalSupply() - minted (supply BEFORE mint)
+// - For preview functions: S_base = totalSupply() (current supply, since yield is pending)
+
+S_base = IERC20(USDSC_ADDRESS).totalSupply() - minted  // For actual distribution
 
 // TVL calculations
 T_earn = earnVault.totalPrincipal()
@@ -188,7 +234,11 @@ minted == feeToStartale + toEarnVault + toSUSDSCVault + toStartaleExtra
 
 ### Correct Denominator
 ```
+// For actual distribution functions (distribute, previewDistribute)
 S_base == IERC20(USDSC_ADDRESS).totalSupply() - minted
+
+// For preview functions (previewSplit, previewSplitCurrent)  
+S_base == IERC20(USDSC_ADDRESS).totalSupply()  // Current supply
 ```
 
 ### Proportional Allocation (per epoch)
@@ -208,7 +258,24 @@ toSUSDSCVault ≈ net * T_yield / S_base  (within rounding tolerance)
 IERC20(USDSC_ADDRESS).balanceOf(address(this)) == 0  // No dust retention
 ```
 
+
 ## Usage Examples
+
+### Preview Functions Usage
+
+```solidity
+// Preview hypothetical yield allocation
+(uint256 fee, uint256 toEarn, uint256 toOn, uint256 extra, uint256 sBase, uint256 tEarn, uint256 tYield) = 
+    rewardRedistributor.previewSplit(1000e6);  // 1000 USDSC hypothetical yield
+
+// Preview current pending yield allocation  
+(uint256 minted, uint256 fee, uint256 toEarn, uint256 toOn, uint256 extra, uint256 sBase, uint256 tEarn, uint256 tYield) = 
+    rewardRedistributor.previewSplitCurrent();
+
+// Preview exact distribution (dry-run)
+(uint256 minted, uint256 fee, uint256 toEarn, uint256 toOn, uint256 extra, uint256 sBase, uint256 tEarn, uint256 tYield) = 
+    rewardRedistributor.previewDistribute();
+```
 
 ### Basic Distribution
 
