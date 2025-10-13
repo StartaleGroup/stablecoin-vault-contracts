@@ -2,8 +2,8 @@
 pragma solidity ^0.8.26;
 
 import {ERC4626Test} from "erc4626-tests/ERC4626.test.sol";
-import {SUSDRVault} from '../../src/vaults/4626/SUSDRVault.sol';
-import {USDR} from '../../src/coin/mock/USDR.sol';
+import {SUSDSCVault} from '../../src/vaults/4626/SUSDSCVault.sol';
+import {USDSC} from '../../src/coin/mock/USDSC.sol';
 import {MockMToken} from '../mocks/MockMToken.sol';
 import {MockSwapFacility} from 'm-extensions-test/utils/Mocks.sol';
 import {MockM} from 'm-extensions-test/utils/Mocks.sol';
@@ -22,12 +22,12 @@ contract ERC4626VaultOffsetMock is ERC4626OffsetMock {
     constructor(
         ERC20 underlying_,
         uint8 offset_
-    ) ERC20("My USDR Vault", "MUSDRV") ERC4626(underlying_) ERC4626OffsetMock(offset_) {}
+    ) ERC20("My USDSC Vault", "MUSDSCV") ERC4626(underlying_) ERC4626OffsetMock(offset_) {}
 }
 
 contract ERC4626ComplianceTest is ERC4626Test {
 
-    SUSDRVault internal vault;
+    SUSDSCVault internal vault;
 
     address internal admin = makeAddr('admin');
     address internal pauser = makeAddr('pauser');
@@ -44,7 +44,7 @@ contract ERC4626ComplianceTest is ERC4626Test {
     }
 
     function _deployContracts() internal {
-        vault = new SUSDRVault(IERC20(address(_underlyingMock)), admin, pauser);
+        vault = new SUSDSCVault(IERC20(address(_underlyingMock)), admin, pauser);
     }
 
     /**

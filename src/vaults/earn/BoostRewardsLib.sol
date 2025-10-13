@@ -8,7 +8,7 @@ import {IEarnVaultEventsAndErrors} from "../../interfaces/vaults/earn/IEarnVault
 
 /// @title BoostRewardsLib - Library for handling boost rewards distribution
 /// @notice Handles boost rewards logic separately from main EarnVault contract
-/// @dev Uses same logic as USDR yield - distributed proportionally based on principal
+/// @dev Uses same logic as USDSC yield - distributed proportionally based on principal
 library BoostRewardsLib {
     using SafeERC20 for IERC20;
 
@@ -16,7 +16,7 @@ library BoostRewardsLib {
     uint256 public constant RAY = 1e27; 
 
     /// @notice Distribute boost rewards to vault users
-    /// @dev Uses same logic as USDR yield - distributed proportionally based on principal
+    /// @dev Uses same logic as USDSC yield - distributed proportionally based on principal
     /// @param token Token address to distribute as boost rewards
     /// @param amount Amount of boost tokens to distribute
     /// @param totalPrincipal Total principal amount in vault
@@ -49,10 +49,10 @@ library BoostRewardsLib {
             return;
         }
         
-        // Deposits exist: distribute proportionally based on principal (same as USDR yield)
+        // Deposits exist: distribute proportionally based on principal (same as USDSC yield)
         if (bal < boostClaimReserve[token] + amount) revert IEarnVaultEventsAndErrors.InsufficientBoostClaimReserve();
         
-        // Update boost global index for this token (same logic as USDR yield)
+        // Update boost global index for this token (same logic as USDSC yield)
         uint256 carryRay = 0; // We use 0 for boost rewards as precision loss is negligible
         unchecked {
             uint256 num = amount * RAY + carryRay;

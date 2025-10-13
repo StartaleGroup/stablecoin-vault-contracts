@@ -7,7 +7,7 @@ import {MockERC20} from "../mocks/MockERC20.sol";
 
 contract EarnVaultBoostTest is Test {
     EarnVault public earnVault;
-    MockERC20 public usdr;
+    MockERC20 public usdsc;
     MockERC20 public astr;
     MockERC20 public dot;
     
@@ -24,13 +24,13 @@ contract EarnVaultBoostTest is Test {
 
     function setUp() public {
         // Deploy tokens
-        usdr = new MockERC20("USDR Token", "USDR", 6);
+        usdsc = new MockERC20("USDSC Token", "USDSC", 6);
         astr = new MockERC20("ASTR Token", "ASTR", 18);
         dot = new MockERC20("DOT Token", "DOT", 18);
         
         // Deploy EarnVault
         earnVault = new EarnVault(
-            address(usdr),
+            address(usdsc),
             admin,
             admin, // yield redistributor
             treasury,
@@ -38,21 +38,21 @@ contract EarnVaultBoostTest is Test {
         );
         
         // Setup initial balances
-        usdr.mint(admin, INITIAL_SUPPLY);
+        usdsc.mint(admin, INITIAL_SUPPLY);
         astr.mint(admin, ASTR_REWARD);
         dot.mint(admin, DOT_REWARD);
         
         // Setup users
-        usdr.mint(user1, DEPOSIT_AMOUNT * 3);
-        usdr.mint(user2, DEPOSIT_AMOUNT * 3);
+        usdsc.mint(user1, DEPOSIT_AMOUNT * 3);
+        usdsc.mint(user2, DEPOSIT_AMOUNT * 3);
         
         // Approve vault
         vm.startPrank(user1);
-        usdr.approve(address(earnVault), DEPOSIT_AMOUNT * 3);
+        usdsc.approve(address(earnVault), DEPOSIT_AMOUNT * 3);
         vm.stopPrank();
         
         vm.startPrank(user2);
-        usdr.approve(address(earnVault), DEPOSIT_AMOUNT * 3);
+        usdsc.approve(address(earnVault), DEPOSIT_AMOUNT * 3);
         vm.stopPrank();
     }
 
@@ -101,11 +101,11 @@ contract EarnVaultBoostTest is Test {
         // =========================
         // Setup: Users deposit different amounts
         // =========================
-        // User1 deposits 1000 USDR (1/3 of total)
+        // User1 deposits 1000 USDSC (1/3 of total)
         vm.prank(user1);
         earnVault.deposit(1000e6);
         
-        // User2 deposits 2000 USDR (2/3 of total)
+        // User2 deposits 2000 USDSC (2/3 of total)
         vm.prank(user2);
         earnVault.deposit(2000e6);
         
@@ -169,10 +169,10 @@ contract EarnVaultBoostTest is Test {
         assertEq(finalBalance - initialBalance, ASTR_REWARD, "User should receive full ASTR reward");
     }
 
-    /// @notice Test that claim() automatically claims both USDR yield and boost rewards
-    /// @dev Verifies the unified claim() function works for both USDR and boost rewards
+    /// @notice Test that claim() automatically claims both USDSC yield and boost rewards
+    /// @dev Verifies the unified claim() function works for both USDSC and boost rewards
     /// @dev Tests the automatic claiming of all reward types in a single transaction
-    /// @dev Ensures users get both USDR yield and boost rewards when claiming
+    /// @dev Ensures users get both USDSC yield and boost rewards when claiming
     function test_ClaimAutomaticallyClaimsAllRewards() public {
         // =========================
         // Setup: User deposits principal
@@ -181,13 +181,13 @@ contract EarnVaultBoostTest is Test {
         earnVault.deposit(DEPOSIT_AMOUNT);
         
         // =========================
-        // Action: Admin distributes both USDR yield and ASTR boost rewards
+        // Action: Admin distributes both USDSC yield and ASTR boost rewards
         // =========================
         vm.startPrank(admin);
         
-        // Distribute USDR yield
-        usdr.approve(address(earnVault), 100e6);
-        usdr.transfer(address(earnVault), 100e6);
+        // Distribute USDSC yield
+        usdsc.approve(address(earnVault), 100e6);
+        usdsc.transfer(address(earnVault), 100e6);
         earnVault.onYield(100e6);
         
         // Distribute ASTR boost rewards
@@ -200,20 +200,20 @@ contract EarnVaultBoostTest is Test {
         // =========================
         // Action: User claims all rewards via unified claim()
         // =========================
-        uint256 initialUSDR = usdr.balanceOf(user1);
+        uint256 initialUSDSC = usdsc.balanceOf(user1);
         uint256 initialASTR = astr.balanceOf(user1);
         
         vm.prank(user1);
         earnVault.claim();
         
         // =========================
-        // Verification: User should receive both USDR yield and ASTR boost rewards
+        // Verification: User should receive both USDSC yield and ASTR boost rewards
         // =========================
-        uint256 finalUSDR = usdr.balanceOf(user1);
+        uint256 finalUSDSC = usdsc.balanceOf(user1);
         uint256 finalASTR = astr.balanceOf(user1);
         
         // User should have received both types of rewards
-        assertGt(finalUSDR, initialUSDR, "User should receive USDR yield");
+        assertGt(finalUSDSC, initialUSDSC, "User should receive USDSC yield");
         assertGt(finalASTR, initialASTR, "User should receive ASTR boost rewards");
     }
 

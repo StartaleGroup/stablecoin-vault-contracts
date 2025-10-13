@@ -8,18 +8,18 @@ import {SafeTransferLib} from 'solady/utils/SafeTransferLib.sol';
 import {ERC4626} from '@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol';
 import {Pausable} from '@openzeppelin/contracts/utils/Pausable.sol';
 import {ReentrancyGuard} from '@openzeppelin/contracts/utils/ReentrancyGuard.sol';
-import {ISUSDRVaultEventsAndErrors} from '../../interfaces/vaults/4626/ISUSDRVaultEventsAndErrors.sol';
+import {ISUSDSCVaultEventsAndErrors} from '../../interfaces/vaults/4626/ISUSDSCVaultEventsAndErrors.sol';
 
 // Note: non-upgradeable version
 // Note: We could have some admin actions
 
-/// @title sUSDRVault — ERC-4626: deposit USDR → mint sUSDR; external asset inflows lift PPS
-contract SUSDRVault is ERC20, ERC4626, AccessControl, Pausable, ReentrancyGuard, ISUSDRVaultEventsAndErrors {
+/// @title sUSDSCVault — ERC-4626: deposit USDSC → mint sUSDSC; external asset inflows lift PPS
+contract SUSDSCVault is ERC20, ERC4626, AccessControl, Pausable, ReentrancyGuard, ISUSDSCVaultEventsAndErrors {
   using SafeTransferLib for IERC20;
 
   bytes32 public constant PAUSER_ROLE = keccak256('PAUSER_ROLE');
 
-  constructor(IERC20 usdr, address admin, address pauser) ERC20('Staked USDR', 'sUSDR') ERC4626(usdr) {
+  constructor(IERC20 usdsc, address admin, address pauser) ERC20('Staked USDSC', 'sUSDSC') ERC4626(usdsc) {
     if (admin == address(0)) revert AdminCannotBeZeroAddress();
     if (pauser == address(0)) revert PauserCannotBeZeroAddress();
     _grantRole(DEFAULT_ADMIN_ROLE, admin);
@@ -67,7 +67,7 @@ contract SUSDRVault is ERC20, ERC4626, AccessControl, Pausable, ReentrancyGuard,
   // Recover non-asset ERC20 tokens
   // This is used to recover tokens that are sent to the vault by mistake  
   function recoverNonAssetERC20(address token, address to, uint256 amount) external onlyRole(DEFAULT_ADMIN_ROLE) {
-    if(token == asset()) revert TokenCannotBeUSDR();
+    if(token == asset()) revert TokenCannotBeUSDSC();
     if (token == address(0)) revert TokenCannotBeZeroAddress();
     if (to == address(0)) revert ToCannotBeZeroAddress();
     if (amount == 0) revert AmountCannotBeZero();
@@ -78,15 +78,15 @@ contract SUSDRVault is ERC20, ERC4626, AccessControl, Pausable, ReentrancyGuard,
   /**
    * @dev Override to provide enhanced protection against inflation attacks.
    * 
-   * With USDR having 6 decimals, setting _decimalsOffset to 6 creates 10^6 = 1,000,000 virtual shares.
+   * With USDSC having 6 decimals, setting _decimalsOffset to 6 creates 10^6 = 1,000,000 virtual shares.
    * This makes inflation attacks prohibitively expensive as an attacker would need to donate
-   * approximately 1 million USDR to manipulate a 1 USDR deposit, making the attack economically infeasible.
+   * approximately 1 million USDSC to manipulate a 1 USDSC deposit, making the attack economically infeasible.
    * 
    * The offset increases the vault decimals to 12 (6 + 6) but doesn't affect user experience
    * as all conversions are handled internally by the ERC4626 implementation.
    * 
    * OR
-   * we could keep this to zero and put Initial seed deposit upon deployment (say 1000 USDR)
+   * we could keep this to zero and put Initial seed deposit upon deployment (say 1000 USDSC)
    */
   function _decimalsOffset() internal pure override returns (uint8) {
     // return 6;

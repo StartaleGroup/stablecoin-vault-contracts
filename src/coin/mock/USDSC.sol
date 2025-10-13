@@ -9,7 +9,7 @@ import {MYieldToOne} from 'm-extensions/projects/yieldToOne/MYieldToOne.sol';
 // can add ForcedTransferManager features later if needed (check mUSD)
 
 // Note: MYieldToOne is IMYieldToOne, MYieldToOneStorageLayout, MExtension, Freezable
-contract USDR is MYieldToOne {
+contract USDSC is MYieldToOne {
   constructor(address mToken, address swapFacility) MYieldToOne(mToken, swapFacility) {
     _disableInitializers();
   }

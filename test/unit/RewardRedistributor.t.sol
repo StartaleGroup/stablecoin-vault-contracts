@@ -3,13 +3,13 @@ pragma solidity ^0.8.26;
 
 import "forge-std/Test.sol";
 import "../../src/distributor/RewardRedistributor.sol";
-import "../mocks/MockUSDR.sol";
+import "../mocks/MockUSDSC.sol";
 import "../mocks/MockExtension.sol";
 import "../mocks/MockEarnVault.sol";
 import "../mocks/MockERC4626Vault.sol";
 
 contract RewardRedistributorTest is Test {
-    MockUSDR usdr;
+    MockUSDSC usdsc;
     MockExtension ext;
     MockEarnVault earnV;
     MockERC4626Vault sVault; // yield vault
@@ -20,10 +20,10 @@ contract RewardRedistributorTest is Test {
     address startale = address(0x57a4700000000000000000000000000000000000);
 
     function setUp() public {
-        usdr = new MockUSDR();
-        ext  = new MockExtension(usdr, address(0)); // set later
-        earnV = new MockEarnVault(usdr);
-        sVault = new MockERC4626Vault(usdr);
+        usdsc = new MockUSDSC();
+        ext  = new MockExtension(usdsc, address(0)); // set later
+        earnV = new MockEarnVault(usdsc);
+        sVault = new MockERC4626Vault(usdsc);
 
         rr = new RewardRedistributor(
             address(ext),  // MockExtension address (implements both IERC20 and IMYieldToOne)
@@ -43,13 +43,13 @@ contract RewardRedistributorTest is Test {
         ext.setYieldRecipient(address(rr));
 
         // Seed supply: mint 10M to some holder to represent circulating base (wallets/Lps)
-        usdr.mint(address(this), 10_000_000e6);
+        usdsc.mint(address(this), 10_000_000e6);
         // move 1M to earn vault (principal + reserve)
-        usdr.transfer(address(earnV), 1_000_000e6);
+        usdsc.transfer(address(earnV), 1_000_000e6);
         earnV.setPrincipal(1_000_000e6);
         earnV.setClaimReserve(1_000_000e6);
         // move 1M to sVault (counts toward totalAssets)
-        usdr.transfer(address(sVault), 1_000_000e6);
+        usdsc.transfer(address(sVault), 1_000_000e6);
     }
 
     function testConservationAndSplit() public {
@@ -71,19 +71,19 @@ contract RewardRedistributorTest is Test {
         assertEq(minted, 100_000e6);
         assertEq(Tearn, 1_000_000e6);
         assertEq(T4626,  1_000_000e6);
-        assertEq(S_base, usdr.totalSupply() /* currently 10M */ - minted);
+        assertEq(S_base, usdsc.totalSupply() /* currently 10M */ - minted);
 
         // Keeper Distributes
         vm.prank(operator);
         rr.distribute();
 
-        // Conservation: minted == fee + earn + yield(sUSDR) + extra
-        uint256 balRR = usdr.balanceOf(address(rr));
+        // Conservation: minted == fee + earn + yield(sUSDSC) + extra
+        uint256 balRR = usdsc.balanceOf(address(rr));
         assertEq(balRR, 0); // nothing left in redistributor
 
-        uint256 gotStartale = usdr.balanceOf(startale);
-        uint256 gotearnV   = usdr.balanceOf(address(earnV)) - 1_000_000e6; // extra over reserve
-        uint256 gotSVault   = usdr.balanceOf(address(sVault)) - 1_000_000e6;
+        uint256 gotStartale = usdsc.balanceOf(startale);
+        uint256 gotearnV   = usdsc.balanceOf(address(earnV)) - 1_000_000e6; // extra over reserve
+        uint256 gotSVault   = usdsc.balanceOf(address(sVault)) - 1_000_000e6;
 
         // The preview and actual may differ due to timing of when S_base is calculated
         // Just check that conservation holds: all minted tokens are distributed
@@ -100,11 +100,11 @@ contract RewardRedistributorTest is Test {
         earnV.setPrincipal(0);
         earnV.setClaimReserve(0);
         // move sVault funds out - burn the tokens from sVault
-        uint256 sVaultBalance = usdr.balanceOf(address(sVault));
-        usdr.burn(address(sVault), sVaultBalance);
+        uint256 sVaultBalance = usdsc.balanceOf(address(sVault));
+        usdsc.burn(address(sVault), sVaultBalance);
         // Also burn earnV balance to make it truly zero TVL
-        uint256 earnVBalance = usdr.balanceOf(address(earnV));
-        usdr.burn(address(earnV), earnVBalance);
+        uint256 earnVBalance = usdsc.balanceOf(address(earnV));
+        usdsc.burn(address(earnV), earnVBalance);
 
         // Pending yield
         ext.addPending(50_000e6);
@@ -113,21 +113,21 @@ contract RewardRedistributorTest is Test {
         rr.distribute();
 
         // All net should end at Startale (plus fee)
-        assertGt(usdr.balanceOf(startale), 0);
-        assertEq(usdr.balanceOf(address(earnV)), 0);
-        assertEq(usdr.balanceOf(address(sVault)), 0);
+        assertGt(usdsc.balanceOf(startale), 0);
+        assertEq(usdsc.balanceOf(address(earnV)), 0);
+        assertEq(usdsc.balanceOf(address(sVault)), 0);
     }
 
     function testCarryFairness() public {
         // Make S huge, small Tearn/T4626 to induce rounding many times
         // Here we just run many tiny epochs and check conservation
         for (uint256 i = 0; i < 10; i++) {
-            ext.addPending(100); // 100 wei of USDR - still tiny but avoids underflow
+            ext.addPending(100); // 100 wei of USDSC - still tiny but avoids underflow
             vm.prank(operator);
             rr.distribute();
         }
         // Nothing should be stuck in redistributor
-        assertEq(usdr.balanceOf(address(rr)), 0);
+        assertEq(usdsc.balanceOf(address(rr)), 0);
         // Sum of all recipients equals sum minted
         // (We could store a running minted sum via events; for brevity we trust the accounting here.)
     }
@@ -197,7 +197,7 @@ contract RewardRedistributorTest is Test {
         rr.distribute();
         
         assertEq(minted, fee + toEarn + toYield + toExtra);
-        assertEq(usdr.balanceOf(address(rr)), 0);
+        assertEq(usdsc.balanceOf(address(rr)), 0);
     }
 
     function testDenominatorAndProportionality() public {
@@ -206,7 +206,7 @@ contract RewardRedistributorTest is Test {
         // Denominator & proportionality pattern from specification
         (uint minted, uint fee, uint toEarn, uint toYield,,,,) = rr.previewDistribute();
         
-        uint S_base = usdr.totalSupply() - minted;
+        uint S_base = usdsc.totalSupply() - minted;
         uint T_earn = earnV.totalPrincipal();
         uint T_yield = sVault.totalAssets();
         
@@ -250,27 +250,27 @@ contract RewardRedistributorTest is Test {
     function testInvariant1_ConservationOfValue() public {
         ext.addPending(50_000e6);
         
-        // uint256 balanceBefore = usdr.balanceOf(address(rr));
+        // uint256 balanceBefore = usdsc.balanceOf(address(rr));
         
         vm.prank(operator);
         rr.distribute();
 
         // A) minted == feeToStartale + toEarn + toYield + toStartaleExtra
         // This is checked by the conservation test above, but let's be explicit
-        uint256 startaleGot = usdr.balanceOf(startale);
-        uint256 earnGot = usdr.balanceOf(address(earnV)) - 1_000_000e6;
-        uint256 susdrGot = usdr.balanceOf(address(sVault)) - 1_000_000e6;
+        uint256 startaleGot = usdsc.balanceOf(startale);
+        uint256 earnGot = usdsc.balanceOf(address(earnV)) - 1_000_000e6;
+        uint256 susdscGot = usdsc.balanceOf(address(sVault)) - 1_000_000e6;
         
-        assertEq(startaleGot + earnGot + susdrGot, 50_000e6, "conservation");
+        assertEq(startaleGot + earnGot + susdscGot, 50_000e6, "conservation");
         
         // B) ASSET.balanceOf(redistributor) == 0
-        assertEq(usdr.balanceOf(address(rr)), 0, "no dust left");
+        assertEq(usdsc.balanceOf(address(rr)), 0, "no dust left");
     }
 
     function testInvariant2_CorrectDenominator() public {
         ext.addPending(25_000e6);
         
-        uint256 totalSupplyBefore = usdr.totalSupply();
+        uint256 totalSupplyBefore = usdsc.totalSupply();
         
         (
             uint256 minted,
@@ -291,9 +291,9 @@ contract RewardRedistributorTest is Test {
         ext.addPending(1_000e6);
         
         // Burn most of the circulating supply, but leave enough for S_base > eligible TVL
-        uint256 testBalance = usdr.balanceOf(address(this));
+        uint256 testBalance = usdsc.balanceOf(address(this));
         uint256 toBurn = testBalance - 100_000e6; // Leave some circulating supply
-        usdr.burn(address(this), toBurn);
+        usdsc.burn(address(this), toBurn);
         
         (
             uint256 minted,
@@ -307,7 +307,7 @@ contract RewardRedistributorTest is Test {
         ) = rr.previewDistribute();
         
         // Verify S_base calculation is correct
-        assertEq(S_base, usdr.totalSupply() - minted, "S_base calculation correct");
+        assertEq(S_base, usdsc.totalSupply() - minted, "S_base calculation correct");
         
         // When S_base is very small relative to eligible TVL, most should go to Startale
         uint256 eligibleTVL = T_earn + T_yield;
@@ -347,8 +347,8 @@ contract RewardRedistributorTest is Test {
 
     function testInvariant4_LongRunFairness() public {
         // Track balances to measure actual distributions
-        uint256 initialEarn = usdr.balanceOf(address(earnV));
-        uint256 initialSUSDR = usdr.balanceOf(address(sVault));
+        uint256 initialEarn = usdsc.balanceOf(address(earnV));
+        uint256 initialSUSDSC = usdsc.balanceOf(address(sVault));
 
         uint256 totalActualToEarn = 0;
         uint256 totalActualToYield = 0;
@@ -374,12 +374,12 @@ contract RewardRedistributorTest is Test {
         }
 
         // Verify actual distributions
-        uint256 actualEarnDistributed = usdr.balanceOf(address(earnV)) - initialEarn;
-        uint256 actualSUSDRDistributed = usdr.balanceOf(address(sVault)) - initialSUSDR;
+        uint256 actualEarnDistributed = usdsc.balanceOf(address(earnV)) - initialEarn;
+        uint256 actualSUSDSCDistributed = usdsc.balanceOf(address(sVault)) - initialSUSDSC;
 
         // Allow small differences due to timing of carry calculations
         assertApproxEqAbs(actualEarnDistributed, totalActualToEarn, 100, "earn tracking approximately matches");
-        assertApproxEqAbs(actualSUSDRDistributed, totalActualToYield, 100, "sUSDR tracking approximately matches");
+        assertApproxEqAbs(actualSUSDSCDistributed, totalActualToYield, 100, "sUSDSC tracking approximately matches");
 
         // Carry fairness: cumulative error should be bounded
         uint256 earnError = totalActualToEarn > totalTheoreticalEarn ?
@@ -388,7 +388,7 @@ contract RewardRedistributorTest is Test {
             totalActualToYield - totalTheoreticalYield : totalTheoreticalYield - totalActualToYield;
 
         // Error should be bounded by S_base and very small relative to total
-        uint256 currentSBase = usdr.totalSupply();
+        uint256 currentSBase = usdsc.totalSupply();
         assertLt(earnError, currentSBase, "earn carry error bounded");
         assertLt(onError, currentSBase, "on carry error bounded");
         
@@ -429,7 +429,7 @@ contract RewardRedistributorTest is Test {
         uint256 finalAssets = sVault.totalAssets();
         
         // Assets should have increased (monotonic NAV)
-        assertGt(finalAssets, initialAssets, "sUSDR assets increased");
+        assertGt(finalAssets, initialAssets, "sUSDSC assets increased");
         
         // In a real ERC4626, we'd check PPS = totalAssets/totalSupply is non-decreasing
         // Our mock doesn't track supply, but assets increasing is the key property
@@ -439,18 +439,18 @@ contract RewardRedistributorTest is Test {
         // Don't add any pending yield
         assertEq(ext.yield(), 0, "no pending yield");
         
-        uint256 startaleBalBefore = usdr.balanceOf(startale);
-        uint256 earnBalBefore = usdr.balanceOf(address(earnV));
-        uint256 susdrBalBefore = usdr.balanceOf(address(sVault));
+        uint256 startaleBalBefore = usdsc.balanceOf(startale);
+        uint256 earnBalBefore = usdsc.balanceOf(address(earnV));
+        uint256 susdscBalBefore = usdsc.balanceOf(address(sVault));
         
         vm.prank(operator);
         rr.distribute(); // Should be no-op
         
         // Balances should be unchanged
-        assertEq(usdr.balanceOf(startale), startaleBalBefore, "startale unchanged");
-        assertEq(usdr.balanceOf(address(earnV)), earnBalBefore, "earn unchanged");
-        assertEq(usdr.balanceOf(address(sVault)), susdrBalBefore, "susdr unchanged");
-        assertEq(usdr.balanceOf(address(rr)), 0, "no dust");
+        assertEq(usdsc.balanceOf(startale), startaleBalBefore, "startale unchanged");
+        assertEq(usdsc.balanceOf(address(earnV)), earnBalBefore, "earn unchanged");
+        assertEq(usdsc.balanceOf(address(sVault)), susdscBalBefore, "susdsc unchanged");
+        assertEq(usdsc.balanceOf(address(rr)), 0, "no dust");
     }
 
     function testInvariant8_AccessControlAndPause() public {
@@ -501,7 +501,7 @@ contract RewardRedistributorTest is Test {
         
         // Reset and test T_on == 0
         earnV.setPrincipal(1_000_000e6);
-        usdr.burn(address(sVault), usdr.balanceOf(address(sVault)));
+        usdsc.burn(address(sVault), usdsc.balanceOf(address(sVault)));
         
         (
             ,

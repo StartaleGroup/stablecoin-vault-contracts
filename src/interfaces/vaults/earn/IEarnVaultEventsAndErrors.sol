@@ -53,9 +53,9 @@ interface IEarnVaultEventsAndErrors {
         bool newStatus
     );
 
-    /// @notice Emitted when a user deposits USDR tokens
+    /// @notice Emitted when a user deposits USDSC tokens
     /// @param user Address that made the deposit
-    /// @param amount Amount of USDR deposited
+    /// @param amount Amount of USDSC deposited
     event Deposit(address indexed user, uint256 amount);
     
     /// @notice Emitted when a user withdraws principal
@@ -79,7 +79,7 @@ interface IEarnVaultEventsAndErrors {
     /// @param amount Amount of tokens recovered
     event TokenRecovered(address indexed token, address indexed to, uint256 amount);
     
-    /// @notice Emitted when surplus USDR is swept to treasury
+    /// @notice Emitted when surplus USDSC is swept to treasury
     /// @param amount Amount of surplus swept to treasury
     event SurplusSweptToTreasury(uint256 amount);
     

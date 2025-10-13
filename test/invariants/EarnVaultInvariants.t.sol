@@ -12,7 +12,7 @@ import {MockERC20} from "../mocks/MockERC20.sol";
 /// @dev These tests verify critical system properties that must always hold
 contract EarnVaultInvariants is Test {
     EarnVault public vault;
-    MockERC20 public usdr;
+    MockERC20 public usdsc;
     
     address public owner = makeAddr("owner");
     address public yieldRedistributor = makeAddr("yieldRedistributor");
@@ -26,57 +26,57 @@ contract EarnVaultInvariants is Test {
     uint256 public constant INITIAL_SUPPLY = 1_000_000e6;
 
     function setUp() public {
-        // Deploy mock USDR token
-        usdr = new MockERC20("USDR Token", "USDR", 6);
+        // Deploy mock USDSC token
+        usdsc = new MockERC20("USDSC Token", "USDSC", 6);
 
         // Deploy EarnVault with proper parameters
         vm.prank(owner);
-        vault = new EarnVault(address(usdr), owner, yieldRedistributor, treasury, pauser);
+        vault = new EarnVault(address(usdsc), owner, yieldRedistributor, treasury, pauser);
 
-        // Mint USDR to test users
-        usdr.mint(alice, INITIAL_SUPPLY);
-        usdr.mint(bob, INITIAL_SUPPLY);
-        usdr.mint(charlie, INITIAL_SUPPLY);
-        usdr.mint(yieldRedistributor, INITIAL_SUPPLY);
+        // Mint USDSC to test users
+        usdsc.mint(alice, INITIAL_SUPPLY);
+        usdsc.mint(bob, INITIAL_SUPPLY);
+        usdsc.mint(charlie, INITIAL_SUPPLY);
+        usdsc.mint(yieldRedistributor, INITIAL_SUPPLY);
 
         // Pre-approve vault for all users
         vm.prank(alice);
-        usdr.approve(address(vault), type(uint256).max);
+        usdsc.approve(address(vault), type(uint256).max);
         vm.prank(bob);
-        usdr.approve(address(vault), type(uint256).max);
+        usdsc.approve(address(vault), type(uint256).max);
         vm.prank(charlie);
-        usdr.approve(address(vault), type(uint256).max);
+        usdsc.approve(address(vault), type(uint256).max);
     }
 
-    /// @notice Test USDR balance invariant
-    /// @dev Verifies USDR.balanceOf(vault) >= claimReserve at all times
-    function test_USDRBalanceInvariant() public {
-        // === Setup: Alice deposits 1000 USDR ===
+    /// @notice Test USDSC balance invariant
+    /// @dev Verifies USDSC.balanceOf(vault) >= claimReserve at all times
+    function test_USDSCBalanceInvariant() public {
+        // === Setup: Alice deposits 1000 USDSC ===
         vm.prank(alice);
         vault.deposit(1000e6);
         
         // === Verify initial invariant ===
-        assertGe(usdr.balanceOf(address(vault)), vault.claimReserve(), "USDR balance should be >= claimReserve");
+        assertGe(usdsc.balanceOf(address(vault)), vault.claimReserve(), "USDSC balance should be >= claimReserve");
         
         // === Distribute yield and verify invariant holds ===
         vm.prank(yieldRedistributor);
-        usdr.transfer(address(vault), 100e6);
+        usdsc.transfer(address(vault), 100e6);
         vm.prank(yieldRedistributor);
         vault.onYield(100e6);
         
-        assertGe(usdr.balanceOf(address(vault)), vault.claimReserve(), "USDR balance should be >= claimReserve after yield");
+        assertGe(usdsc.balanceOf(address(vault)), vault.claimReserve(), "USDSC balance should be >= claimReserve after yield");
         
         // === Alice withdraws and verify invariant still holds ===
         vm.prank(alice);
         vault.withdraw(500e6);
         
-        assertGe(usdr.balanceOf(address(vault)), vault.claimReserve(), "USDR balance should be >= claimReserve after withdrawal");
+        assertGe(usdsc.balanceOf(address(vault)), vault.claimReserve(), "USDSC balance should be >= claimReserve after withdrawal");
     }
     
     /// @notice Test globalIndex never decreases and carryRay constraints
     /// @dev Verifies globalIndex is monotonically increasing and _carryRay < totalPrincipal
     function test_GlobalIndexInvariant() public {
-        // === Setup: Alice deposits 1000 USDR ===
+        // === Setup: Alice deposits 1000 USDSC ===
         vm.prank(alice);
         vault.deposit(1000e6);
         
@@ -87,7 +87,7 @@ contract EarnVaultInvariants is Test {
             uint256 globalIndexBefore = vault.globalIndex();
             
             vm.prank(yieldRedistributor);
-            usdr.transfer(address(vault), 10e6);
+            usdsc.transfer(address(vault), 10e6);
             vm.prank(yieldRedistributor);
             vault.onYield(10e6);
             
@@ -128,7 +128,7 @@ contract EarnVaultInvariants is Test {
         
         // === Test after yield distribution ===
         vm.prank(yieldRedistributor);
-        usdr.transfer(address(vault), 100e6);
+        usdsc.transfer(address(vault), 100e6);
         vm.prank(yieldRedistributor);
         vault.onYield(100e6);
         
@@ -151,7 +151,7 @@ contract EarnVaultInvariants is Test {
         
         // === Distribute yield ===
         vm.prank(yieldRedistributor);
-        usdr.transfer(address(vault), 100e6);
+        usdsc.transfer(address(vault), 100e6);
         vm.prank(yieldRedistributor);
         vault.onYield(100e6);
         
@@ -160,7 +160,7 @@ contract EarnVaultInvariants is Test {
         vault.withdraw(500e6);
         
         // === Verify balance conservation ===
-        uint256 finalVaultBalance = usdr.balanceOf(address(vault));
+        uint256 finalVaultBalance = usdsc.balanceOf(address(vault));
         uint256 finalClaimReserve = vault.claimReserve();
         
         // Simplified formula: vault balance should equal claimReserve (since no surplus)
@@ -180,7 +180,7 @@ contract EarnVaultInvariants is Test {
         
         // === Distribute yield ===
         vm.prank(yieldRedistributor);
-        usdr.transfer(address(vault), 200e6);
+        usdsc.transfer(address(vault), 200e6);
         vm.prank(yieldRedistributor);
         vault.onYield(200e6);
         
@@ -189,7 +189,7 @@ contract EarnVaultInvariants is Test {
         uint256 bobInterest = vault.claimable(bob);
         
         assertEq(aliceInterest, bobInterest, "Equal principal should accrue equal interest");
-        assertEq(aliceInterest, 100e6, "Each should get 100 USDR (half of 200 USDR)");
+        assertEq(aliceInterest, 100e6, "Each should get 100 USDSC (half of 200 USDSC)");
         
         // === Clear existing yield first ===
         vm.prank(alice);
@@ -202,7 +202,7 @@ contract EarnVaultInvariants is Test {
         vault.deposit(2000e6); // Charlie has 2x principal
         
         vm.prank(yieldRedistributor);
-        usdr.transfer(address(vault), 300e6);
+        usdsc.transfer(address(vault), 300e6);
         vm.prank(yieldRedistributor);
         vault.onYield(300e6);
         
@@ -211,9 +211,9 @@ contract EarnVaultInvariants is Test {
         uint256 bobNewInterest = vault.claimable(bob);
         uint256 charlieNewInterest = vault.claimable(charlie);
         
-        assertEq(aliceNewInterest, 75e6, "Alice should get 75 USDR (1/4 of 300 USDR)");
-        assertEq(bobNewInterest, 75e6, "Bob should get 75 USDR (1/4 of 300 USDR)");
-        assertEq(charlieNewInterest, 150e6, "Charlie should get 150 USDR (1/2 of 300 USDR)");
+        assertEq(aliceNewInterest, 75e6, "Alice should get 75 USDSC (1/4 of 300 USDSC)");
+        assertEq(bobNewInterest, 75e6, "Bob should get 75 USDSC (1/4 of 300 USDSC)");
+        assertEq(charlieNewInterest, 150e6, "Charlie should get 150 USDSC (1/2 of 300 USDSC)");
     }
     
     /// @notice Test reset on claim/withdraw invariant
@@ -224,7 +224,7 @@ contract EarnVaultInvariants is Test {
         vault.deposit(1000e6);
         
         vm.prank(yieldRedistributor);
-        usdr.transfer(address(vault), 100e6);
+        usdsc.transfer(address(vault), 100e6);
         vm.prank(yieldRedistributor);
         vault.onYield(100e6);
         
@@ -237,7 +237,7 @@ contract EarnVaultInvariants is Test {
         
         // === Setup for withdraw test ===
         vm.prank(yieldRedistributor);
-        usdr.transfer(address(vault), 50e6);
+        usdsc.transfer(address(vault), 50e6);
         vm.prank(yieldRedistributor);
         vault.onYield(50e6);
         
@@ -250,7 +250,7 @@ contract EarnVaultInvariants is Test {
     }
     
     /// @notice Test boost reward invariants mirror base invariants
-    /// @dev Verifies boost tokens follow same invariants as USDR yield
+    /// @dev Verifies boost tokens follow same invariants as USDSC yield
     function test_BoostInvariant() public {
         // === Setup: Create mock boost token ===
         MockERC20 boostToken = new MockERC20("Boost Token", "BOOST", 18);
@@ -300,11 +300,11 @@ contract EarnVaultInvariants is Test {
         MockERC20 boostToken = new MockERC20("Boost Token", "BOOST", 18);
         boostToken.mint(yieldRedistributor, 1000e18);
         
-        // === Setup: Alice deposits 10 USDR ===
+        // === Setup: Alice deposits 10 USDSC ===
         vm.prank(alice);
         vault.deposit(10e6);
         
-        assertEq(vault.totalPrincipal(), 10e6, "Total principal should be 10 USDR");
+        assertEq(vault.totalPrincipal(), 10e6, "Total principal should be 10 USDSC");
         
         // === Distribute small amount ===
         uint256 tinyAmount = 1e18; // 1 token (18 decimals)
@@ -342,7 +342,7 @@ contract EarnVaultInvariants is Test {
         assertEq(boostClaimReserveAfter2, 2 * tinyAmount, "Boost claim reserve should be sum of tiny amounts");
         
         // === Distribute larger amount to cross threshold ===
-        uint256 largerAmount = 5e6; // 5 USDR worth
+        uint256 largerAmount = 5e6; // 5 USDSC worth
         vm.startPrank(yieldRedistributor);
         boostToken.approve(address(vault), largerAmount);
         boostToken.transfer(address(vault), largerAmount);
@@ -370,11 +370,11 @@ contract EarnVaultInvariants is Test {
         MockERC20 boostToken = new MockERC20("Boost Token", "BOOST", 18);
         boostToken.mint(yieldRedistributor, 1000e18);
         
-        // === Alice deposits 1000 USDR ===
+        // === Alice deposits 1000 USDSC ===
         vm.prank(alice);
         vault.deposit(1000e6);
         
-        assertEq(vault.principal(alice), 1000e6, "Alice should have 1000 USDR principal");
+        assertEq(vault.principal(alice), 1000e6, "Alice should have 1000 USDSC principal");
         
         // === Distribute boost rewards ===
         uint256 boostAmount = 100e18; // 100 BOOST tokens
@@ -388,12 +388,12 @@ contract EarnVaultInvariants is Test {
         uint256 aliceBoostClaimable = vault.getClaimableBoostReward(alice, address(boostToken));
         assertEq(aliceBoostClaimable, boostAmount, "Alice should get all boost rewards");
         
-        // === Alice partially withdraws 100 USDR ===
+        // === Alice partially withdraws 100 USDSC ===
         vm.prank(alice);
         vault.withdraw(100e6);
         
         // === Verify Alice's principal is reduced and boost rewards are claimed ===
-        assertEq(vault.principal(alice), 900e6, "Alice should have 900 USDR principal remaining");
+        assertEq(vault.principal(alice), 900e6, "Alice should have 900 USDSC principal remaining");
         
         // Alice's boost rewards should be claimed automatically during withdrawal
         // So her claimable boost rewards should be 0

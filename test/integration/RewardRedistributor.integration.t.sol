@@ -4,23 +4,23 @@ pragma solidity ^0.8.26;
 import "forge-std/Test.sol";
 import "../../src/distributor/RewardRedistributor.sol";
 import "../../src/vaults/earn/EarnVault.sol";
-import "../../src/vaults/4626/SUSDRVault.sol";
+import "../../src/vaults/4626/SUSDSCVault.sol";
 import "../../src/interfaces/vaults/earn/IEarnVault.sol";
 import "lib/evm-m-extensions/src/projects/yieldToOne/IMYieldToOne.sol";
 import "lib/openzeppelin-contracts/contracts/interfaces/IERC4626.sol";
-import "../mocks/MockUSDR.sol";
+import "../mocks/MockUSDSC.sol";
 import "../mocks/MockExtension.sol";
 import "../mocks/MockERC20.sol";
 
 /// @title RewardRedistributor Integration Tests
-/// @notice Tests RewardRedistributor with real EarnVault and SUSDRVault contracts
-/// @dev Uses MockUSDR and MockExtension for yield simulation while testing real vault interactions
+/// @notice Tests RewardRedistributor with real EarnVault and SUSDSCVault contracts
+/// @dev Uses MockUSDSC and MockExtension for yield simulation while testing real vault interactions
 contract RewardRedistributorIntegrationTest is Test {
     // Contracts
-    MockUSDR usdr;
+    MockUSDSC usdsc;
     MockExtension ext;
     EarnVault earnVault;
-    SUSDRVault susdrVault;
+    SUSDSCVault susdscVault;
     RewardRedistributor rr;
     
     // Test addresses
@@ -36,33 +36,33 @@ contract RewardRedistributorIntegrationTest is Test {
     address charlie = address(0xc4a12);
     
     function setUp() public {
-        // Deploy MockUSDR
-        usdr = new MockUSDR();
+        // Deploy MockUSDSC
+        usdsc = new MockUSDSC();
         
         // Deploy real vaults (use admin as temporary yieldRedistributor)
         earnVault = new EarnVault(
-            address(usdr),
+            address(usdsc),
             admin,          // owner
             admin,          // yieldRedistributor (temporary, will be updated)
             treasury,       // treasury
             pauser          // pauser
         );
         
-        susdrVault = new SUSDRVault(
-            IERC20(address(usdr)),
+        susdscVault = new SUSDSCVault(
+            IERC20(address(usdsc)),
             admin,          // admin
             pauser          // pauser
         );
         
         // Deploy MockExtension (will be set as yieldRecipient later)
-        ext = new MockExtension(usdr, address(0));
+        ext = new MockExtension(usdsc, address(0));
         
         // Deploy RewardRedistributor
         rr = new RewardRedistributor(
             address(ext),  // MockExtension address (implements both IERC20 and IMYieldToOne)
             startale,
             IEarnVault(address(earnVault)),
-            IERC4626(address(susdrVault)),
+            IERC4626(address(susdscVault)),
             admin
         );
         
@@ -79,10 +79,10 @@ contract RewardRedistributorIntegrationTest is Test {
         ext.setYieldRecipient(address(rr));
         
         // Mint initial supply and distribute to test users
-        usdr.mint(address(this), 100_000_000e6); // 100M USDR
-        usdr.transfer(alice, 10_000_000e6);
-        usdr.transfer(bob, 5_000_000e6);
-        usdr.transfer(charlie, 2_000_000e6);
+        usdsc.mint(address(this), 100_000_000e6); // 100M USDSC
+        usdsc.transfer(alice, 10_000_000e6);
+        usdsc.transfer(bob, 5_000_000e6);
+        usdsc.transfer(charlie, 2_000_000e6);
         
         // Set up initial vault states with user deposits
         _setupInitialVaultStates();
@@ -91,22 +91,22 @@ contract RewardRedistributorIntegrationTest is Test {
     function _setupInitialVaultStates() internal {
         // Alice deposits in EarnVault
         vm.startPrank(alice);
-        usdr.approve(address(earnVault), 1_000_000e6);
+        usdsc.approve(address(earnVault), 1_000_000e6);
         earnVault.deposit(1_000_000e6);
         vm.stopPrank();
         
-        // Bob deposits in SUSDRVault
+        // Bob deposits in SUSDSCVault
         vm.startPrank(bob);
-        usdr.approve(address(susdrVault), 1_000_000e6);
-        susdrVault.deposit(1_000_000e6, bob);
+        usdsc.approve(address(susdscVault), 1_000_000e6);
+        susdscVault.deposit(1_000_000e6, bob);
         vm.stopPrank();
         
         // Charlie deposits in both vaults
         vm.startPrank(charlie);
-        usdr.approve(address(earnVault), 500_000e6);
-        usdr.approve(address(susdrVault), 500_000e6);
+        usdsc.approve(address(earnVault), 500_000e6);
+        usdsc.approve(address(susdscVault), 500_000e6);
         earnVault.deposit(500_000e6);
-        susdrVault.deposit(500_000e6, charlie);
+        susdscVault.deposit(500_000e6, charlie);
         vm.stopPrank();
     }
     
@@ -115,40 +115,40 @@ contract RewardRedistributorIntegrationTest is Test {
     function testIntegration_ConservationWithRealVaults() public {
         ext.addPending(100_000e6);
         
-        uint256 initialTotalSupply = usdr.totalSupply();
-        uint256 initialStartaleBalance = usdr.balanceOf(startale);
-        uint256 initialEarnBalance = usdr.balanceOf(address(earnVault));
-        uint256 initialSUSDRBalance = usdr.balanceOf(address(susdrVault));
+        uint256 initialTotalSupply = usdsc.totalSupply();
+        uint256 initialStartaleBalance = usdsc.balanceOf(startale);
+        uint256 initialEarnBalance = usdsc.balanceOf(address(earnVault));
+        uint256 initialSUSDSCBalance = usdsc.balanceOf(address(susdscVault));
         
         vm.prank(operator);
         rr.distribute();
         
-        uint256 finalTotalSupply = usdr.totalSupply();
-        uint256 finalStartaleBalance = usdr.balanceOf(startale);
-        uint256 finalEarnBalance = usdr.balanceOf(address(earnVault));
-        uint256 finalSUSDRBalance = usdr.balanceOf(address(susdrVault));
+        uint256 finalTotalSupply = usdsc.totalSupply();
+        uint256 finalStartaleBalance = usdsc.balanceOf(startale);
+        uint256 finalEarnBalance = usdsc.balanceOf(address(earnVault));
+        uint256 finalSUSDSCBalance = usdsc.balanceOf(address(susdscVault));
         
         // Verify conservation
         uint256 minted = finalTotalSupply - initialTotalSupply;
         uint256 distributed = (finalStartaleBalance - initialStartaleBalance) + 
                               (finalEarnBalance - initialEarnBalance) + 
-                              (finalSUSDRBalance - initialSUSDRBalance);
+                              (finalSUSDSCBalance - initialSUSDSCBalance);
         
         assertEq(minted, distributed, "conservation: minted == distributed");
-        assertEq(usdr.balanceOf(address(rr)), 0, "no dust left in redistributor");
+        assertEq(usdsc.balanceOf(address(rr)), 0, "no dust left in redistributor");
     }
     
     function testIntegration_EarnVaultFundingInvariant() public {
         ext.addPending(50_000e6);
         
         uint256 claimReserveBefore = earnVault.claimReserve();
-        uint256 earnBalanceBefore = usdr.balanceOf(address(earnVault));
+        uint256 earnBalanceBefore = usdsc.balanceOf(address(earnVault));
         
         vm.prank(operator);
         rr.distribute();
         
         uint256 claimReserveAfter = earnVault.claimReserve();
-        uint256 earnBalanceAfter = usdr.balanceOf(address(earnVault));
+        uint256 earnBalanceAfter = usdsc.balanceOf(address(earnVault));
         
         // Verify funding invariant: balance >= claimReserve
         assertGe(earnBalanceAfter, claimReserveAfter, "funding invariant: balance >= claimReserve");
@@ -162,10 +162,10 @@ contract RewardRedistributorIntegrationTest is Test {
         assertGe(balanceIncrease, claimReserveIncrease, "balance increased at least as much as claimReserve");
     }
     
-    function testIntegration_SUSDRVaultPPSMonotonic() public {
+    function testIntegration_SUSDSCVaultPPSMonotonic() public {
         // Record initial PPS
-        uint256 initialAssets = susdrVault.totalAssets();
-        uint256 initialSupply = susdrVault.totalSupply();
+        uint256 initialAssets = susdscVault.totalAssets();
+        uint256 initialSupply = susdscVault.totalSupply();
         uint256 initialPPS = initialSupply > 0 ? (initialAssets * 1e18) / initialSupply : 1e18;
         
         ext.addPending(75_000e6);
@@ -174,15 +174,15 @@ contract RewardRedistributorIntegrationTest is Test {
         rr.distribute();
         
         // Record final PPS
-        uint256 finalAssets = susdrVault.totalAssets();
-        uint256 finalSupply = susdrVault.totalSupply();
+        uint256 finalAssets = susdscVault.totalAssets();
+        uint256 finalSupply = susdscVault.totalSupply();
         uint256 finalPPS = finalSupply > 0 ? (finalAssets * 1e18) / finalSupply : 1e18;
         
         // Verify PPS is non-decreasing
         assertGe(finalPPS, initialPPS, "PPS is non-decreasing");
         
         // Verify assets increased (yield was added)
-        assertGt(finalAssets, initialAssets, "sUSDR assets increased");
+        assertGt(finalAssets, initialAssets, "sUSDSC assets increased");
     }
     
     // Note: Terminology currently means toYield = toOn = toERC4626
@@ -192,8 +192,8 @@ contract RewardRedistributorIntegrationTest is Test {
         
         // Get real TVLs
         uint256 T_earn = earnVault.totalPrincipal();
-        uint256 T_yield = susdrVault.totalAssets();
-        uint256 S_base = usdr.totalSupply(); // Will be adjusted after minting
+        uint256 T_yield = susdscVault.totalAssets();
+        uint256 S_base = usdsc.totalSupply(); // Will be adjusted after minting
         
         (uint256 minted, uint256 feeToStartale, uint256 toEarn, uint256 toYield, , , , ) = rr.previewDistribute();
         
@@ -220,7 +220,7 @@ contract RewardRedistributorIntegrationTest is Test {
     function testIntegration_DepositsWithdrawalsAroundDistribution() public {
         // Initial state
         // uint256 aliceEarnPrincipalBefore = earnVault.principal(alice);
-        uint256 bobSUSDRSharesBefore = susdrVault.balanceOf(bob);
+        uint256 bobSUSDSCSharesBefore = susdscVault.balanceOf(bob);
         
         // Add yield and distribute
         ext.addPending(60_000e6);
@@ -234,24 +234,24 @@ contract RewardRedistributorIntegrationTest is Test {
         earnVault.claim();
         vm.stopPrank();
         
-        // Bob can redeem some sUSDR shares
+        // Bob can redeem some sUSDSC shares
         vm.startPrank(bob);
-        uint256 bobRedeemAmount = bobSUSDRSharesBefore / 4; // Redeem 25%
-        uint256 assetsReceived = susdrVault.redeem(bobRedeemAmount, bob, bob);
+        uint256 bobRedeemAmount = bobSUSDSCSharesBefore / 4; // Redeem 25%
+        uint256 assetsReceived = susdscVault.redeem(bobRedeemAmount, bob, bob);
         assertGt(assetsReceived, bobRedeemAmount, "Bob received more assets than shares (PPS > 1)");
         vm.stopPrank();
         
         // New user can deposit after distribution
         address dave = address(0xdaDE);
-        usdr.mint(dave, 1_000_000e6);
+        usdsc.mint(dave, 1_000_000e6);
         
         vm.startPrank(dave);
-        usdr.approve(address(earnVault), 200_000e6);
-        usdr.approve(address(susdrVault), 200_000e6);
+        usdsc.approve(address(earnVault), 200_000e6);
+        usdsc.approve(address(susdscVault), 200_000e6);
         
         earnVault.deposit(200_000e6);
-        uint256 daveShares = susdrVault.deposit(200_000e6, dave);
-        assertGt(daveShares, 0, "Dave received sUSDR shares");
+        uint256 daveShares = susdscVault.deposit(200_000e6, dave);
+        assertGt(daveShares, 0, "Dave received sUSDSC shares");
         vm.stopPrank();
         
         // Do another distribution with new user
@@ -276,9 +276,9 @@ contract RewardRedistributorIntegrationTest is Test {
         
         for (uint256 i = 0; i < yields.length; i++) {
             // Record state before distribution
-            uint256 earnAssetsBefore = usdr.balanceOf(address(earnVault));
-            uint256 susdrAssetsBefore = susdrVault.totalAssets();
-            uint256 startaleBalanceBefore = usdr.balanceOf(startale);
+            uint256 earnAssetsBefore = usdsc.balanceOf(address(earnVault));
+            uint256 susdscAssetsBefore = susdscVault.totalAssets();
+            uint256 startaleBalanceBefore = usdsc.balanceOf(startale);
             
             // Add yield and distribute
             ext.addPending(yields[i]);
@@ -286,12 +286,12 @@ contract RewardRedistributorIntegrationTest is Test {
             rr.distribute();
             
             // Verify distribution occurred
-            uint256 earnAssetsAfter = usdr.balanceOf(address(earnVault));
-            uint256 susdrAssetsAfter = susdrVault.totalAssets();
-            uint256 startaleBalanceAfter = usdr.balanceOf(startale);
+            uint256 earnAssetsAfter = usdsc.balanceOf(address(earnVault));
+            uint256 susdscAssetsAfter = susdscVault.totalAssets();
+            uint256 startaleBalanceAfter = usdsc.balanceOf(startale);
             
             assertGt(earnAssetsAfter, earnAssetsBefore, "EarnVault assets increased");
-            assertGt(susdrAssetsAfter, susdrAssetsBefore, "sUSDR assets increased");
+            assertGt(susdscAssetsAfter, susdscAssetsBefore, "sUSDSC assets increased");
             assertGt(startaleBalanceAfter, startaleBalanceBefore, "Startale balance increased");
             
             totalDistributed += yields[i];
@@ -300,22 +300,22 @@ contract RewardRedistributorIntegrationTest is Test {
             if (i % 2 == 0) {
                 // Some users deposit more
                 vm.startPrank(alice);
-                usdr.approve(address(earnVault), 100_000e6);
+                usdsc.approve(address(earnVault), 100_000e6);
                 earnVault.deposit(100_000e6);
                 vm.stopPrank();
             } else {
                 // Some users withdraw
                 vm.startPrank(bob);
-                uint256 bobShares = susdrVault.balanceOf(bob);
+                uint256 bobShares = susdscVault.balanceOf(bob);
                 if (bobShares > 100e18) {
-                    susdrVault.redeem(100e18, bob, bob);
+                    susdscVault.redeem(100e18, bob, bob);
                 }
                 vm.stopPrank();
             }
         }
         
         // Verify total conservation over all distributions
-        assertEq(usdr.balanceOf(address(rr)), 0, "no dust accumulated");
+        assertEq(usdsc.balanceOf(address(rr)), 0, "no dust accumulated");
     }
     
     // ========== USER WITHDRAWAL AND CLAIM TESTS ==========
@@ -335,9 +335,9 @@ contract RewardRedistributorIntegrationTest is Test {
         uint256 aliceClaimable = earnVault.claimable(alice);
         assertGt(aliceClaimable, 0, "Alice has claimable yield");
         
-        uint256 aliceBalanceBefore = usdr.balanceOf(alice);
+        uint256 aliceBalanceBefore = usdsc.balanceOf(alice);
         earnVault.claim();
-        uint256 aliceBalanceAfter = usdr.balanceOf(alice);
+        uint256 aliceBalanceAfter = usdsc.balanceOf(alice);
         
         assertEq(aliceBalanceAfter - aliceBalanceBefore, aliceClaimable, "Alice received exact claimable amount");
         assertEq(earnVault.principal(alice), aliceInitialPrincipal, "Alice principal unchanged after claim");
@@ -347,12 +347,12 @@ contract RewardRedistributorIntegrationTest is Test {
         // Test 2: Charlie does partial principal withdrawal
         vm.startPrank(charlie);
         uint256 charlieClaimableBefore = earnVault.claimable(charlie);
-        uint256 charlieBalanceBefore = usdr.balanceOf(charlie);
+        uint256 charlieBalanceBefore = usdsc.balanceOf(charlie);
         uint256 partialWithdrawAmount = charlieInitialPrincipal / 3; // Withdraw 1/3 of principal
         
         earnVault.withdraw(partialWithdrawAmount);
         
-        uint256 charlieBalanceAfter = usdr.balanceOf(charlie);
+        uint256 charlieBalanceAfter = usdsc.balanceOf(charlie);
         uint256 charlieNewPrincipal = earnVault.principal(charlie);
         uint256 charlieClaimableAfter = earnVault.claimable(charlie);
         
@@ -371,11 +371,11 @@ contract RewardRedistributorIntegrationTest is Test {
         vm.startPrank(charlie);
         uint256 charlieRemainingPrincipal = earnVault.principal(charlie);
         uint256 charlieNewClaimable = earnVault.claimable(charlie);
-        uint256 charlieBalanceBeforeFullWithdraw = usdr.balanceOf(charlie);
+        uint256 charlieBalanceBeforeFullWithdraw = usdsc.balanceOf(charlie);
         
         earnVault.withdraw(charlieRemainingPrincipal); // Only withdraw principal, yield auto-claimed
         
-        uint256 charlieBalanceAfterFullWithdraw = usdr.balanceOf(charlie);
+        uint256 charlieBalanceAfterFullWithdraw = usdsc.balanceOf(charlie);
         
         assertEq(earnVault.principal(charlie), 0, "Charlie has no remaining principal");
         assertEq(earnVault.claimable(charlie), 0, "Charlie has no remaining claimable yield");
@@ -384,12 +384,12 @@ contract RewardRedistributorIntegrationTest is Test {
         vm.stopPrank();
     }
     
-    function testIntegration_SUSDRVaultRedemptionsAfterDistribution() public {
+    function testIntegration_SUSDSCVaultRedemptionsAfterDistribution() public {
         // Get initial state
-        uint256 bobInitialShares = susdrVault.balanceOf(bob);
-        // uint256 charlieInitialShares = susdrVault.balanceOf(charlie);
-        uint256 initialPPS = susdrVault.totalSupply() > 0 ? 
-            (susdrVault.totalAssets() * 1e18) / susdrVault.totalSupply() : 1e18;
+        uint256 bobInitialShares = susdscVault.balanceOf(bob);
+        // uint256 charlieInitialShares = susdscVault.balanceOf(charlie);
+        uint256 initialPPS = susdscVault.totalSupply() > 0 ? 
+            (susdscVault.totalAssets() * 1e18) / susdscVault.totalSupply() : 1e18;
         
         // Add yield and distribute
         ext.addPending(100_000e6);
@@ -397,19 +397,19 @@ contract RewardRedistributorIntegrationTest is Test {
         rr.distribute();
         
         // Verify PPS increased
-        uint256 newPPS = susdrVault.totalSupply() > 0 ? 
-            (susdrVault.totalAssets() * 1e18) / susdrVault.totalSupply() : 1e18;
+        uint256 newPPS = susdscVault.totalSupply() > 0 ? 
+            (susdscVault.totalAssets() * 1e18) / susdscVault.totalSupply() : 1e18;
         assertGt(newPPS, initialPPS, "PPS increased after yield distribution");
         
         // Test 1: Bob redeems 25% of his shares
         vm.startPrank(bob);
         uint256 bobRedeemShares = bobInitialShares / 4;
-        uint256 bobBalanceBefore = usdr.balanceOf(bob);
+        uint256 bobBalanceBefore = usdsc.balanceOf(bob);
         
-        uint256 assetsReceived = susdrVault.redeem(bobRedeemShares, bob, bob);
+        uint256 assetsReceived = susdscVault.redeem(bobRedeemShares, bob, bob);
         
-        uint256 bobBalanceAfter = usdr.balanceOf(bob);
-        uint256 bobRemainingShares = susdrVault.balanceOf(bob);
+        uint256 bobBalanceAfter = usdsc.balanceOf(bob);
+        uint256 bobRemainingShares = susdscVault.balanceOf(bob);
         
         assertEq(bobBalanceAfter - bobBalanceBefore, assetsReceived, "Bob received expected assets");
         assertEq(bobRemainingShares, bobInitialShares - bobRedeemShares, "Bob shares reduced correctly");
@@ -418,14 +418,14 @@ contract RewardRedistributorIntegrationTest is Test {
         
         // Test 2: Charlie withdraws specific asset amount
         vm.startPrank(charlie);
-        uint256 charlieTargetAssets = 200_000e6; // Withdraw 200k USDR worth
-        uint256 charlieBalanceBefore = usdr.balanceOf(charlie);
-        uint256 charlieSharesBefore = susdrVault.balanceOf(charlie);
+        uint256 charlieTargetAssets = 200_000e6; // Withdraw 200k USDSC worth
+        uint256 charlieBalanceBefore = usdsc.balanceOf(charlie);
+        uint256 charlieSharesBefore = susdscVault.balanceOf(charlie);
         
-        uint256 sharesBurned = susdrVault.withdraw(charlieTargetAssets, charlie, charlie);
+        uint256 sharesBurned = susdscVault.withdraw(charlieTargetAssets, charlie, charlie);
         
-        uint256 charlieBalanceAfter = usdr.balanceOf(charlie);
-        uint256 charlieSharesAfter = susdrVault.balanceOf(charlie);
+        uint256 charlieBalanceAfter = usdsc.balanceOf(charlie);
+        uint256 charlieSharesAfter = susdscVault.balanceOf(charlie);
         
         assertEq(charlieBalanceAfter - charlieBalanceBefore, charlieTargetAssets, "Charlie received exact target assets");
         assertEq(charlieSharesAfter, charlieSharesBefore - sharesBurned, "Charlie shares reduced by burned amount");
@@ -434,14 +434,14 @@ contract RewardRedistributorIntegrationTest is Test {
         
         // Test 3: Full redemption
         vm.startPrank(bob);
-        uint256 bobFinalShares = susdrVault.balanceOf(bob);
-        uint256 bobFinalBalanceBefore = usdr.balanceOf(bob);
+        uint256 bobFinalShares = susdscVault.balanceOf(bob);
+        uint256 bobFinalBalanceBefore = usdsc.balanceOf(bob);
         
-        uint256 finalAssetsReceived = susdrVault.redeem(bobFinalShares, bob, bob);
+        uint256 finalAssetsReceived = susdscVault.redeem(bobFinalShares, bob, bob);
         
-        uint256 bobFinalBalanceAfter = usdr.balanceOf(bob);
+        uint256 bobFinalBalanceAfter = usdsc.balanceOf(bob);
         
-        assertEq(susdrVault.balanceOf(bob), 0, "Bob has no remaining shares");
+        assertEq(susdscVault.balanceOf(bob), 0, "Bob has no remaining shares");
         assertEq(bobFinalBalanceAfter - bobFinalBalanceBefore, finalAssetsReceived, "Bob received all remaining assets");
         assertGt(finalAssetsReceived, 0, "Bob received positive assets from final redemption");
         vm.stopPrank();
@@ -452,7 +452,7 @@ contract RewardRedistributorIntegrationTest is Test {
         
         // Initial state
         uint256 aliceInitialEarnPrincipal = earnVault.principal(alice);
-        uint256 bobInitialSUSDRShares = susdrVault.balanceOf(bob);
+        uint256 bobInitialSUSDSCShares = susdscVault.balanceOf(bob);
         
         // First distribution
         ext.addPending(60_000e6);
@@ -467,8 +467,8 @@ contract RewardRedistributorIntegrationTest is Test {
         
         // Bob redeems half his shares
         vm.startPrank(bob);
-        uint256 bobFirstRedemption = bobInitialSUSDRShares / 2;
-        susdrVault.redeem(bobFirstRedemption, bob, bob);
+        uint256 bobFirstRedemption = bobInitialSUSDSCShares / 2;
+        susdscVault.redeem(bobFirstRedemption, bob, bob);
         vm.stopPrank();
         
         // Second distribution (smaller TVL now due to Bob's redemption)
@@ -480,11 +480,11 @@ contract RewardRedistributorIntegrationTest is Test {
         vm.startPrank(alice);
         uint256 aliceSecondClaimable = earnVault.claimable(alice);
         uint256 alicePartialWithdraw = aliceInitialEarnPrincipal / 4;
-        uint256 aliceBalanceBefore = usdr.balanceOf(alice);
+        uint256 aliceBalanceBefore = usdsc.balanceOf(alice);
         
         earnVault.withdraw(alicePartialWithdraw);
         
-        uint256 aliceBalanceAfter = usdr.balanceOf(alice);
+        uint256 aliceBalanceAfter = usdsc.balanceOf(alice);
         
         // Alice should receive partial principal + all accrued yield (partial withdrawal now auto-claims)
         assertEq(aliceBalanceAfter - aliceBalanceBefore, alicePartialWithdraw + aliceSecondClaimable, 
@@ -496,14 +496,14 @@ contract RewardRedistributorIntegrationTest is Test {
         
         // Bob redeems remaining shares
         vm.startPrank(bob);
-        uint256 bobRemainingShares = susdrVault.balanceOf(bob);
-        // uint256 bobFinalBalance = usdr.balanceOf(bob);
+        uint256 bobRemainingShares = susdscVault.balanceOf(bob);
+        // uint256 bobFinalBalance = usdsc.balanceOf(bob);
         
-        uint256 bobFinalAssets = susdrVault.redeem(bobRemainingShares, bob, bob);
+        uint256 bobFinalAssets = susdscVault.redeem(bobRemainingShares, bob, bob);
         
         // Verify Bob got yield benefit from second distribution
         assertGt(bobFinalAssets, bobRemainingShares, "Bob's final redemption benefited from yield");
-        assertEq(susdrVault.balanceOf(bob), 0, "Bob fully exited sUSDR vault");
+        assertEq(susdscVault.balanceOf(bob), 0, "Bob fully exited sUSDSC vault");
         vm.stopPrank();
         
         // Third distribution with reduced TVL
@@ -515,9 +515,9 @@ contract RewardRedistributorIntegrationTest is Test {
         uint256 aliceFinalClaimable = earnVault.claimable(alice);
         assertGt(aliceFinalClaimable, 0, "Alice still earning yield on remaining principal");
         
-        // Charlie (who didn't withdraw from sUSDR) should have higher PPS
-        uint256 charlieShares = susdrVault.balanceOf(charlie);
-        uint256 charlieAssetValue = susdrVault.convertToAssets(charlieShares);
+        // Charlie (who didn't withdraw from sUSDSC) should have higher PPS
+        uint256 charlieShares = susdscVault.balanceOf(charlie);
+        uint256 charlieAssetValue = susdscVault.convertToAssets(charlieShares);
         assertGt(charlieAssetValue, charlieShares, "Charlie's shares worth more than face value");
     }
     
@@ -530,8 +530,8 @@ contract RewardRedistributorIntegrationTest is Test {
         
         // Record pre-withdrawal state
         uint256 totalEarnPrincipalBefore = earnVault.totalPrincipal();
-        uint256 totalSUSDRAssetsBefore = susdrVault.totalAssets();
-        uint256 totalSUSDRSupplyBefore = susdrVault.totalSupply();
+        uint256 totalSUSDSCAssetsBefore = susdscVault.totalAssets();
+        uint256 totalSUSDSCSupplyBefore = susdscVault.totalSupply();
         
         // Multiple users withdraw simultaneously
         vm.startPrank(alice);
@@ -540,27 +540,27 @@ contract RewardRedistributorIntegrationTest is Test {
         vm.stopPrank();
         
         vm.startPrank(bob);
-        uint256 bobRedeemShares = susdrVault.balanceOf(bob) / 3;
-        susdrVault.redeem(bobRedeemShares, bob, bob);
+        uint256 bobRedeemShares = susdscVault.balanceOf(bob) / 3;
+        susdscVault.redeem(bobRedeemShares, bob, bob);
         vm.stopPrank();
         
         vm.startPrank(charlie);
         uint256 charlieWithdrawAssets = 100_000e6;
-        susdrVault.withdraw(charlieWithdrawAssets, charlie, charlie);
+        susdscVault.withdraw(charlieWithdrawAssets, charlie, charlie);
         vm.stopPrank();
         
         // Verify invariants still hold
         uint256 totalEarnPrincipalAfter = earnVault.totalPrincipal();
-        uint256 totalSUSDRAssetsAfter = susdrVault.totalAssets();
-        uint256 totalSUSDRSupplyAfter = susdrVault.totalSupply();
+        uint256 totalSUSDSCAssetsAfter = susdscVault.totalAssets();
+        uint256 totalSUSDSCSupplyAfter = susdscVault.totalSupply();
         
         assertEq(totalEarnPrincipalAfter, totalEarnPrincipalBefore - aliceWithdrawAmount, 
                 "EarnVault total principal reduced correctly");
         
-        // sUSDR vault should maintain proper asset/supply relationship
-        if (totalSUSDRSupplyAfter > 0) {
-            uint256 newPPS = (totalSUSDRAssetsAfter * 1e18) / totalSUSDRSupplyAfter;
-            uint256 oldPPS = (totalSUSDRAssetsBefore * 1e18) / totalSUSDRSupplyBefore;
+        // sUSDSC vault should maintain proper asset/supply relationship
+        if (totalSUSDSCSupplyAfter > 0) {
+            uint256 newPPS = (totalSUSDSCAssetsAfter * 1e18) / totalSUSDSCSupplyAfter;
+            uint256 oldPPS = (totalSUSDSCAssetsBefore * 1e18) / totalSUSDSCSupplyBefore;
             assertGe(newPPS, oldPPS, "PPS maintained or increased after withdrawals");
         }
         
@@ -573,10 +573,10 @@ contract RewardRedistributorIntegrationTest is Test {
         if (earnVault.principal(alice) > 0) {
             assertGt(earnVault.claimable(alice), 0, "Alice still earning on remaining principal");
         }
-        if (susdrVault.balanceOf(charlie) > 0) {
-            uint256 charlieCurrentValue = susdrVault.convertToAssets(susdrVault.balanceOf(charlie));
+        if (susdscVault.balanceOf(charlie) > 0) {
+            uint256 charlieCurrentValue = susdscVault.convertToAssets(susdscVault.balanceOf(charlie));
             // Charlie's remaining shares should have gained value
-            assertGt(charlieCurrentValue, susdrVault.balanceOf(charlie), "Charlie's remaining shares gained value");
+            assertGt(charlieCurrentValue, susdscVault.balanceOf(charlie), "Charlie's remaining shares gained value");
         }
     }
 
@@ -585,15 +585,15 @@ contract RewardRedistributorIntegrationTest is Test {
     function testIntegration_EmptyVaultScenarios() public {
         // Create new clean vaults with no deposits
         EarnVault emptyEarnVault = new EarnVault(
-            address(usdr),
+            address(usdsc),
             admin,
             address(rr),
             treasury,
             pauser
         );
         
-        SUSDRVault emptySUSDRVault = new SUSDRVault(
-            IERC20(address(usdr)),
+        SUSDSCVault emptySUSDSCVault = new SUSDSCVault(
+            IERC20(address(usdsc)),
             admin,
             pauser
         );
@@ -603,7 +603,7 @@ contract RewardRedistributorIntegrationTest is Test {
             address(ext),  // MockExtension address (implements both IERC20 and IMYieldToOne)
             startale,
             IEarnVault(address(emptyEarnVault)),
-            IERC4626(address(emptySUSDRVault)),
+            IERC4626(address(emptySUSDSCVault)),
             admin
         );
         
@@ -619,17 +619,17 @@ contract RewardRedistributorIntegrationTest is Test {
         // Distribute yield to empty vaults
         ext.addPending(50_000e6);
         
-        uint256 startaleBalanceBefore = usdr.balanceOf(startale);
+        uint256 startaleBalanceBefore = usdsc.balanceOf(startale);
         
         vm.prank(operator);
         rrEmpty.distribute();
         
-        uint256 startaleBalanceAfter = usdr.balanceOf(startale);
+        uint256 startaleBalanceAfter = usdsc.balanceOf(startale);
         
         // With empty vaults (TVL = 0), all yield should go to Startale
         assertEq(startaleBalanceAfter - startaleBalanceBefore, 50_000e6, "all yield goes to Startale when vaults empty");
-        assertEq(usdr.balanceOf(address(emptyEarnVault)), 0, "empty EarnVault stays empty");
-        assertEq(emptySUSDRVault.totalAssets(), 0, "empty sUSDR vault stays empty");
+        assertEq(usdsc.balanceOf(address(emptyEarnVault)), 0, "empty EarnVault stays empty");
+        assertEq(emptySUSDSCVault.totalAssets(), 0, "empty sUSDSC vault stays empty");
         
         // Restore original recipient
         ext.setYieldRecipient(originalRecipient);
@@ -637,37 +637,37 @@ contract RewardRedistributorIntegrationTest is Test {
     
     function testIntegration_LargeScaleDistribution() public {
         // Add large amounts to vaults first
-        usdr.mint(alice, 50_000_000e6);
-        usdr.mint(bob, 30_000_000e6);
+        usdsc.mint(alice, 50_000_000e6);
+        usdsc.mint(bob, 30_000_000e6);
         
         vm.startPrank(alice);
-        usdr.approve(address(earnVault), 50_000_000e6);
+        usdsc.approve(address(earnVault), 50_000_000e6);
         earnVault.deposit(50_000_000e6);
         vm.stopPrank();
         
         vm.startPrank(bob);
-        usdr.approve(address(susdrVault), 30_000_000e6);
-        susdrVault.deposit(30_000_000e6, bob);
+        usdsc.approve(address(susdscVault), 30_000_000e6);
+        susdscVault.deposit(30_000_000e6, bob);
         vm.stopPrank();
         
         // Large yield distribution
         ext.addPending(10_000_000e6); // 10M yield
         
-        uint256 totalSupplyBefore = usdr.totalSupply();
+        uint256 totalSupplyBefore = usdsc.totalSupply();
         
         vm.prank(operator);
         rr.distribute();
         
-        uint256 totalSupplyAfter = usdr.totalSupply();
+        uint256 totalSupplyAfter = usdsc.totalSupply();
         
         // Verify large distribution worked correctly
-        assertEq(totalSupplyAfter - totalSupplyBefore, 10_000_000e6, "10M USDR minted");
-        assertEq(usdr.balanceOf(address(rr)), 0, "no dust from large distribution");
+        assertEq(totalSupplyAfter - totalSupplyBefore, 10_000_000e6, "10M USDSC minted");
+        assertEq(usdsc.balanceOf(address(rr)), 0, "no dust from large distribution");
         
         // Verify proportional allocation still holds
-        assertGt(usdr.balanceOf(address(earnVault)), 1_000_000e6, "EarnVault received significant yield");
-        assertGt(susdrVault.totalAssets(), 30_000_000e6, "sUSDR vault received yield");
-        assertGt(usdr.balanceOf(startale), 1_000_000e6, "Startale received significant amount");
+        assertGt(usdsc.balanceOf(address(earnVault)), 1_000_000e6, "EarnVault received significant yield");
+        assertGt(susdscVault.totalAssets(), 30_000_000e6, "sUSDSC vault received yield");
+        assertGt(usdsc.balanceOf(startale), 1_000_000e6, "Startale received significant amount");
     }
 
     // ========== YIELD DISTRIBUTION PRECISION TESTS ==========
@@ -676,7 +676,7 @@ contract RewardRedistributorIntegrationTest is Test {
         // Test RAY precision in yield distribution with small amounts
         
         // Small yield distribution
-        ext.addPending(1e6); // 1 USDR
+        ext.addPending(1e6); // 1 USDSC
         
         uint256 aliceClaimableBefore = earnVault.claimable(alice);
         uint256 charlieClaimableBefore = earnVault.claimable(charlie);
@@ -718,7 +718,7 @@ contract RewardRedistributorIntegrationTest is Test {
         
         // Verify no yield is lost due to rounding
         uint256 finalClaimReserve = earnVault.claimReserve();
-        uint256 finalBalance = usdr.balanceOf(address(earnVault));
+        uint256 finalBalance = usdsc.balanceOf(address(earnVault));
         assertGe(finalBalance, finalClaimReserve, "Funding invariant maintained after small distributions");
     }
     
@@ -726,19 +726,19 @@ contract RewardRedistributorIntegrationTest is Test {
         // Test that carry mechanism prevents systematic bias over many distributions
         
         uint256 iterations = 50;
-        uint256 yieldPerIteration = 7e6; // 7 USDR - odd number to test rounding
+        uint256 yieldPerIteration = 7e6; // 7 USDSC - odd number to test rounding
         
         uint256 totalYieldToEarnVault = 0;
         uint256 totalYieldClaimed = 0;
         
         for (uint256 i = 0; i < iterations; i++) {
-            uint256 earnBalanceBefore = usdr.balanceOf(address(earnVault));
+            uint256 earnBalanceBefore = usdsc.balanceOf(address(earnVault));
             
             ext.addPending(yieldPerIteration);
             vm.prank(operator);
             rr.distribute();
             
-            uint256 earnBalanceAfter = usdr.balanceOf(address(earnVault));
+            uint256 earnBalanceAfter = usdsc.balanceOf(address(earnVault));
             totalYieldToEarnVault += (earnBalanceAfter - earnBalanceBefore);
         }
         
@@ -782,7 +782,7 @@ contract RewardRedistributorIntegrationTest is Test {
         astr.mint(address(rr), 1000e18);
         dot.mint(address(rr), 500e10);
         
-        // First, distribute some USDR yield to establish baseline
+        // First, distribute some USDSC yield to establish baseline
         ext.addPending(10_000e6);
         vm.prank(operator);
         rr.distribute();
@@ -826,7 +826,7 @@ contract RewardRedistributorIntegrationTest is Test {
         uint256 aliceASTRBalanceBefore = astr.balanceOf(alice);
         uint256 aliceDOTBalanceBefore = dot.balanceOf(alice);
         
-        earnVault.claim(); // Claims both USDR yield and all boost rewards
+        earnVault.claim(); // Claims both USDSC yield and all boost rewards
         
         uint256 aliceASTRBalanceAfter = astr.balanceOf(alice);
         uint256 aliceDOTBalanceAfter = dot.balanceOf(alice);
@@ -847,7 +847,7 @@ contract RewardRedistributorIntegrationTest is Test {
         MockERC20 astr = new MockERC20("Astar", "ASTR", 18);
         astr.mint(address(earnVault), 200e18);
         
-        // Distribute USDR yield first
+        // Distribute USDSC yield first
         ext.addPending(5_000e6);
         vm.prank(operator);
         rr.distribute();
@@ -859,7 +859,7 @@ contract RewardRedistributorIntegrationTest is Test {
         // Alice does partial withdrawal - should auto-claim all rewards
         vm.startPrank(alice);
         uint256 aliceASTRBalanceBefore = astr.balanceOf(alice);
-        uint256 aliceUSRDBalanceBefore = usdr.balanceOf(alice);
+        uint256 aliceUSRDBalanceBefore = usdsc.balanceOf(alice);
         uint256 aliceClaimableUSRD = earnVault.claimable(alice);
         uint256 aliceClaimableASTR = earnVault.getClaimableBoostReward(alice, address(astr));
         
@@ -867,16 +867,16 @@ contract RewardRedistributorIntegrationTest is Test {
         earnVault.withdraw(withdrawAmount);
         
         uint256 aliceASTRBalanceAfter = astr.balanceOf(alice);
-        uint256 aliceUSRDBalanceAfter = usdr.balanceOf(alice);
+        uint256 aliceUSRDBalanceAfter = usdsc.balanceOf(alice);
         
-        // Verify Alice received principal + USDR yield + boost rewards
+        // Verify Alice received principal + USDSC yield + boost rewards
         assertEq(aliceUSRDBalanceAfter - aliceUSRDBalanceBefore, withdrawAmount + aliceClaimableUSRD, 
-                "Alice received principal + USDR yield");
+                "Alice received principal + USDSC yield");
         assertEq(aliceASTRBalanceAfter - aliceASTRBalanceBefore, aliceClaimableASTR, 
                 "Alice received boost rewards on withdrawal");
         
         // Verify no remaining claimable rewards
-        assertEq(earnVault.claimable(alice), 0, "No remaining USDR claimable");
+        assertEq(earnVault.claimable(alice), 0, "No remaining USDSC claimable");
         assertEq(earnVault.getClaimableBoostReward(alice, address(astr)), 0, "No remaining ASTR claimable");
         
         vm.stopPrank();
@@ -894,7 +894,7 @@ contract RewardRedistributorIntegrationTest is Test {
             rr.distribute();
             
             // Check invariant after each distribution
-            uint256 earnBalance = usdr.balanceOf(address(earnVault));
+            uint256 earnBalance = usdsc.balanceOf(address(earnVault));
             uint256 claimReserve = earnVault.claimReserve();
             assertGe(earnBalance, claimReserve, "Funding invariant maintained");
         }
@@ -902,7 +902,7 @@ contract RewardRedistributorIntegrationTest is Test {
         // Random user activities between distributions
         address[] memory users = new address[](3);
         users[0] = alice;
-        users[1] = bob; // Note: bob is in sUSDR vault
+        users[1] = bob; // Note: bob is in sUSDSC vault
         users[2] = charlie;
         
         for (uint256 i = 0; i < 10; i++) {
@@ -930,7 +930,7 @@ contract RewardRedistributorIntegrationTest is Test {
                 } else {
                     // Deposit more
                     uint256 depositAmount = 100_000e6;
-                    usdr.approve(address(earnVault), depositAmount);
+                    usdsc.approve(address(earnVault), depositAmount);
                     earnVault.deposit(depositAmount);
                 }
                 
@@ -938,7 +938,7 @@ contract RewardRedistributorIntegrationTest is Test {
             }
             
             // Verify invariant still holds
-            uint256 earnBalance = usdr.balanceOf(address(earnVault));
+            uint256 earnBalance = usdsc.balanceOf(address(earnVault));
             uint256 claimReserve = earnVault.claimReserve();
             assertGe(earnBalance, claimReserve, "Funding invariant maintained under stress");
         }
@@ -951,17 +951,17 @@ contract RewardRedistributorIntegrationTest is Test {
         address userA = makeAddr("userA");
         address userB = makeAddr("userB");
         
-        usdr.mint(userA, 10_000_000e6);
-        usdr.mint(userB, 10_000_000e6);
+        usdsc.mint(userA, 10_000_000e6);
+        usdsc.mint(userB, 10_000_000e6);
         
         // UserA deposits 3x more than UserB
         vm.startPrank(userA);
-        usdr.approve(address(earnVault), 3_000_000e6);
+        usdsc.approve(address(earnVault), 3_000_000e6);
         earnVault.deposit(3_000_000e6);
         vm.stopPrank();
         
         vm.startPrank(userB);
-        usdr.approve(address(earnVault), 1_000_000e6);
+        usdsc.approve(address(earnVault), 1_000_000e6);
         earnVault.deposit(1_000_000e6);
         vm.stopPrank();
         
@@ -1032,25 +1032,25 @@ contract RewardRedistributorIntegrationTest is Test {
         assertEq(earnVault.totalPrincipal(), 0, "EarnVault is empty");
         
         // Distribute yield to empty EarnVault - EarnVault's portion should go to treasury
-        uint256 startaleBalanceBefore = usdr.balanceOf(startale);
+        uint256 startaleBalanceBefore = usdsc.balanceOf(startale);
         
         ext.addPending(5_000e6);
         vm.prank(operator);
         rr.distribute();
         
-        uint256 startaleBalanceAfter = usdr.balanceOf(startale);
+        uint256 startaleBalanceAfter = usdsc.balanceOf(startale);
         
         // Since EarnVault is empty, its allocated yield should go to treasury via onYield
-        // Startale should also receive some yield (sUSDR vault portion + remainder)
+        // Startale should also receive some yield (sUSDSC vault portion + remainder)
         assertGt(startaleBalanceAfter, startaleBalanceBefore, "Startale received yield distribution");
         
         // The EarnVault should have received some yield that was immediately transferred to treasury
         // This is harder to verify directly, so let's check that the vault balance didn't increase
-        assertEq(usdr.balanceOf(address(earnVault)), 0, "Empty EarnVault balance remains zero");
+        assertEq(usdsc.balanceOf(address(earnVault)), 0, "Empty EarnVault balance remains zero");
         
         // Refill vault
         vm.startPrank(alice);
-        usdr.approve(address(earnVault), 2_000_000e6);
+        usdsc.approve(address(earnVault), 2_000_000e6);
         earnVault.deposit(2_000_000e6);
         vm.stopPrank();
         
@@ -1077,53 +1077,53 @@ contract RewardRedistributorIntegrationTest is Test {
         
         // Set fee to 10% (1000 bps)
         vm.prank(admin);
-        rr.setParams(startale, IEarnVault(address(earnVault)), IERC4626(address(susdrVault)), 1000);
+        rr.setParams(startale, IEarnVault(address(earnVault)), IERC4626(address(susdscVault)), 1000);
         
-        uint256 startaleBalanceBefore = usdr.balanceOf(startale);
-        uint256 earnBalanceBefore = usdr.balanceOf(address(earnVault));
-        uint256 susdrAssetsBefore = susdrVault.totalAssets();
+        uint256 startaleBalanceBefore = usdsc.balanceOf(startale);
+        uint256 earnBalanceBefore = usdsc.balanceOf(address(earnVault));
+        uint256 susdscAssetsBefore = susdscVault.totalAssets();
         
         // Distribute yield with fees
         ext.addPending(10_000e6);
         vm.prank(operator);
         rr.distribute();
         
-        uint256 startaleBalanceAfter = usdr.balanceOf(startale);
-        uint256 earnBalanceAfter = usdr.balanceOf(address(earnVault));
-        uint256 susdrAssetsAfter = susdrVault.totalAssets();
+        uint256 startaleBalanceAfter = usdsc.balanceOf(startale);
+        uint256 earnBalanceAfter = usdsc.balanceOf(address(earnVault));
+        uint256 susdscAssetsAfter = susdscVault.totalAssets();
         
-        // Verify fee was taken (10% of 10,000 = 1,000 USDR to Startale as fee)
+        // Verify fee was taken (10% of 10,000 = 1,000 USDSC to Startale as fee)
         uint256 startaleIncrease = startaleBalanceAfter - startaleBalanceBefore;
         assertGt(startaleIncrease, 1_000e6, "Startale received fee + remainder");
         
         // Verify remaining yield was distributed to vaults
         assertGt(earnBalanceAfter, earnBalanceBefore, "EarnVault received yield after fee");
-        assertGt(susdrAssetsAfter, susdrAssetsBefore, "sUSDR vault received yield after fee");
+        assertGt(susdscAssetsAfter, susdscAssetsBefore, "sUSDSC vault received yield after fee");
         
         // Reset fee to 0 for other tests
         vm.prank(admin);
-        rr.setParams(startale, IEarnVault(address(earnVault)), IERC4626(address(susdrVault)), 0);
+        rr.setParams(startale, IEarnVault(address(earnVault)), IERC4626(address(susdscVault)), 0);
     }
     
     function testIntegration_RewardRedistributorZeroYield() public {
         // Test distribution when extension has no yield
         
-        uint256 startaleBalanceBefore = usdr.balanceOf(startale);
-        uint256 earnBalanceBefore = usdr.balanceOf(address(earnVault));
-        uint256 susdrAssetsBefore = susdrVault.totalAssets();
+        uint256 startaleBalanceBefore = usdsc.balanceOf(startale);
+        uint256 earnBalanceBefore = usdsc.balanceOf(address(earnVault));
+        uint256 susdscAssetsBefore = susdscVault.totalAssets();
         
         // Try to distribute with no pending yield
         vm.prank(operator);
         rr.distribute(); // Should return early with no effect
         
-        uint256 startaleBalanceAfter = usdr.balanceOf(startale);
-        uint256 earnBalanceAfter = usdr.balanceOf(address(earnVault));
-        uint256 susdrAssetsAfter = susdrVault.totalAssets();
+        uint256 startaleBalanceAfter = usdsc.balanceOf(startale);
+        uint256 earnBalanceAfter = usdsc.balanceOf(address(earnVault));
+        uint256 susdscAssetsAfter = susdscVault.totalAssets();
         
         // Verify no changes occurred
         assertEq(startaleBalanceAfter, startaleBalanceBefore, "Startale balance unchanged");
         assertEq(earnBalanceAfter, earnBalanceBefore, "EarnVault balance unchanged");
-        assertEq(susdrAssetsAfter, susdrAssetsBefore, "sUSDR assets unchanged");
+        assertEq(susdscAssetsAfter, susdscAssetsBefore, "sUSDSC assets unchanged");
     }
     
     function testIntegration_RewardRedistributorZeroSupply() public {
@@ -1135,7 +1135,7 @@ contract RewardRedistributorIntegrationTest is Test {
         // Verify preview works correctly
         assertGe(S_base, 0, "Base supply is non-negative");
         assertGe(T_earn, 0, "EarnVault TVL is non-negative");
-        assertGe(T_yield, 0, "sUSDR TVL is non-negative");
+        assertGe(T_yield, 0, "sUSDSC TVL is non-negative");
         
         if (minted > 0) {
             assertEq(minted, feeToStartale + toEarn + toOn + toStartaleExtra, "All minted yield allocated");
@@ -1182,7 +1182,7 @@ contract RewardRedistributorIntegrationTest is Test {
         // Test that unauthorized user cannot set params
         vm.startPrank(unauthorizedUser);
         vm.expectRevert();
-        rr.setParams(startale, IEarnVault(address(earnVault)), IERC4626(address(susdrVault)), 0);
+        rr.setParams(startale, IEarnVault(address(earnVault)), IERC4626(address(susdscVault)), 0);
         vm.stopPrank();
         
         // Test that unauthorized user cannot pause
@@ -1231,27 +1231,27 @@ contract RewardRedistributorIntegrationTest is Test {
         
         // Test zero address validation
         vm.expectRevert(bytes("zero"));
-        rr.setParams(address(0), IEarnVault(address(earnVault)), IERC4626(address(susdrVault)), 0);
+        rr.setParams(address(0), IEarnVault(address(earnVault)), IERC4626(address(susdscVault)), 0);
         
         vm.expectRevert(bytes("zero"));
-        rr.setParams(startale, IEarnVault(address(0)), IERC4626(address(susdrVault)), 0);
+        rr.setParams(startale, IEarnVault(address(0)), IERC4626(address(susdscVault)), 0);
         
         vm.expectRevert(bytes("zero"));
         rr.setParams(startale, IEarnVault(address(earnVault)), IERC4626(address(0)), 0);
         
         // Test fee too high validation
         vm.expectRevert(bytes("fee too high"));
-        rr.setParams(startale, IEarnVault(address(earnVault)), IERC4626(address(susdrVault)), 2001); // > MAX_FEE_BPS
+        rr.setParams(startale, IEarnVault(address(earnVault)), IERC4626(address(susdscVault)), 2001); // > MAX_FEE_BPS
         
         // Test valid parameter update
         address newTreasury = makeAddr("newTreasury");
-        rr.setParams(newTreasury, IEarnVault(address(earnVault)), IERC4626(address(susdrVault)), 500);
+        rr.setParams(newTreasury, IEarnVault(address(earnVault)), IERC4626(address(susdscVault)), 500);
         
         assertEq(rr.treasury(), newTreasury, "Treasury updated");
         assertEq(rr.fee_on_yield_bps(), 500, "Fee updated");
         
         // Reset for other tests
-        rr.setParams(startale, IEarnVault(address(earnVault)), IERC4626(address(susdrVault)), 0);
+        rr.setParams(startale, IEarnVault(address(earnVault)), IERC4626(address(susdscVault)), 0);
         
         vm.stopPrank();
     }
@@ -1268,7 +1268,7 @@ contract RewardRedistributorIntegrationTest is Test {
         // Test parameter update works (ParamsUpdated event emitted)
         address newTreasury = makeAddr("newTreasury2");
         vm.prank(admin);
-        rr.setParams(newTreasury, IEarnVault(address(earnVault)), IERC4626(address(susdrVault)), 100);
+        rr.setParams(newTreasury, IEarnVault(address(earnVault)), IERC4626(address(susdscVault)), 100);
         
         // Verify parameters were updated
         assertEq(rr.treasury(), newTreasury, "Treasury updated");
@@ -1276,30 +1276,30 @@ contract RewardRedistributorIntegrationTest is Test {
         
         // Reset
         vm.prank(admin);
-        rr.setParams(startale, IEarnVault(address(earnVault)), IERC4626(address(susdrVault)), 0);
+        rr.setParams(startale, IEarnVault(address(earnVault)), IERC4626(address(susdscVault)), 0);
     }
     
     function testIntegration_RewardRedistributorMaxFeeScenario() public {
         // Test with maximum allowed fee
         
         vm.prank(admin);
-        rr.setParams(startale, IEarnVault(address(earnVault)), IERC4626(address(susdrVault)), 2000); // 20% fee
+        rr.setParams(startale, IEarnVault(address(earnVault)), IERC4626(address(susdscVault)), 2000); // 20% fee
         
-        uint256 startaleBalanceBefore = usdr.balanceOf(startale);
+        uint256 startaleBalanceBefore = usdsc.balanceOf(startale);
         
         ext.addPending(10_000e6);
         vm.prank(operator);
         rr.distribute();
         
-        uint256 startaleBalanceAfter = usdr.balanceOf(startale);
+        uint256 startaleBalanceAfter = usdsc.balanceOf(startale);
         uint256 startaleIncrease = startaleBalanceAfter - startaleBalanceBefore;
         
-        // With 20% fee, Startale should get at least 2,000 USDR as fee
+        // With 20% fee, Startale should get at least 2,000 USDSC as fee
         assertGe(startaleIncrease, 2_000e6, "Startale received maximum fee");
         
         // Reset fee
         vm.prank(admin);
-        rr.setParams(startale, IEarnVault(address(earnVault)), IERC4626(address(susdrVault)), 0);
+        rr.setParams(startale, IEarnVault(address(earnVault)), IERC4626(address(susdscVault)), 0);
     }
 
     // ========== EARN VAULT EDGE CASES FOR BRANCH COVERAGE ==========
@@ -1308,11 +1308,11 @@ contract RewardRedistributorIntegrationTest is Test {
         // Test blacklist functionality - uncovered branch
         
         address blacklistedUser = makeAddr("blacklisted");
-        usdr.mint(blacklistedUser, 1_000_000e6);
+        usdsc.mint(blacklistedUser, 1_000_000e6);
         
         // User can deposit before being blacklisted
         vm.startPrank(blacklistedUser);
-        usdr.approve(address(earnVault), 500_000e6);
+        usdsc.approve(address(earnVault), 500_000e6);
         earnVault.deposit(500_000e6);
         vm.stopPrank();
         
@@ -1324,7 +1324,7 @@ contract RewardRedistributorIntegrationTest is Test {
         
         // Blacklisted user cannot deposit
         vm.startPrank(blacklistedUser);
-        usdr.approve(address(earnVault), 100_000e6);
+        usdsc.approve(address(earnVault), 100_000e6);
         vm.expectRevert(abi.encodeWithSignature("AddressBlacklisted()"));
         earnVault.deposit(100_000e6);
         vm.stopPrank();
@@ -1360,7 +1360,7 @@ contract RewardRedistributorIntegrationTest is Test {
         MockERC20 testToken = new MockERC20("Test", "TEST", 18);
         testToken.mint(address(earnVault), 1000e18);
         
-        // Test recovery of non-USDR token when not paused
+        // Test recovery of non-USDSC token when not paused
         vm.prank(admin);
         earnVault.recoverERC20(address(testToken), treasury, 500e18);
         
@@ -1372,32 +1372,32 @@ contract RewardRedistributorIntegrationTest is Test {
         earnVault.recoverERC20(address(testToken), address(0), 100e18);
         vm.stopPrank();
         
-        // Test USDR recovery when not paused (should revert)
+        // Test USDSC recovery when not paused (should revert)
         vm.startPrank(admin);
         vm.expectRevert(abi.encodeWithSignature("ContractNotPaused()"));
-        earnVault.recoverERC20(address(usdr), treasury, 1000e6);
+        earnVault.recoverERC20(address(usdsc), treasury, 1000e6);
         vm.stopPrank();
         
-        // Pause the contract and test USDR recovery
+        // Pause the contract and test USDSC recovery
         vm.prank(admin);
         earnVault.pause();
         
-        // Add some surplus USDR
-        usdr.mint(address(earnVault), 10_000e6);
+        // Add some surplus USDSC
+        usdsc.mint(address(earnVault), 10_000e6);
         
         uint256 claimReserve = earnVault.claimReserve();
-        uint256 vaultBalance = usdr.balanceOf(address(earnVault));
+        uint256 vaultBalance = usdsc.balanceOf(address(earnVault));
         uint256 surplus = vaultBalance - claimReserve;
         
         if (surplus > 0) {
             vm.prank(admin);
-            earnVault.recoverERC20(address(usdr), treasury, surplus);
+            earnVault.recoverERC20(address(usdsc), treasury, surplus);
         }
         
         // Test exceeding surplus (should revert)
         vm.startPrank(admin);
         vm.expectRevert(abi.encodeWithSignature("InsufficientFunding()"));
-        earnVault.recoverERC20(address(usdr), treasury, vaultBalance); // Try to recover more than surplus
+        earnVault.recoverERC20(address(usdsc), treasury, vaultBalance); // Try to recover more than surplus
         vm.stopPrank();
         
         // Unpause for other tests
@@ -1433,21 +1433,21 @@ contract RewardRedistributorIntegrationTest is Test {
     function testIntegration_EarnVaultSurplusSweep() public {
         // Test surplus sweep functionality
         
-        uint256 treasuryBalanceBefore = usdr.balanceOf(treasury);
+        uint256 treasuryBalanceBefore = usdsc.balanceOf(treasury);
         
         // Add surplus to vault
-        usdr.mint(address(earnVault), 5_000e6);
+        usdsc.mint(address(earnVault), 5_000e6);
         
         uint256 claimReserveBefore = earnVault.claimReserve();
-        uint256 vaultBalanceBefore = usdr.balanceOf(address(earnVault));
+        uint256 vaultBalanceBefore = usdsc.balanceOf(address(earnVault));
         uint256 expectedSurplus = vaultBalanceBefore - claimReserveBefore;
         
         // Sweep surplus
         vm.prank(admin);
         earnVault.sweepSurplusToTreasury();
         
-        uint256 treasuryBalanceAfter = usdr.balanceOf(treasury);
-        uint256 vaultBalanceAfter = usdr.balanceOf(address(earnVault));
+        uint256 treasuryBalanceAfter = usdsc.balanceOf(treasury);
+        uint256 vaultBalanceAfter = usdsc.balanceOf(address(earnVault));
         
         assertEq(treasuryBalanceAfter - treasuryBalanceBefore, expectedSurplus, "Treasury received surplus");
         assertEq(vaultBalanceAfter, earnVault.claimReserve(), "Vault balance equals claim reserve after sweep");
@@ -1456,7 +1456,7 @@ contract RewardRedistributorIntegrationTest is Test {
         vm.prank(admin);
         earnVault.sweepSurplusToTreasury(); // Should not revert, just return
         
-        assertEq(usdr.balanceOf(treasury), treasuryBalanceAfter, "No additional sweep when no surplus");
+        assertEq(usdsc.balanceOf(treasury), treasuryBalanceAfter, "No additional sweep when no surplus");
     }
     
     function testIntegration_EarnVaultZeroAmountEdgeCases() public {
@@ -1510,7 +1510,7 @@ contract RewardRedistributorIntegrationTest is Test {
         
         // Paused contract rejects deposits
         vm.startPrank(alice);
-        usdr.approve(address(earnVault), 100_000e6);
+        usdsc.approve(address(earnVault), 100_000e6);
         vm.expectRevert();
         earnVault.deposit(100_000e6);
         vm.stopPrank();
@@ -1534,7 +1534,7 @@ contract RewardRedistributorIntegrationTest is Test {
         
         // Operations work after unpause
         vm.startPrank(alice);
-        usdr.approve(address(earnVault), 100_000e6);
+        usdsc.approve(address(earnVault), 100_000e6);
         earnVault.deposit(100_000e6); // Should work now
         vm.stopPrank();
     }
@@ -1569,7 +1569,7 @@ contract RewardRedistributorIntegrationTest is Test {
         earnVault.setYieldRedistributor(newYieldRedistributor);
         
         // New yield redistributor can distribute yield
-        usdr.mint(address(earnVault), 1_000e6);
+        usdsc.mint(address(earnVault), 1_000e6);
         vm.prank(newYieldRedistributor);
         earnVault.onYield(1_000e6); // Should work
     }
@@ -1613,8 +1613,8 @@ contract RewardRedistributorIntegrationTest is Test {
         assertEq(claimable, 0, "No claimable boost for non-distributed token");
         
         // Test getAllClaimables before any boost rewards
-        (uint256 usdrClaimable, address[] memory tokens, uint256[] memory amounts) = earnVault.getAllClaimables(alice);
-        assertGe(usdrClaimable, 0, "Alice has USDR claimable (may be zero)");
+        (uint256 usdscClaimable, address[] memory tokens, uint256[] memory amounts) = earnVault.getAllClaimables(alice);
+        assertGe(usdscClaimable, 0, "Alice has USDSC claimable (may be zero)");
         assertEq(tokens.length, 0, "No boost tokens initially");
         assertEq(amounts.length, 0, "No boost amounts initially");
         
@@ -1624,8 +1624,8 @@ contract RewardRedistributorIntegrationTest is Test {
         earnVault.onBoostReward(address(boostToken), 1000e18);
         
         // Test getAllClaimables after boost rewards
-        (usdrClaimable, tokens, amounts) = earnVault.getAllClaimables(alice);
-        assertGe(usdrClaimable, 0, "Alice has USDR claimable (may be zero)");
+        (usdscClaimable, tokens, amounts) = earnVault.getAllClaimables(alice);
+        assertGe(usdscClaimable, 0, "Alice has USDSC claimable (may be zero)");
         assertEq(tokens.length, 1, "One boost token now");
         assertEq(tokens[0], address(boostToken), "Correct boost token");
         assertGt(amounts[0], 0, "Alice has boost rewards");

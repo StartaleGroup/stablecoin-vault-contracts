@@ -68,7 +68,7 @@ Test Coverage Tree for Stablecoin Contracts
 │   ├── test_GetUserInfoNoDeposits() - User info with no deposits
 │   ├── test_GetVaultStats() - Vault statistics
 │   ├── test_GetClaimableBoostRewardNoRewards() - Boost reward view with no rewards
-│   ├── test_GetAllClaimables() - Get all claimable rewards (USDR + boost)
+│   ├── test_GetAllClaimables() - Get all claimable rewards (USDSC + boost)
 │   └── test_GetAllClaimablesNoBoostRewards() - Get all claimables with no boost rewards
 │
 ├── 📁 Index System Security (4 tests)
@@ -95,18 +95,18 @@ Test Coverage Tree for Stablecoin Contracts
 └── test_NoDepositsBoostRewardToTreasury() - Boost rewards to treasury when no deposits
 
 📁 EARNVAULT INVARIANT TESTS (10 tests)
-├── test_USDRBalanceInvariant() - USDR balance >= claimReserve
+├── test_USDSCBalanceInvariant() - USDSC balance >= claimReserve
 ├── test_GlobalIndexInvariant() - Global index never decreases, carryRay constraints
 ├── test_PrincipalSumInvariant() - Sum of user principals equals totalPrincipal
 ├── test_BalanceConservationInvariant() - Vault balance equals claimReserve
 ├── test_FairnessInvariant() - Equal principal accrues equal interest
 ├── test_ResetOnClaimWithdrawInvariant() - Reset on claim/withdraw
-├── test_BoostInvariant() - Boost tokens follow same invariants as USDR yield
+├── test_BoostInvariant() - Boost tokens follow same invariants as USDSC yield
 ├── test_BoostCarryCorrectness() - Boost carry mechanism with tiny amounts
 ├── test_PartialWithdrawAfterBoost() - Partial withdrawal after boost rewards
 └── test_MultiTokenBoostRewards() - Multiple boost tokens functionality
 
-📁 SUSDRVAULT TESTS (53 tests)
+📁 SUSDSCVAULT TESTS (53 tests)
 ├── 📁 Constructor & Setup (2 tests)
 │   ├── test_constructor() - Constructor functionality
 │   └── test_access_control_roles() - Access control role setup
@@ -235,7 +235,7 @@ Test Coverage Tree for Stablecoin Contracts
 │   ├── test_SetGreetingWhenCalledByANon_owner()
 │   ├── test_SetGreetingWhenPassingAValidGreetingString()
 │   └── test_SetGreetingWhenPassingAnEmptyGreetingString()
-└── test/unit/USDR.mock.t.sol (4 tests)
+└── test/unit/USDSC.mock.t.sol (4 tests)
     ├── test_claimYield()
     ├── test_freezing()
     ├── test_initialize()
@@ -247,7 +247,7 @@ Total Tests: 203
 ├── EarnVault Tests: 67
 ├── EarnVault Boost Tests: 6
 ├── EarnVault Invariant Tests: 10
-├── SUSDRVault Tests: 53
+├── SUSDSCVault Tests: 53
 ├── ERC4626 Compliance Tests: 27
 ├── Invariant Tests: 16
 └── Other Tests: 7

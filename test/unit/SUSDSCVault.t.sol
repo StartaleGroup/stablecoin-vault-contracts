@@ -3,19 +3,19 @@ pragma solidity ^0.8.26;
 
 import {Test} from 'forge-std/Test.sol';
 import {console2} from 'forge-std/console2.sol';
-import {SUSDRVault} from '../../src/vaults/4626/SUSDRVault.sol';
-import {USDR} from '../../src/coin/mock/USDR.sol';
+import {SUSDSCVault} from '../../src/vaults/4626/SUSDSCVault.sol';
+import {USDSC} from '../../src/coin/mock/USDSC.sol';
 import {MockSwapFacility} from 'm-extensions-test/utils/Mocks.sol';
 import {MockM} from 'm-extensions-test/utils/Mocks.sol';
 import {ProxyAdmin} from '@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol';
 import {TransparentUpgradeableProxy} from '@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol';
 import {IERC20} from '@openzeppelin/contracts/token/ERC20/IERC20.sol';
 import {MockERC20} from '../mocks/MockERC20.sol';
-import {ISUSDRVaultEventsAndErrors} from '../../src/interfaces/vaults/4626/ISUSDRVaultEventsAndErrors.sol';
+import {ISUSDSCVaultEventsAndErrors} from '../../src/interfaces/vaults/4626/ISUSDSCVaultEventsAndErrors.sol';
 
-contract UnitSUSDRVault is Test {
-    SUSDRVault internal vault;
-    USDR internal usdr;
+contract UnitSUSDSCVault is Test {
+    SUSDSCVault internal vault;
+    USDSC internal usdsc;
     MockM internal mToken;
     MockSwapFacility internal swapFacility;
     ProxyAdmin internal proxyAdmin;
@@ -29,7 +29,7 @@ contract UnitSUSDRVault is Test {
     address internal depositorB = makeAddr('depositorB');
     address internal depositorC = makeAddr('depositorC');
     
-    uint256 internal constant INITIAL_USDR_AMOUNT = 10000 ether;
+    uint256 internal constant INITIAL_USDSC_AMOUNT = 10000 ether;
     uint256 internal constant DEPOSIT_AMOUNT = 1000 ether;
 
     event Deposit(address indexed sender, address indexed owner, uint256 assets, uint256 shares);
@@ -45,67 +45,67 @@ contract UnitSUSDRVault is Test {
         swapFacility = new MockSwapFacility();
         proxyAdmin = new ProxyAdmin(admin);
 
-        USDR implementation = new USDR(address(mToken), address(swapFacility));
+        USDSC implementation = new USDSC(address(mToken), address(swapFacility));
         TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(
             address(implementation),
             address(proxyAdmin),
-            abi.encodeWithSelector(USDR.initialize.selector, 'USDR', 'USDR', admin, yieldRecipient)
+            abi.encodeWithSelector(USDSC.initialize.selector, 'USDSC', 'USDSC', admin, yieldRecipient)
         );
-        usdr = USDR(address(proxy));
+        usdsc = USDSC(address(proxy));
 
-        vault = new SUSDRVault(IERC20(address(usdr)), admin, pauser);
+        vault = new SUSDSCVault(IERC20(address(usdsc)), admin, pauser);
     }
 
     function _setupUsers() internal {
-        deal(address(mToken), depositorA, INITIAL_USDR_AMOUNT);
-        deal(address(mToken), depositorB, INITIAL_USDR_AMOUNT);
-        deal(address(mToken), depositorC, INITIAL_USDR_AMOUNT);
-        deal(address(mToken), yieldDistributor, INITIAL_USDR_AMOUNT);
+        deal(address(mToken), depositorA, INITIAL_USDSC_AMOUNT);
+        deal(address(mToken), depositorB, INITIAL_USDSC_AMOUNT);
+        deal(address(mToken), depositorC, INITIAL_USDSC_AMOUNT);
+        deal(address(mToken), yieldDistributor, INITIAL_USDSC_AMOUNT);
 
         vm.startPrank(depositorA);
-        mToken.transfer(address(swapFacility), INITIAL_USDR_AMOUNT);
+        mToken.transfer(address(swapFacility), INITIAL_USDSC_AMOUNT);
         vm.stopPrank();
 
         vm.startPrank(address(swapFacility));
-        usdr.wrap(depositorA, INITIAL_USDR_AMOUNT);
+        usdsc.wrap(depositorA, INITIAL_USDSC_AMOUNT);
         vm.stopPrank();
 
         vm.startPrank(depositorB);
-        mToken.transfer(address(swapFacility), INITIAL_USDR_AMOUNT);
+        mToken.transfer(address(swapFacility), INITIAL_USDSC_AMOUNT);
         vm.stopPrank();
 
         vm.startPrank(address(swapFacility));
-        usdr.wrap(depositorB, INITIAL_USDR_AMOUNT);
+        usdsc.wrap(depositorB, INITIAL_USDSC_AMOUNT);
         vm.stopPrank();
 
         vm.startPrank(depositorC);
-        mToken.transfer(address(swapFacility), INITIAL_USDR_AMOUNT);
+        mToken.transfer(address(swapFacility), INITIAL_USDSC_AMOUNT);
         vm.stopPrank();
 
         vm.startPrank(address(swapFacility));
-        usdr.wrap(depositorC, INITIAL_USDR_AMOUNT);
+        usdsc.wrap(depositorC, INITIAL_USDSC_AMOUNT);
         vm.stopPrank();
 
         vm.startPrank(yieldDistributor);
-        mToken.transfer(address(swapFacility), INITIAL_USDR_AMOUNT);
+        mToken.transfer(address(swapFacility), INITIAL_USDSC_AMOUNT);
         vm.stopPrank();
 
         vm.startPrank(address(swapFacility));
-        usdr.wrap(yieldDistributor, INITIAL_USDR_AMOUNT);
+        usdsc.wrap(yieldDistributor, INITIAL_USDSC_AMOUNT);
         vm.stopPrank();
     }
 
     function test_constructor() external view {
-        assertEq(vault.name(), 'Staked USDR');
-        assertEq(vault.symbol(), 'sUSDR');
-        assertEq(address(vault.asset()), address(usdr));
+        assertEq(vault.name(), 'Staked USDSC');
+        assertEq(vault.symbol(), 'sUSDSC');
+        assertEq(address(vault.asset()), address(usdsc));
         assertTrue(vault.hasRole(vault.DEFAULT_ADMIN_ROLE(), admin));
         assertTrue(vault.hasRole(vault.PAUSER_ROLE(), pauser));
     }
 
     function test_deposit_single_user() external {
         vm.startPrank(depositorA);
-        usdr.approve(address(vault), DEPOSIT_AMOUNT);
+        usdsc.approve(address(vault), DEPOSIT_AMOUNT);
 
         uint256 expectedShares = vault.previewDeposit(DEPOSIT_AMOUNT);
         
@@ -118,7 +118,7 @@ contract UnitSUSDRVault is Test {
         assertEq(shares, expectedShares);
         assertEq(vault.balanceOf(depositorA), shares);
         assertEq(vault.totalSupply(), shares);
-        assertEq(usdr.balanceOf(address(vault)), DEPOSIT_AMOUNT);
+        assertEq(usdsc.balanceOf(address(vault)), DEPOSIT_AMOUNT);
         assertEq(vault.totalAssets(), DEPOSIT_AMOUNT);
     }
 
@@ -131,7 +131,7 @@ contract UnitSUSDRVault is Test {
         assertEq(vault.balanceOf(depositorB), DEPOSIT_AMOUNT);
         assertEq(vault.balanceOf(depositorC), DEPOSIT_AMOUNT);
         assertEq(vault.totalSupply(), DEPOSIT_AMOUNT * 3);
-        assertEq(usdr.balanceOf(address(vault)), DEPOSIT_AMOUNT * 3);
+        assertEq(usdsc.balanceOf(address(vault)), DEPOSIT_AMOUNT * 3);
     }
 
     function test_yield_distribution_increases_pps() external {
@@ -142,7 +142,7 @@ contract UnitSUSDRVault is Test {
         uint256 yieldAmount = 500 ether;
         
         vm.startPrank(yieldDistributor);
-        usdr.transfer(address(vault), yieldAmount);
+        usdsc.transfer(address(vault), yieldAmount);
         vm.stopPrank();
 
         uint256 newPPS = vault.convertToAssets(1 ether);
@@ -158,7 +158,7 @@ contract UnitSUSDRVault is Test {
         
         uint256 yieldAmount = 200 ether;
         vm.startPrank(yieldDistributor);
-        usdr.transfer(address(vault), yieldAmount);
+        usdsc.transfer(address(vault), yieldAmount);
         vm.stopPrank();
 
         vm.startPrank(depositorA);
@@ -178,7 +178,7 @@ contract UnitSUSDRVault is Test {
         uint256 yieldAmount = 450 ether; // let's say 10% yield
 
         vm.startPrank(yieldDistributor);
-        usdr.transfer(address(vault), yieldAmount);
+        usdsc.transfer(address(vault), yieldAmount);
         vm.stopPrank();
 
         assertEq(vault.totalAssets(), totalDeposited + yieldAmount);
@@ -211,7 +211,7 @@ contract UnitSUSDRVault is Test {
         uint256 assetsRequired = vault.previewMint(sharesToMint);
 
         vm.startPrank(depositorA);
-        usdr.approve(address(vault), assetsRequired);
+        usdsc.approve(address(vault), assetsRequired);
         uint256 assets = vault.mint(sharesToMint, depositorA);
         vm.stopPrank();
 
@@ -230,7 +230,7 @@ contract UnitSUSDRVault is Test {
         vm.stopPrank();
 
         assertEq(shares, expectedShares);
-        assertEq(usdr.balanceOf(depositorA), INITIAL_USDR_AMOUNT - DEPOSIT_AMOUNT + withdrawAmount);
+        assertEq(usdsc.balanceOf(depositorA), INITIAL_USDSC_AMOUNT - DEPOSIT_AMOUNT + withdrawAmount);
     }
 
     function test_pause_functionality() external {
@@ -238,7 +238,7 @@ contract UnitSUSDRVault is Test {
         vault.pause(true);
 
         vm.startPrank(depositorA);
-        usdr.approve(address(vault), DEPOSIT_AMOUNT);
+        usdsc.approve(address(vault), DEPOSIT_AMOUNT);
         vm.expectRevert();
         vault.deposit(DEPOSIT_AMOUNT, depositorA);
         vm.stopPrank();
@@ -258,7 +258,7 @@ contract UnitSUSDRVault is Test {
         vault.pause(true);
 
         vm.startPrank(depositorA);
-        usdr.approve(address(vault), DEPOSIT_AMOUNT);
+        usdsc.approve(address(vault), DEPOSIT_AMOUNT);
         vm.expectRevert();
         vault.deposit(DEPOSIT_AMOUNT, depositorA);
         vm.stopPrank();
@@ -269,7 +269,7 @@ contract UnitSUSDRVault is Test {
         vault.pause(true);
 
         vm.startPrank(depositorA);
-        usdr.approve(address(vault), DEPOSIT_AMOUNT);
+        usdsc.approve(address(vault), DEPOSIT_AMOUNT);
         vm.expectRevert();
         vault.mint(DEPOSIT_AMOUNT, depositorA);
         vm.stopPrank();
@@ -307,7 +307,7 @@ contract UnitSUSDRVault is Test {
 
     function test_revert_deposit_insufficient_allowance() external {
         vm.startPrank(depositorA);
-        usdr.approve(address(vault), DEPOSIT_AMOUNT - 1);
+        usdsc.approve(address(vault), DEPOSIT_AMOUNT - 1);
         vm.expectRevert();
         vault.deposit(DEPOSIT_AMOUNT, depositorA);
         vm.stopPrank();
@@ -317,7 +317,7 @@ contract UnitSUSDRVault is Test {
         address poorUser = makeAddr('poorUser');
         
         vm.startPrank(poorUser);
-        usdr.approve(address(vault), DEPOSIT_AMOUNT);
+        usdsc.approve(address(vault), DEPOSIT_AMOUNT);
         vm.expectRevert();
         vault.deposit(DEPOSIT_AMOUNT, poorUser);
         vm.stopPrank();
@@ -350,7 +350,7 @@ contract UnitSUSDRVault is Test {
         
         uint256 yieldAmount = 800 ether;
         vm.startPrank(yieldDistributor);
-        usdr.transfer(address(vault), yieldAmount);
+        usdsc.transfer(address(vault), yieldAmount);
         vm.stopPrank();
 
         uint256 assetsA = vault.convertToAssets(sharesA);
@@ -366,13 +366,13 @@ contract UnitSUSDRVault is Test {
         uint256 initialShares = vault.balanceOf(depositorA);
         
         vm.startPrank(yieldDistributor);
-        usdr.transfer(address(vault), 100 ether);
+        usdsc.transfer(address(vault), 100 ether);
         vm.stopPrank();
         
         uint256 assetsAfterFirstYield = vault.convertToAssets(initialShares);
         
         vm.startPrank(yieldDistributor);
-        usdr.transfer(address(vault), 150 ether);
+        usdsc.transfer(address(vault), 150 ether);
         vm.stopPrank();
         
         uint256 assetsAfterSecondYield = vault.convertToAssets(initialShares);
@@ -387,7 +387,7 @@ contract UnitSUSDRVault is Test {
         uint256 sharesA = vault.balanceOf(depositorA);
         
         vm.startPrank(yieldDistributor);
-        usdr.transfer(address(vault), 500 ether);
+        usdsc.transfer(address(vault), 500 ether);
         vm.stopPrank();
 
         _depositFor(depositorB, DEPOSIT_AMOUNT);
@@ -399,7 +399,7 @@ contract UnitSUSDRVault is Test {
 
     function test_zero_deposit_allowed() external {
         vm.startPrank(depositorA);
-        usdr.approve(address(vault), 0);
+        usdsc.approve(address(vault), 0);
         uint256 shares = vault.deposit(0, depositorA);
         vm.stopPrank();
 
@@ -445,9 +445,9 @@ contract UnitSUSDRVault is Test {
         assertFalse(vault.hasRole(vault.DEFAULT_ADMIN_ROLE(), depositorA));
     }
 
-    // Todo: review in main implementation and base (according to USDR decimals in soneium deployment)
+    // Todo: review in main implementation and base (according to USDSC decimals in soneium deployment)
     function test_decimals() external view {
-        assertEq(vault.decimals(), usdr.decimals());
+        assertEq(vault.decimals(), usdsc.decimals());
     }
 
     function test_redeem_partial_shares() external {
@@ -456,7 +456,7 @@ contract UnitSUSDRVault is Test {
         uint256 sharesToRedeem = totalShares / 2;
         
         uint256 expectedAssets = vault.previewRedeem(sharesToRedeem);
-        uint256 initialBalance = usdr.balanceOf(depositorA);
+        uint256 initialBalance = usdsc.balanceOf(depositorA);
         
         vm.expectEmit(true, true, true, true);
         emit Withdraw(depositorA, depositorA, depositorA, expectedAssets, sharesToRedeem);
@@ -467,7 +467,7 @@ contract UnitSUSDRVault is Test {
 
         assertEq(assetsReceived, expectedAssets);
         assertEq(vault.balanceOf(depositorA), totalShares - sharesToRedeem);
-        assertEq(usdr.balanceOf(depositorA), initialBalance + assetsReceived);
+        assertEq(usdsc.balanceOf(depositorA), initialBalance + assetsReceived);
     }
 
     function test_redeem_all_shares() external {
@@ -475,7 +475,7 @@ contract UnitSUSDRVault is Test {
         uint256 totalShares = vault.balanceOf(depositorA);
         
         uint256 expectedAssets = vault.previewRedeem(totalShares);
-        uint256 initialBalance = usdr.balanceOf(depositorA);
+        uint256 initialBalance = usdsc.balanceOf(depositorA);
         
         vm.startPrank(depositorA);
         uint256 assetsReceived = vault.redeem(totalShares, depositorA, depositorA);
@@ -483,7 +483,7 @@ contract UnitSUSDRVault is Test {
 
         assertEq(assetsReceived, expectedAssets);
         assertEq(vault.balanceOf(depositorA), 0);
-        assertEq(usdr.balanceOf(depositorA), initialBalance + assetsReceived);
+        assertEq(usdsc.balanceOf(depositorA), initialBalance + assetsReceived);
         assertEq(vault.totalSupply(), 0);
         assertEq(vault.totalAssets(), 0);
     }
@@ -492,7 +492,7 @@ contract UnitSUSDRVault is Test {
         _depositFor(depositorA, DEPOSIT_AMOUNT);
         uint256 sharesToRedeem = vault.balanceOf(depositorA);
         
-        uint256 receiverInitialBalance = usdr.balanceOf(depositorB);
+        uint256 receiverInitialBalance = usdsc.balanceOf(depositorB);
         uint256 expectedAssets = vault.previewRedeem(sharesToRedeem);
         
         vm.startPrank(depositorA);
@@ -501,7 +501,7 @@ contract UnitSUSDRVault is Test {
 
         assertEq(assetsReceived, expectedAssets);
         assertEq(vault.balanceOf(depositorA), 0);
-        assertEq(usdr.balanceOf(depositorB), receiverInitialBalance + assetsReceived);
+        assertEq(usdsc.balanceOf(depositorB), receiverInitialBalance + assetsReceived);
     }
 
     function test_redeem_with_approval() external {
@@ -512,7 +512,7 @@ contract UnitSUSDRVault is Test {
         vault.approve(depositorB, sharesToRedeem);
         
         uint256 expectedAssets = vault.previewRedeem(sharesToRedeem);
-        uint256 receiverInitialBalance = usdr.balanceOf(depositorC);
+        uint256 receiverInitialBalance = usdsc.balanceOf(depositorC);
         
         vm.startPrank(depositorB);
         uint256 assetsReceived = vault.redeem(sharesToRedeem, depositorC, depositorA);
@@ -520,7 +520,7 @@ contract UnitSUSDRVault is Test {
 
         assertEq(assetsReceived, expectedAssets);
         assertEq(vault.balanceOf(depositorA), 0);
-        assertEq(usdr.balanceOf(depositorC), receiverInitialBalance + assetsReceived);
+        assertEq(usdsc.balanceOf(depositorC), receiverInitialBalance + assetsReceived);
         assertEq(vault.allowance(depositorA, depositorB), 0);
     }
 
@@ -547,7 +547,7 @@ contract UnitSUSDRVault is Test {
         uint256 sharesA = vault.balanceOf(depositorA);
         
         vm.startPrank(yieldDistributor);
-        usdr.transfer(address(vault), 300 ether);
+        usdsc.transfer(address(vault), 300 ether);
         vm.stopPrank();
         
         _depositFor(depositorB, DEPOSIT_AMOUNT);
@@ -586,9 +586,9 @@ contract UnitSUSDRVault is Test {
         uint256 initialShares = vault.balanceOf(depositorA);
         
         vm.startPrank(yieldDistributor);
-        usdr.transfer(address(vault), 100 ether);
-        usdr.transfer(address(vault), 150 ether);
-        usdr.transfer(address(vault), 75 ether);
+        usdsc.transfer(address(vault), 100 ether);
+        usdsc.transfer(address(vault), 150 ether);
+        usdsc.transfer(address(vault), 75 ether);
         vm.stopPrank();
         
         uint256 expectedAssets = vault.previewRedeem(initialShares);
@@ -623,14 +623,14 @@ contract UnitSUSDRVault is Test {
         
         uint256 largeYieldAmount = 2000 ether;
         vm.startPrank(yieldDistributor);
-        usdr.transfer(address(vault), largeYieldAmount);
+        usdsc.transfer(address(vault), largeYieldAmount);
         vm.stopPrank();
         
         uint256 depositAmountForB = DEPOSIT_AMOUNT;
         uint256 expectedSharesForB = vault.previewDeposit(depositAmountForB);
         
         vm.startPrank(depositorB);
-        usdr.approve(address(vault), depositAmountForB);
+        usdsc.approve(address(vault), depositAmountForB);
         uint256 actualSharesForB = vault.deposit(depositAmountForB, depositorB);
         vm.stopPrank();
         
@@ -651,7 +651,7 @@ contract UnitSUSDRVault is Test {
         
         // Send yield to vault when there are no shareholders
         vm.startPrank(yieldDistributor);
-        usdr.transfer(address(vault), yieldAmount);
+        usdsc.transfer(address(vault), yieldAmount);
         vm.stopPrank();
         
         // Vault should have assets but no shares
@@ -662,7 +662,7 @@ contract UnitSUSDRVault is Test {
         uint256 depositAmount = 500 ether;
         
         vm.startPrank(depositorA);
-        usdr.approve(address(vault), depositAmount);
+        usdsc.approve(address(vault), depositAmount);
         uint256 shares = vault.deposit(depositAmount, depositorA);
         vm.stopPrank();
         
@@ -694,7 +694,7 @@ contract UnitSUSDRVault is Test {
             uint256 largerDeposit = 2000 ether; // Larger than existing assets
             
             vm.startPrank(depositorB);
-            usdr.approve(address(vault), largerDeposit);
+            usdsc.approve(address(vault), largerDeposit);
             uint256 largerShares = vault.deposit(largerDeposit, depositorB);
             vm.stopPrank();
             
@@ -719,7 +719,7 @@ contract UnitSUSDRVault is Test {
         
         // Test 1: Very small deposit (1 wei) - might result in 0 shares due to rounding
         vm.startPrank(depositorB);
-        usdr.approve(address(vault), verySmallAmount);
+        usdsc.approve(address(vault), verySmallAmount);
         uint256 shares1 = vault.deposit(verySmallAmount, depositorB);
         vm.stopPrank();
         
@@ -729,7 +729,7 @@ contract UnitSUSDRVault is Test {
         
         // Test 2: Slightly larger small deposit
         vm.startPrank(depositorC);
-        usdr.approve(address(vault), smallAmount);
+        usdsc.approve(address(vault), smallAmount);
         uint256 shares2 = vault.deposit(smallAmount, depositorC);
         vm.stopPrank();
         
@@ -740,7 +740,7 @@ contract UnitSUSDRVault is Test {
         uint256 reasonableSmallAmount = 0.001 ether; // 1000000000000000 wei
         
         vm.startPrank(depositorB);
-        usdr.approve(address(vault), reasonableSmallAmount);
+        usdsc.approve(address(vault), reasonableSmallAmount);
         uint256 shares3 = vault.deposit(reasonableSmallAmount, depositorB);
         vm.stopPrank();
         
@@ -751,7 +751,7 @@ contract UnitSUSDRVault is Test {
         // Test 4: Add yield and verify behavior
         uint256 yieldAmount = 100 ether;
         vm.startPrank(yieldDistributor);
-        usdr.transfer(address(vault), yieldAmount);
+        usdsc.transfer(address(vault), yieldAmount);
         vm.stopPrank();
         
         // Test 5: Verify that small shareholders get proportional yield
@@ -773,7 +773,7 @@ contract UnitSUSDRVault is Test {
         
         if (assetsRequired > 0) {
             vm.startPrank(depositorC);
-            usdr.approve(address(vault), assetsRequired);
+            usdsc.approve(address(vault), assetsRequired);
             uint256 actualAssets = vault.mint(verySmallShares, depositorC);
             vm.stopPrank();
             
@@ -788,17 +788,17 @@ contract UnitSUSDRVault is Test {
             address testUser = makeAddr('testUser');
             deal(address(mToken), testUser, minViableDeposit * 2);
             
-            // Setup USDR for test user
+            // Setup USDSC for test user
             vm.startPrank(testUser);
             mToken.transfer(address(swapFacility), minViableDeposit * 2);
             vm.stopPrank();
             
             vm.startPrank(address(swapFacility));
-            usdr.wrap(testUser, minViableDeposit * 2);
+            usdsc.wrap(testUser, minViableDeposit * 2);
             vm.stopPrank();
             
             vm.startPrank(testUser);
-            usdr.approve(address(vault), minViableDeposit);
+            usdsc.approve(address(vault), minViableDeposit);
             uint256 minShares = vault.deposit(minViableDeposit, testUser);
             vm.stopPrank();
             
@@ -920,19 +920,19 @@ contract UnitSUSDRVault is Test {
     }
     
     function test_revert_recoverNonAssetERC20_asset_token() external {
-        // Should not be able to recover the vault's asset token (USDR)
+        // Should not be able to recover the vault's asset token (USDSC)
         uint256 recoveryAmount = 1000 ether;
         
         vm.prank(admin);
-        vm.expectRevert(abi.encodeWithSelector(ISUSDRVaultEventsAndErrors.TokenCannotBeUSDR.selector));
-        vault.recoverNonAssetERC20(address(usdr), admin, recoveryAmount);
+        vm.expectRevert(abi.encodeWithSelector(ISUSDSCVaultEventsAndErrors.TokenCannotBeUSDSC.selector));
+        vault.recoverNonAssetERC20(address(usdsc), admin, recoveryAmount);
     }
     
     function test_revert_recoverNonAssetERC20_zero_token_address() external {
         uint256 recoveryAmount = 1000 ether;
         
         vm.prank(admin);
-        vm.expectRevert(abi.encodeWithSelector(ISUSDRVaultEventsAndErrors.TokenCannotBeZeroAddress.selector));
+        vm.expectRevert(abi.encodeWithSelector(ISUSDSCVaultEventsAndErrors.TokenCannotBeZeroAddress.selector));
         vault.recoverNonAssetERC20(address(0), admin, recoveryAmount);
     }
     
@@ -942,7 +942,7 @@ contract UnitSUSDRVault is Test {
         mockToken.mint(address(vault), recoveryAmount);
         
         vm.prank(admin);
-        vm.expectRevert(abi.encodeWithSelector(ISUSDRVaultEventsAndErrors.ToCannotBeZeroAddress.selector));
+        vm.expectRevert(abi.encodeWithSelector(ISUSDSCVaultEventsAndErrors.ToCannotBeZeroAddress.selector));
         vault.recoverNonAssetERC20(address(mockToken), address(0), recoveryAmount);
     }
     
@@ -951,7 +951,7 @@ contract UnitSUSDRVault is Test {
         mockToken.mint(address(vault), 1000 ether);
         
         vm.prank(admin);
-        vm.expectRevert(abi.encodeWithSelector(ISUSDRVaultEventsAndErrors.AmountCannotBeZero.selector));
+        vm.expectRevert(abi.encodeWithSelector(ISUSDSCVaultEventsAndErrors.AmountCannotBeZero.selector));
         vault.recoverNonAssetERC20(address(mockToken), admin, 0);
     }
     
@@ -1053,7 +1053,7 @@ contract UnitSUSDRVault is Test {
 
     function _depositFor(address user, uint256 amount) internal {
         vm.startPrank(user);
-        usdr.approve(address(vault), amount);
+        usdsc.approve(address(vault), amount);
         vault.deposit(amount, user);
         vm.stopPrank();
     }
