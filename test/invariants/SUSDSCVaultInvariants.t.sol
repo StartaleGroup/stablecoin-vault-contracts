@@ -155,7 +155,21 @@ contract SUSDSCVaultInvariants is StdInvariant, Test {
         );
         usdsc = USDSC(address(proxy));
 
-        vault = new SUSDSCVault(IERC20(address(usdsc)), admin, pauser);
+        
+        // Deploy SUSDSCVault with proxy
+        ProxyAdmin vaultProxyAdmin = new ProxyAdmin(admin);
+        SUSDSCVault vaultImplementation = new SUSDSCVault();
+        TransparentUpgradeableProxy vaultProxy = new TransparentUpgradeableProxy(
+            address(vaultImplementation),
+            address(vaultProxyAdmin),
+            abi.encodeWithSelector(
+                SUSDSCVault.initialize.selector,
+                IERC20(address(usdsc)),
+                admin,
+                pauser
+            )
+        );
+        vault = SUSDSCVault(address(vaultProxy));
     }
     
     function _setupHandler() internal {

@@ -44,7 +44,20 @@ contract ERC4626ComplianceTest is ERC4626Test {
     }
 
     function _deployContracts() internal {
-        vault = new SUSDSCVault(IERC20(address(_underlyingMock)), admin, pauser);
+        // Deploy SUSDSCVault with proxy
+        ProxyAdmin vaultProxyAdmin = new ProxyAdmin(admin);
+        SUSDSCVault vaultImplementation = new SUSDSCVault();
+        TransparentUpgradeableProxy vaultProxy = new TransparentUpgradeableProxy(
+            address(vaultImplementation),
+            address(vaultProxyAdmin),
+            abi.encodeWithSelector(
+                SUSDSCVault.initialize.selector,
+                IERC20(address(_underlyingMock)),
+                admin,
+                pauser
+            )
+        );
+        vault = SUSDSCVault(address(vaultProxy));
     }
 
     /**
