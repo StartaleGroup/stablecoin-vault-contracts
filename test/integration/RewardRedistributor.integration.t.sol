@@ -24,7 +24,7 @@ contract RewardRedistributorIntegrationTest is Test {
     RewardRedistributor rr;
     
     // Test addresses
-    address admin = address(0x1234567890AbcdEF1234567890aBcdef12345678);
+    address owner = address(0x1234567890AbcdEF1234567890aBcdef12345678);
     address operator = address(0x0123456789abcDEF0123456789abCDef01234567);
     address startale = address(0x57a4700000000000000000000000000000000000);
     address treasury = address(0x7890123456789AbcdeF0123456789AbCDef01234);
@@ -39,18 +39,18 @@ contract RewardRedistributorIntegrationTest is Test {
         // Deploy MockUSDSC
         usdsc = new MockUSDSC();
         
-        // Deploy real vaults (use admin as temporary yieldRedistributor)
+        // Deploy real vaults (use owner as temporary yieldRedistributor)
         earnVault = new EarnVault(
             address(usdsc),
-            admin,          // owner
-            admin,          // yieldRedistributor (temporary, will be updated)
+            owner,          // owner
+            owner,          // yieldRedistributor (temporary, will be updated)
             treasury,       // treasury
             pauser          // pauser
         );
         
         susdscVault = new SUSDSCVault(
             IERC20(address(usdsc)),
-            admin,          // admin
+            owner,          // owner
             pauser          // pauser
         );
         
@@ -63,11 +63,11 @@ contract RewardRedistributorIntegrationTest is Test {
             startale,
             IEarnVault(address(earnVault)),
             IERC4626(address(susdscVault)),
-            admin
+            owner
         );
         
         // Set up roles and permissions
-        vm.startPrank(admin);
+        vm.startPrank(owner);
         bytes32 operatorRole = rr.OPERATOR_ROLE();
         rr.grantRole(operatorRole, operator);
         
@@ -586,7 +586,7 @@ contract RewardRedistributorIntegrationTest is Test {
         // Create new clean vaults with no deposits
         EarnVault emptyEarnVault = new EarnVault(
             address(usdsc),
-            admin,
+            owner,
             address(rr),
             treasury,
             pauser
@@ -594,7 +594,7 @@ contract RewardRedistributorIntegrationTest is Test {
         
         SUSDSCVault emptySUSDSCVault = new SUSDSCVault(
             IERC20(address(usdsc)),
-            admin,
+            owner,
             pauser
         );
         
@@ -604,10 +604,10 @@ contract RewardRedistributorIntegrationTest is Test {
             startale,
             IEarnVault(address(emptyEarnVault)),
             IERC4626(address(emptySUSDSCVault)),
-            admin
+            owner
         );
         
-        vm.startPrank(admin);
+        vm.startPrank(owner);
         bytes32 operatorRole = rrEmpty.OPERATOR_ROLE();
         rrEmpty.grantRole(operatorRole, operator);
         vm.stopPrank();
@@ -1076,7 +1076,7 @@ contract RewardRedistributorIntegrationTest is Test {
         // Test RewardRedistributor with non-zero fees
         
         // Set fee to 10% (1000 bps)
-        vm.prank(admin);
+        vm.prank(owner);
         rr.setParams(startale, IEarnVault(address(earnVault)), IERC4626(address(susdscVault)), 1000);
         
         uint256 startaleBalanceBefore = usdsc.balanceOf(startale);
@@ -1101,7 +1101,7 @@ contract RewardRedistributorIntegrationTest is Test {
         assertGt(susdscAssetsAfter, susdscAssetsBefore, "sUSDSC vault received yield after fee");
         
         // Reset fee to 0 for other tests
-        vm.prank(admin);
+        vm.prank(owner);
         rr.setParams(startale, IEarnVault(address(earnVault)), IERC4626(address(susdscVault)), 0);
     }
     
@@ -1193,8 +1193,8 @@ contract RewardRedistributorIntegrationTest is Test {
         rr.pause(true);
         vm.stopPrank();
         
-        // Test that admin can pause and unpause
-        vm.startPrank(admin);
+        // Test that owner can pause and unpause
+        vm.startPrank(owner);
         rr.pause(true);
         assertTrue(rr.paused(), "Contract is paused");
         
@@ -1209,7 +1209,7 @@ contract RewardRedistributorIntegrationTest is Test {
         ext.addPending(1_000e6);
         
         // Pause the contract
-        vm.prank(admin);
+        vm.prank(owner);
         rr.pause(true);
         
         // Try to distribute while paused
@@ -1219,7 +1219,7 @@ contract RewardRedistributorIntegrationTest is Test {
         vm.stopPrank();
         
         // Unpause and verify distribution works
-        vm.prank(admin);
+        vm.prank(owner);
         rr.pause(false);
         
         vm.prank(operator);
@@ -1229,7 +1229,7 @@ contract RewardRedistributorIntegrationTest is Test {
     function testIntegration_RewardRedistributorParameterValidation() public {
         // Test parameter validation in setParams
         
-        vm.startPrank(admin);
+        vm.startPrank(owner);
         
         // Test zero address validation
         vm.expectRevert(bytes("zero"));
@@ -1269,7 +1269,7 @@ contract RewardRedistributorIntegrationTest is Test {
         
         // Test parameter update works (ParamsUpdated event emitted)
         address newTreasury = makeAddr("newTreasury2");
-        vm.prank(admin);
+        vm.prank(owner);
         rr.setParams(newTreasury, IEarnVault(address(earnVault)), IERC4626(address(susdscVault)), 100);
         
         // Verify parameters were updated
@@ -1277,14 +1277,14 @@ contract RewardRedistributorIntegrationTest is Test {
         assertEq(rr.fee_on_yield_bps(), 100, "Fee updated");
         
         // Reset
-        vm.prank(admin);
+        vm.prank(owner);
         rr.setParams(startale, IEarnVault(address(earnVault)), IERC4626(address(susdscVault)), 0);
     }
     
     function testIntegration_RewardRedistributorMaxFeeScenario() public {
         // Test with maximum allowed fee
         
-        vm.prank(admin);
+        vm.prank(owner);
         rr.setParams(startale, IEarnVault(address(earnVault)), IERC4626(address(susdscVault)), 2000); // 20% fee
         
         uint256 startaleBalanceBefore = usdsc.balanceOf(startale);
@@ -1300,7 +1300,7 @@ contract RewardRedistributorIntegrationTest is Test {
         assertGe(startaleIncrease, 2_000e6, "Startale received maximum fee");
         
         // Reset fee
-        vm.prank(admin);
+        vm.prank(owner);
         rr.setParams(startale, IEarnVault(address(earnVault)), IERC4626(address(susdscVault)), 0);
     }
 
@@ -1319,7 +1319,7 @@ contract RewardRedistributorIntegrationTest is Test {
         vm.stopPrank();
         
         // Admin blacklists the user
-        vm.prank(admin);
+        vm.prank(owner);
         earnVault.setBlacklisted(blacklistedUser, true);
         
         assertTrue(earnVault.isBlacklisted(blacklistedUser), "User is blacklisted");
@@ -1344,7 +1344,7 @@ contract RewardRedistributorIntegrationTest is Test {
         vm.stopPrank();
         
         // Admin can unblacklist
-        vm.prank(admin);
+        vm.prank(owner);
         earnVault.setBlacklisted(blacklistedUser, false);
         
         assertFalse(earnVault.isBlacklisted(blacklistedUser), "User is unblacklisted");
@@ -1363,25 +1363,25 @@ contract RewardRedistributorIntegrationTest is Test {
         testToken.mint(address(earnVault), 1000e18);
         
         // Test recovery of non-USDSC token when not paused
-        vm.prank(admin);
+        vm.prank(owner);
         earnVault.recoverERC20(address(testToken), treasury, 500e18);
         
         assertEq(testToken.balanceOf(treasury), 500e18, "Treasury received recovered tokens");
         
         // Test recovery with zero address (should revert)
-        vm.startPrank(admin);
+        vm.startPrank(owner);
         vm.expectRevert(abi.encodeWithSignature("CanNotBeZeroAddress()"));
         earnVault.recoverERC20(address(testToken), address(0), 100e18);
         vm.stopPrank();
         
         // Test USDSC recovery when not paused (should revert)
-        vm.startPrank(admin);
+        vm.startPrank(owner);
         vm.expectRevert(abi.encodeWithSignature("ContractNotPaused()"));
         earnVault.recoverERC20(address(usdsc), treasury, 1000e6);
         vm.stopPrank();
         
         // Pause the contract and test USDSC recovery
-        vm.prank(admin);
+        vm.prank(pauser);
         earnVault.pause();
         
         // Add some surplus USDSC
@@ -1392,18 +1392,18 @@ contract RewardRedistributorIntegrationTest is Test {
         uint256 surplus = vaultBalance - claimReserve;
         
         if (surplus > 0) {
-            vm.prank(admin);
+            vm.prank(owner);
             earnVault.recoverERC20(address(usdsc), treasury, surplus);
         }
         
         // Test exceeding surplus (should revert)
-        vm.startPrank(admin);
+        vm.startPrank(owner);
         vm.expectRevert(abi.encodeWithSignature("InsufficientFunding()"));
         earnVault.recoverERC20(address(usdsc), treasury, vaultBalance); // Try to recover more than surplus
         vm.stopPrank();
         
         // Unpause for other tests
-        vm.prank(admin);
+        vm.prank(pauser);
         earnVault.unpause();
     }
     
@@ -1419,14 +1419,14 @@ contract RewardRedistributorIntegrationTest is Test {
         earnVault.onBoostReward(address(boostToken), 1000e18);
         
         // Try to recover more than available (should revert)
-        vm.startPrank(admin);
+        vm.startPrank(owner);
         vm.expectRevert(abi.encodeWithSignature("ExceedsSurplus()"));
         earnVault.recoverERC20(address(boostToken), treasury, 1500e18); // More than available after reserves
         vm.stopPrank();
         
         // Recover only the available amount
         uint256 availableAmount = 2000e18 - 1000e18; // Total - reserved
-        vm.prank(admin);
+        vm.prank(owner);
         earnVault.recoverERC20(address(boostToken), treasury, availableAmount);
         
         assertEq(boostToken.balanceOf(treasury), availableAmount, "Treasury received available boost tokens");
@@ -1445,7 +1445,7 @@ contract RewardRedistributorIntegrationTest is Test {
         uint256 expectedSurplus = vaultBalanceBefore - claimReserveBefore;
         
         // Sweep surplus
-        vm.prank(admin);
+        vm.prank(owner);
         earnVault.sweepSurplusToTreasury();
         
         uint256 treasuryBalanceAfter = usdsc.balanceOf(treasury);
@@ -1455,7 +1455,7 @@ contract RewardRedistributorIntegrationTest is Test {
         assertEq(vaultBalanceAfter, earnVault.claimReserve(), "Vault balance equals claim reserve after sweep");
         
         // Test sweep when no surplus (should do nothing)
-        vm.prank(admin);
+        vm.prank(owner);
         earnVault.sweepSurplusToTreasury(); // Should not revert, just return
         
         assertEq(usdsc.balanceOf(treasury), treasuryBalanceAfter, "No additional sweep when no surplus");
@@ -1505,8 +1505,13 @@ contract RewardRedistributorIntegrationTest is Test {
     function testIntegration_EarnVaultPauseUnpauseFunctionality() public {
         // Test pause/unpause edge cases
         
-        // Admin can pause
-        vm.prank(admin);
+        // Admin cannot pause (only pauser can)
+        vm.prank(owner);
+        vm.expectRevert(IEarnVaultEventsAndErrors.NotAuthorizedToPause.selector);
+        earnVault.pause();
+        
+        // Pauser can pause
+        vm.prank(pauser);
         earnVault.pause();
         assertTrue(earnVault.paused(), "Contract is paused");
         
@@ -1529,8 +1534,8 @@ contract RewardRedistributorIntegrationTest is Test {
         earnVault.claim();
         vm.stopPrank();
         
-        // Admin can unpause
-        vm.prank(admin);
+        // Pauser can unpause
+        vm.prank(pauser);
         earnVault.unpause();
         assertFalse(earnVault.paused(), "Contract is unpaused");
         
@@ -1549,12 +1554,12 @@ contract RewardRedistributorIntegrationTest is Test {
         address newYieldRedistributor = makeAddr("newYieldRedistributor");
         
         // Test treasury update
-        vm.prank(admin);
+        vm.prank(owner);
         earnVault.setTreasury(newTreasury);
         assertEq(earnVault.treasury(), newTreasury, "Treasury updated");
         
         // Test pauser update
-        vm.prank(admin);
+        vm.prank(owner);
         earnVault.setPauser(newPauser);
         
         // New pauser can pause
@@ -1567,7 +1572,7 @@ contract RewardRedistributorIntegrationTest is Test {
         assertFalse(earnVault.paused(), "New pauser can unpause");
         
         // Test yield redistributor update
-        vm.prank(admin);
+        vm.prank(owner);
         earnVault.setYieldRedistributor(newYieldRedistributor);
         
         // New yield redistributor can distribute yield

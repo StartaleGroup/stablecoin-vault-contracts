@@ -49,7 +49,7 @@ setTreasury(address who)                   // Update treasury address
 setPauser(address who)                     // Update pauser address
 setBlacklisted(address who, bool status)   // Manage blacklist
 
-// Emergency controls (owner or pauser)
+// Emergency controls (pauser only)
 pause() / unpause()                        // Emergency stop/resume
 
 // Treasury operations (owner only, when paused)
@@ -283,9 +283,9 @@ address[] public activeBoostTokens;  // List of tokens that have been distribute
 4. **Automatic**: All active boost tokens are claimed together
 
 ### Role-Based Security
-- **Owner**: Full administrative control, emergency functions
-- **YieldRedistributor**: Can distribute yield to vault users
-- **Pauser**: Can pause/unpause for emergency response
+- **Owner**: Full administrative control, emergency functions, 2-step ownership transfers
+- **YieldRedistributor**: Can distribute yield and boost rewards to vault users
+- **Pauser**: Can pause/unpause the contract for emergency response
 - **Treasury**: Receives swept surplus funds
 
 ### Vault Statistics
@@ -306,10 +306,12 @@ function getVaultStats() external view returns (
 - **Overflow Protection**: Safe arithmetic using `Math.mulDiv` for 512-bit precision
 - **Complete Blacklist**: All user functions respect blacklist status
 - **Reentrancy Protection**: All state-changing functions protected
-- **Pause Mechanism**: Emergency stop for all operations
+- **Pause Mechanism**: Emergency stop for all operations (pauser-only)
 - **Permit Safety**: Graceful handling of tokens that don't support permit
 - **Settlement Ordering**: Critical `_settle()` called before state changes
 - **ETH Safety**: Contract rejects ETH to prevent accidental loss
+- **2-Step Ownership**: Secure ownership transfer using OpenZeppelin's Ownable2Step
+- **Role Separation**: Clear separation between owner, yield redistributor, and pauser roles
 
 ## Withdrawal Examples
 
@@ -539,6 +541,15 @@ uint256 dotRewards = vault.getClaimableBoostReward(user, address(dot));
 - **Role-Based Access**: Comprehensive access control with proper role management
 - **Input Validation**: Zero address and amount checks throughout
 
+### Access Control Implementation
+- **Ownable2Step**: Uses OpenZeppelin's secure 2-step ownership transfer
+- **Custom Modifiers**: `onlyYieldRedistributor` and `onlyPauser` for specific role access
+- **Direct Storage**: Simple address variables instead of complex role mappings
+- **Clear Permissions**: Each role has distinct, non-overlapping responsibilities
+- **Owner Functions**: `setYieldRedistributor()`, `setPauser()`, `setTreasury()`, `setBlacklisted()`
+- **Pauser Functions**: `pause()`, `unpause()` (owner cannot directly pause)
+- **Yield Redistributor Functions**: `onYield()`, `onBoostReward()`
+
 ### Library Architecture
 The boost rewards system uses a separate library (`BoostRewardsLib`) for:
 - **Separation of Concerns**: Boost logic isolated from main vault
@@ -547,12 +558,13 @@ The boost rewards system uses a separate library (`BoostRewardsLib`) for:
 ## Role Hierarchy
 
 ```
-Owner (Full Control)
-├── Set all role addresses
+Owner (Full Control via Ownable2Step)
+├── Set all role addresses (yieldRedistributor, pauser, treasury)
 ├── Emergency sweep operations
-├── Blacklist management
+├── Blacklist management (setBlacklisted)
 ├── Treasury operations
-└── Role management (revoke old roles, grant new roles)
+├── 2-step ownership transfers
+└── Renounce ownership
 
 YieldRedistributor (Yield Operations)
 ├── Distribute yield via onYield()
@@ -568,10 +580,11 @@ Treasury (Fund Recipient)
 ```
 
 ### Role Management Features
-- **Automatic Role Revocation**: When updating roles, old roles are automatically revoked
-- **Current Pauser Tracking**: `currentPauser` variable ensures proper role transitions
-- **Role-Based Storage**: No redundant storage variables (uses OpenZeppelin AccessControl)
-- **Secure Transitions**: Prevents unauthorized access during role changes
+- **Direct Storage Variables**: Simple address variables for yieldRedistributor and pauser
+- **Custom Modifiers**: `onlyYieldRedistributor` and `onlyPauser` for access control
+- **Ownable2Step**: Secure 2-step ownership transfer process
+- **Clear Separation**: Each role has distinct, non-overlapping responsibilities
+- **Owner Control**: Owner can change all role addresses but cannot directly pause
 
 ## Deployment Parameters
 

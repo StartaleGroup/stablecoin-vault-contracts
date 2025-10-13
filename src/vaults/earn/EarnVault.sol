@@ -5,7 +5,8 @@ import {IERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.so
 import {IERC20Permit} from "lib/openzeppelin-contracts/contracts/token/ERC20/extensions/IERC20Permit.sol";
 import {SafeERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Math} from "lib/openzeppelin-contracts/contracts/utils/math/Math.sol";
-import {AccessControl} from "lib/openzeppelin-contracts/contracts/access/AccessControl.sol";
+import {Ownable} from "lib/openzeppelin-contracts/contracts/access/Ownable.sol";
+import {Ownable2Step} from "lib/openzeppelin-contracts/contracts/access/Ownable2Step.sol";
 import {Pausable} from "lib/openzeppelin-contracts/contracts/utils/Pausable.sol";
 import {ReentrancyGuard} from "lib/openzeppelin-contracts/contracts/utils/ReentrancyGuard.sol";
 import {IEarnVault} from "../../interfaces/vaults/earn/IEarnVault.sol";
@@ -21,26 +22,21 @@ import {BoostRewardsLib} from "./BoostRewardsLib.sol";
 ///   - When yield arrives and totalPrincipal>0: globalIndex += amount*RAY/totalPrincipal.
 ///   - If totalPrincipal==0 at yield time: amount is transferred directly to treasury.
 /// Invariant (funding): USDSC balance >= claimReserve.
-contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Pausable, ReentrancyGuard {
+contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     // -------- Constants --------
     uint256 public constant RAY = 1e27;  // High precision for yield calculations (MakerDAO standard)
     
-    
-    
-    // -------- Roles --------
-    bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
-    bytes32 public constant YIELD_REDISTRIBUTOR_ROLE = keccak256("YIELD_REDISTRIBUTOR_ROLE");
-    bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
+    // -------- Access Control --------
+    address public yieldRedistributor;    // Address authorized to call onYield() and onBoostReward()
+    address public pauser;               // Address authorized to pause/unpause the contract
 
     // -------- Immutables --------
     IERC20 public immutable USDSC;
 
-
     // -------- Roles / endpoints --------
     address public treasury;             // receives yield when no deposits exist, surplus sweeps
-    address private _currentPauser;      // tracks current pauser for role management
 
     // -------- Optional blacklist --------
     mapping(address => bool) public isBlacklisted;
@@ -66,20 +62,29 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
     // -------- Events and Errors --------
     // All events and errors are inherited from IEarnVaultEventsAndErrors interface
 
-    constructor(address usdsc, address admin, address yieldRedistributorAddr, address treasuryAddr, address pauserAddr) {
-        if (usdsc == address(0) || admin == address(0)) revert CanNotBeZeroAddress();
+    // -------- Modifiers --------
+    
+    /// @dev Modifier to check if caller is the yield redistributor
+    modifier onlyYieldRedistributor() {
+        if (msg.sender != yieldRedistributor) revert IEarnVaultEventsAndErrors.NotYieldRedistributor();
+        _;
+    }
+    
+    /// @dev Modifier to check if caller is the pauser
+    modifier onlyPauser() {
+        if (msg.sender != pauser) revert IEarnVaultEventsAndErrors.NotAuthorizedToPause();
+        _;
+    }
+
+    constructor(address usdsc, address owner, address yieldRedistributorAddr, address treasuryAddr, address pauserAddr) Ownable(owner) {
+        if (usdsc == address(0) || owner == address(0)) revert CanNotBeZeroAddress();
         if (yieldRedistributorAddr == address(0) || treasuryAddr == address(0)) revert CanNotBeZeroAddress();
         if (pauserAddr == address(0)) revert CanNotBeZeroAddress();
         
         USDSC = IERC20(usdsc);
         treasury = treasuryAddr;
-        _currentPauser = pauserAddr;
-        
-        // Set up roles
-        _grantRole(DEFAULT_ADMIN_ROLE, admin);
-        _grantRole(ADMIN_ROLE, admin);
-        _grantRole(YIELD_REDISTRIBUTOR_ROLE, yieldRedistributorAddr);
-        _grantRole(PAUSER_ROLE, pauserAddr);
+        yieldRedistributor = yieldRedistributorAddr;
+        pauser = pauserAddr;
     }
 
     // =========================
@@ -88,17 +93,16 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
 
     /// @notice Set the yield redistributor address
     /// @param who New yield redistributor address
-    function setYieldRedistributor(address who) external onlyRole(ADMIN_ROLE) {
+    function setYieldRedistributor(address who) external onlyOwner {
         if (who == address(0)) revert CanNotBeZeroAddress();
-        // Note: We can't easily get the old address without storage, so we emit address(0) for old
-        // In practice, this is fine since the role system is the source of truth
-        _grantRole(YIELD_REDISTRIBUTOR_ROLE, who);
-        emit YieldRedistributorChanged(msg.sender, address(0), who);
+        address oldRedistributor = yieldRedistributor;
+        yieldRedistributor = who;
+        emit YieldRedistributorChanged(msg.sender, oldRedistributor, who);
     }
 
     /// @notice Set the treasury address  
     /// @param who New treasury address
-    function setTreasury(address who) external onlyRole(ADMIN_ROLE) {
+    function setTreasury(address who) external onlyOwner {
         if (who == address(0)) revert CanNotBeZeroAddress();
         address oldTreasury = treasury;
         treasury = who;
@@ -107,19 +111,11 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
 
     /// @notice Set the pauser address
     /// @param who New pauser address
-    function setPauser(address who) external onlyRole(ADMIN_ROLE) {
+    function setPauser(address who) external onlyOwner {
         if (who == address(0)) revert CanNotBeZeroAddress();
         
-        address oldPauser = _currentPauser;
-        
-        // Revoke role from old pauser if any
-        if (oldPauser != address(0)) {
-            _revokeRole(PAUSER_ROLE, oldPauser);
-        }
-        
-        // Grant role to new pauser
-        _grantRole(PAUSER_ROLE, who);
-        _currentPauser = who;
+        address oldPauser = pauser;
+        pauser = who;
         
         emit PauserChanged(msg.sender, oldPauser, who);
     }
@@ -128,23 +124,21 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
     /// @notice Set blacklist status for an address
     /// @param who Address to update blacklist status for
     /// @param blacklisted Whether address should be blacklisted
-    function setBlacklisted(address who, bool blacklisted) external onlyRole(ADMIN_ROLE) {
+    function setBlacklisted(address who, bool blacklisted) external onlyOwner {
         bool oldStatus = isBlacklisted[who];
         isBlacklisted[who] = blacklisted;
         emit BlacklistStatusChanged(msg.sender, who, oldStatus, blacklisted);
     }
 
     /// @notice Pause the contract (emergency stop)
-    /// @dev Can be called by admin or designated pauser
-    function pause() external {
-        if (!hasRole(ADMIN_ROLE, msg.sender) && !hasRole(PAUSER_ROLE, msg.sender)) revert NotAuthorizedToPause();
+    /// @dev Can be called by designated pauser only
+    function pause() external onlyPauser {
         _pause();
     }
     
     /// @notice Unpause the contract
-    /// @dev Can be called by admin or designated pauser  
-    function unpause() external {
-        if (!hasRole(ADMIN_ROLE, msg.sender) && !hasRole(PAUSER_ROLE, msg.sender)) revert NotAuthorizedToPause();
+    /// @dev Can be called by designated pauser only
+    function unpause() external onlyPauser {
         _unpause();
     }
 
@@ -428,7 +422,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
     /// @dev MUST be called AFTER transferring `amount` USDSC to this contract
     /// @dev Enforces funding invariant: USDSC.balance >= claimReserve + amount
     /// @param amount Amount of USDSC yield to distribute
-    function onYield(uint256 amount) external onlyRole(YIELD_REDISTRIBUTOR_ROLE) nonReentrant {
+    function onYield(uint256 amount) external onlyYieldRedistributor nonReentrant {
         if (amount == 0) return;
         
         // Verify actual balance before updating accounting
@@ -464,7 +458,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
     /// @dev Uses same logic as USDSC yield - distributed proportionally based on principal
     /// @param token Token address to distribute as boost rewards
     /// @param amount Amount of boost tokens to distribute
-    function onBoostReward(address token, uint256 amount) external onlyRole(YIELD_REDISTRIBUTOR_ROLE) nonReentrant {
+    function onBoostReward(address token, uint256 amount) external onlyYieldRedistributor nonReentrant {
         BoostRewardsLib.distributeBoostReward(
             token,
             amount,
@@ -533,7 +527,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
     /// @param token Token address to recover
     /// @param to Address to send tokens to
     /// @param amount Amount to recover
-    function recoverERC20(address token, address to, uint256 amount) external onlyRole(ADMIN_ROLE) {
+    function recoverERC20(address token, address to, uint256 amount) external onlyOwner {
         if (to == address(0)) revert CanNotBeZeroAddress();
 
         if (token == address(USDSC)) {
@@ -561,7 +555,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, AccessControl, Paus
 
     /// @notice Sweep excess USDSC yield to treasury (when vault has surplus above reserves)
     /// @dev Sweeps all surplus above minimum required reserves
-    function sweepSurplusToTreasury() external onlyRole(ADMIN_ROLE) {
+    function sweepSurplusToTreasury() external onlyOwner {
         uint256 bal = USDSC.balanceOf(address(this));
         uint256 minRequired = claimReserve;
         
