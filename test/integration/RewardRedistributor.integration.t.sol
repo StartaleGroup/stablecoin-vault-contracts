@@ -1158,14 +1158,12 @@ contract RewardRedistributorIntegrationTest is Test {
         (uint256 previewFee, uint256 previewEarn, uint256 previewOn, uint256 previewExtra, uint256 previewSBase, uint256 previewTEarn, uint256 previewTYield) = rr.previewSplit(5_000e6);
         
         assertEq(previewFee, feeToStartale, "PreviewSplit matches previewDistribute fee");
-        // previewSplit uses current supply as S_base, previewDistribute uses supply before mint
-        uint256 expectedSBase = S_base + minted;
-        assertEq(previewSBase, expectedSBase, "PreviewSplit S_base should be current supply");
+        // Both previewSplit and previewDistribute now use the same S_base calculation (preMint = true)
+        assertEq(previewSBase, S_base, "PreviewSplit S_base should match previewDistribute S_base");
         assertEq(previewTEarn, T_earn, "PreviewSplit matches previewDistribute T_earn");
         assertEq(previewTYield, T_yield, "PreviewSplit matches previewDistribute T_yield");
         
-        // Note: previewSplit uses different S_base calculation (current supply vs supply before mint)
-        // and doesn't use carry, so allocations will differ more than before
+        // Note: previewSplit doesn't use carry, so allocations will differ from previewDistribute
         assertApproxEqAbs(previewEarn, toEarn, 10000, "PreviewSplit earn allocation close to previewDistribute");
         assertApproxEqAbs(previewOn, toOn, 10000, "PreviewSplit on allocation close to previewDistribute");
     }

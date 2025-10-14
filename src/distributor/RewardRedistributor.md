@@ -30,7 +30,7 @@ The RewardRedistributor uses a single USDSC token address (`USDSC_ADDRESS`) that
   
 - **IMYieldToOne Interface**: Used for yield operations
   - `IMYieldToOne(USDSC_ADDRESS).claimYield()` - Mint fresh yield to contract
-  - `IMYieldToOne(USDSC_ADDRESS).yield()` - Preview pending yield
+  - `IMYieldToOne(USDSC_ADDRESS).yield()` - Preview pending yield that could be minted in USDSC
 
 This design eliminates redundancy since both interfaces point to the same USDSC token contract, while maintaining clear separation of concerns through explicit interface casting.
 
@@ -55,19 +55,19 @@ The RewardRedistributor provides three preview functions for different use cases
 ### previewDistribute()
 - **Purpose**: Exact dry-run of actual `distribute()` function
 - **Parameters**: None (reads `IMYieldToOne(USDSC_ADDRESS).yield()`)
-- **S_base Calculation**: Uses supply before mint (simulates actual distribution)
+- **S_base Calculation**: Uses current total supply (since yield is pending, not yet minted)
 - **Carry Logic**: Includes carries (exact simulation of real distribution)
 - **Use Case**: "What would happen if we called `distribute()` right now?"
 
 ### Key Distinction: S_base Calculation
 
-The critical difference between preview and distribution functions is how `S_base` is calculated:
+All preview functions now use consistent `S_base` calculation:
 
 ```solidity
-// Preview functions (previewSplit, previewSplitCurrent)
+// All preview functions (previewSplit, previewSplitCurrent, previewDistribute)
 S_base = IERC20(USDSC_ADDRESS).totalSupply()  // Current supply
 
-// Distribution functions (previewDistribute, distribute)  
+// Distribution functions (distribute)  
 S_base = IERC20(USDSC_ADDRESS).totalSupply() - minted  // Supply before mint
 ```
 
@@ -234,10 +234,10 @@ minted == feeToStartale + toEarnVault + toSUSDSCVault + toStartaleExtra
 
 ### Correct Denominator
 ```
-// For actual distribution functions (distribute, previewDistribute)
+// For actual distribution functions (distribute)
 S_base == IERC20(USDSC_ADDRESS).totalSupply() - minted
 
-// For preview functions (previewSplit, previewSplitCurrent)  
+// For all preview functions (previewSplit, previewSplitCurrent, previewDistribute)  
 S_base == IERC20(USDSC_ADDRESS).totalSupply()  // Current supply
 ```
 
@@ -368,7 +368,16 @@ The RewardRedistributor has comprehensive test coverage including:
 - Regular monitoring and alerting
 - Gradual parameter changes with community oversight
 
-## Future Enhancements
+## Recent Fixes
 
-### Upgrade Path
-The contract uses standard OpenZeppelin patterns and could be made upgradeable using proxy patterns if needed. However, the current immutable design provides stronger security guarantees for the core yield distribution logic.
+### External claimYield() Handling Fix
+
+**Fix**: Modified `distribute()` to use `gross = balanceBefore + minted` approach. This elegantly handles both normal flow and external `claimYield()` calls in a single code path, ensuring all yield is always distributed.
+
+**Impact**: Ensures yield is always distributed regardless of whether `claimYield()` was called externally or by the keeper.
+
+### previewDistribute() S_base Calculation Fix
+
+**Fix**: Changed `previewDistribute()` to use `preMint = true`, making it consistent with other preview functions. Now all preview functions use `S_base = totalSupply()` (current supply), while only the actual `distribute()` function uses `S_base = totalSupply() - minted` (supply before mint).
+
+Ensures that `previewDistribute()` is a true dry-run of `distribute()`, providing accurate predictions of distribution behavior.
