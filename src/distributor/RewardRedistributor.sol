@@ -230,14 +230,15 @@ contract RewardRedistributor is AccessControl, Pausable, ReentrancyGuard {
     /// @notice Claims pending USDSC yield from the extension and distributes it per policy.
     /// @dev    Sequence:
     ///         1) `minted = IMYieldToOne(USDSC_ADDRESS).claimYield()` mints fresh USDSC to this contract (must be yieldRecipient).
-    ///         2) `feeToStartale = minted * fee_on_yield_bps / 10_000`.
-    ///         3) Compute `S_base = IERC20(USDSC_ADDRESS).totalSupply() - minted` (supply **before** this mint).
-    ///         4) Read TVLs: `T_earn = earnVault.totalPrincipal()`, `T_yield = susdscVault.totalAssets()`.
-    ///         5) Allocate net using carries:
+    ///         2) If no new yield was minted, check existing balance to handle external claimYield() calls.
+    ///         3) `feeToStartale = minted * fee_on_yield_bps / 10_000`.
+    ///         4) Compute `S_base = IERC20(USDSC_ADDRESS).totalSupply() - minted` (supply **before** this mint).
+    ///         5) Read TVLs: `T_earn = earnVault.totalPrincipal()`, `T_yield = susdscVault.totalAssets()`.
+    ///         6) Allocate net using carries:
     ///            `toEarn = floor((net*T_earn + carryEarn)/S_base)`, `carryEarn = (net*T_earn + carryEarn) % S_base`
     ///            `toOn   = floor((net*T_yield   + carryOn)/S_base)`,   `carryOn   = (net*T_yield   + carryOn)   % S_base`
     ///            `toStartaleExtra = net - (toEarn + toOn)`
-    ///         6) Transfers:
+    ///         7) Transfers:
     ///            - Startale: `feeToStartale + toStartaleExtra`
     ///            - EarnVault: transfer `toEarn` **then** call `earnVault.onYield(toEarn)`
     ///            - sUSDSC: transfer `toOn` (PPS rises)
@@ -245,7 +246,16 @@ contract RewardRedistributor is AccessControl, Pausable, ReentrancyGuard {
     function distribute() external whenNotPaused onlyRole(OPERATOR_ROLE) nonReentrant {
         // Review: Need to check if only specific role (yield recipient OR yield recipient manager) can call this
         uint256 minted = IMYieldToOne(USDSC_ADDRESS).claimYield();
-        if (minted == 0) return;
+        
+        // If no new yield was minted, check if we have existing balance to distribute
+        // This handles the case where claimYield() was called externally before distribute()
+        if (minted == 0) {
+            uint256 balance = IERC20(USDSC_ADDRESS).balanceOf(address(this));
+            if (balance == 0) return; // No yield to distribute
+            
+            // Use existing balance as minted amount
+            minted = balance;
+        }
 
         uint256 feeToStartale;
         uint256 toEarn;

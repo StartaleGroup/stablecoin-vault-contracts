@@ -370,6 +370,11 @@ The RewardRedistributor has comprehensive test coverage including:
 
 ## Recent Fixes
 
+### External claimYield() Handling Fix
+
+**Fix**: Modified `distribute()` to check the contract's USDSC balance when `claimYield()` returns 0. If there's existing balance, it uses that as the `minted` amount for distribution.
+
+
 ### previewDistribute() S_base Calculation Fix
 
 **Fix**: Changed `previewDistribute()` to use `preMint = true`, making it consistent with other preview functions. Now all preview functions use `S_base = totalSupply()` (current supply), while only the actual `distribute()` function uses `S_base = totalSupply() - minted` (supply before mint).
