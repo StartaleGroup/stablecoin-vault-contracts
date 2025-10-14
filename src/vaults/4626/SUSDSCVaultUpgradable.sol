@@ -1,30 +1,53 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.26;
 
-import {AccessControl} from '@openzeppelin/contracts/access/AccessControl.sol';
-import {ERC20} from '@openzeppelin/contracts/token/ERC20/ERC20.sol';
+import {Initializable} from '@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol';
+import {AccessControlUpgradeable} from '@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol';
+import {ERC20Upgradeable} from '@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol';
 import {IERC20} from '@openzeppelin/contracts/token/ERC20/IERC20.sol';
 import {SafeTransferLib} from 'solady/utils/SafeTransferLib.sol';
-import {ERC4626} from '@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol';
-import {Pausable} from '@openzeppelin/contracts/utils/Pausable.sol';
-import {ReentrancyGuard} from '@openzeppelin/contracts/utils/ReentrancyGuard.sol';
+import {ERC4626Upgradeable} from '@openzeppelin/contracts-upgradeable/token/ERC20/extensions/ERC4626Upgradeable.sol';
+import {PausableUpgradeable} from '@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol';
+import {ReentrancyGuardUpgradeable} from '@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol';
 import {ISUSDSCVaultEventsAndErrors} from '../../interfaces/vaults/4626/ISUSDSCVaultEventsAndErrors.sol';
 
-// Note: non-upgradeable version
-// Note: We could have some admin actions
-
 /// @title sUSDSCVault — ERC-4626: deposit USDSC → mint sUSDSC; external asset inflows lift PPS
-contract SUSDSCVault is ERC20, ERC4626, AccessControl, Pausable, ReentrancyGuard, ISUSDSCVaultEventsAndErrors {
+contract SUSDSCVaultUpgradable is 
+  Initializable,
+  ERC20Upgradeable, 
+  ERC4626Upgradeable, 
+  AccessControlUpgradeable, 
+  PausableUpgradeable, 
+  ReentrancyGuardUpgradeable,
+  ISUSDSCVaultEventsAndErrors 
+{
   using SafeTransferLib for IERC20;
 
   bytes32 public constant PAUSER_ROLE = keccak256('PAUSER_ROLE');
 
-  constructor(IERC20 usdsc, address admin, address pauser) ERC20('Staked USDSC', 'sUSDSC') ERC4626(usdsc) {
-    if (admin == address(0)) revert AdminCannotBeZeroAddress();
-    if (pauser == address(0)) revert PauserCannotBeZeroAddress();
-    _grantRole(DEFAULT_ADMIN_ROLE, admin);
-    _grantRole(PAUSER_ROLE, pauser);
-  }
+/// @custom:oz-upgrades-unsafe-allow constructor
+constructor() {
+  _disableInitializers();
+}
+
+/// @notice Initialize the vault with USDSC asset and admin roles
+/// @param usdsc The USDSC token address to use as the vault asset
+/// @param admin The address that will have admin role
+/// @param pauser The address that will have pauser role
+function initialize(IERC20 usdsc, address admin, address pauser) public initializer {
+  if (address(usdsc) == address(0)) revert AdminCannotBeZeroAddress();
+  if (admin == address(0)) revert AdminCannotBeZeroAddress();
+  if (pauser == address(0)) revert PauserCannotBeZeroAddress();
+  
+  __ERC20_init('Staked USDSC', 'sUSDSC');
+  __ERC4626_init(usdsc);
+  __AccessControl_init();
+  __Pausable_init();
+  __ReentrancyGuard_init();
+  
+  _grantRole(DEFAULT_ADMIN_ROLE, admin);
+  _grantRole(PAUSER_ROLE, pauser);
+}
 
   // OZ’s totalAssets() = asset.balanceOf(this), so simple transfers raise PPS — perfect for yield “donations”.
 
@@ -60,7 +83,7 @@ contract SUSDSCVault is ERC20, ERC4626, AccessControl, Pausable, ReentrancyGuard
   }
 
   // Override function that exists in multiple base contracts
-  function decimals() public view override(ERC20, ERC4626) returns (uint8) {
+  function decimals() public view override(ERC20Upgradeable, ERC4626Upgradeable) returns (uint8) {
     return super.decimals();
   }
 

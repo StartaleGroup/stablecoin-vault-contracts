@@ -2,7 +2,7 @@
 pragma solidity ^0.8.26;
 
 import {Test} from 'forge-std/Test.sol';
-import {SUSDSCVault} from '../../src/vaults/4626/SUSDSCVault.sol';
+import {SUSDSCVaultUpgradable} from '../../src/vaults/4626/SUSDSCVaultUpgradable.sol';
 import {MockSUSDSCVaultV2} from '../mocks/MockSUSDSCVaultV2.sol';
 import {USDSC} from '../../src/coin/mock/USDSC.sol';
 import {MockSwapFacility} from 'm-extensions-test/utils/Mocks.sol';
@@ -14,11 +14,11 @@ import {IERC20} from '@openzeppelin/contracts/token/ERC20/IERC20.sol';
 
 /**
  * @title SUSDSCVaultUpgradeTest
- * @notice Comprehensive tests for SUSDSCVault upgradability
+ * @notice Comprehensive tests for SUSDSCVaultUpgradable upgradability
  * @dev Tests upgrade functionality, storage preservation, and access control
  */
 contract SUSDSCVaultUpgradeTest is Test {
-    SUSDSCVault internal vault;
+    SUSDSCVaultUpgradable internal vault;
     USDSC internal usdsc;
     MockM internal mToken;
     MockSwapFacility internal swapFacility;
@@ -59,19 +59,19 @@ contract SUSDSCVaultUpgradeTest is Test {
         );
         usdsc = USDSC(address(usdscProxy));
 
-        // Deploy SUSDSCVault with proxy
-        SUSDSCVault vaultImplementation = new SUSDSCVault();
+        // Deploy SUSDSCVaultUpgradable with proxy
+        SUSDSCVaultUpgradable vaultImplementation = new SUSDSCVaultUpgradable();
         proxy = new TransparentUpgradeableProxy(
             address(vaultImplementation),
             admin, // OpenZeppelin v5 creates ProxyAdmin automatically with this as owner
             abi.encodeWithSelector(
-                SUSDSCVault.initialize.selector,
+                SUSDSCVaultUpgradable.initialize.selector,
                 IERC20(address(usdsc)),
                 vaultAdmin, // Vault admin for role management
                 pauser
             )
         );
-        vault = SUSDSCVault(address(proxy));
+        vault = SUSDSCVaultUpgradable(address(proxy));
         
         // Get the auto-created ProxyAdmin from the proxy using ERC1967 admin slot
         // keccak256("eip1967.proxy.admin") - 1
@@ -122,7 +122,7 @@ contract SUSDSCVaultUpgradeTest is Test {
     }
 
     function test_CannotInitializeImplementationDirectly() public {
-        SUSDSCVault implementation = new SUSDSCVault();
+        SUSDSCVaultUpgradable implementation = new SUSDSCVaultUpgradable();
         
         vm.expectRevert();
         implementation.initialize(IERC20(address(usdsc)), admin, pauser);
