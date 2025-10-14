@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.26;
 
-import {SUSDSCVault} from '../../src/vaults/4626/SUSDSCVault.sol';
+import {SUSDSCVaultUpgradable} from '../../src/vaults/4626/SUSDSCVaultUpgradable.sol';
 
 /**
  * @title MockSUSDSCVaultV2
  * @notice Mock upgraded version of SUSDSCVault for testing upgrades
  * @dev Adds new functionality to test upgrade storage compatibility
  */
-contract MockSUSDSCVaultV2 is SUSDSCVault {
+contract MockSUSDSCVaultV2 is SUSDSCVaultUpgradable {
     /// @notice New state variable added in V2
     uint256 public newVariable;
 

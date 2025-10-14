@@ -11,8 +11,6 @@ import "lib/openzeppelin-contracts/contracts/interfaces/IERC4626.sol";
 import "../mocks/MockUSDSC.sol";
 import "../mocks/MockExtension.sol";
 import "../mocks/MockERC20.sol";
-import {ProxyAdmin} from '@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol';
-import {TransparentUpgradeableProxy} from '@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol';
 
 
 /// @title RewardRedistributor Integration Tests
@@ -51,20 +49,11 @@ contract RewardRedistributorIntegrationTest is Test {
             pauser          // pauser
         );
         
-        // Deploy SUSDSCVault with proxy
-        ProxyAdmin susdscProxyAdmin = new ProxyAdmin(admin);
-        SUSDSCVault susdscImplementation = new SUSDSCVault();
-        TransparentUpgradeableProxy susdscProxy = new TransparentUpgradeableProxy(
-            address(susdscImplementation),
-            address(susdscProxyAdmin),
-            abi.encodeWithSelector(
-                SUSDSCVault.initialize.selector,
-                IERC20(address(usdsc)),
-                admin,
-                pauser
-            )
+        susdscVault = new SUSDSCVault(
+            IERC20(address(usdsc)),
+            admin,          // admin
+            pauser          // pauser
         );
-        susdscVault = SUSDSCVault(address(susdscProxy));
         
         // Deploy MockExtension (will be set as yieldRecipient later)
         ext = new MockExtension(usdsc, address(0));
@@ -604,19 +593,11 @@ contract RewardRedistributorIntegrationTest is Test {
             pauser
         );
         
-        ProxyAdmin emptyProxyAdmin = new ProxyAdmin(admin);
-        SUSDSCVault emptyImplementation = new SUSDSCVault();
-        TransparentUpgradeableProxy emptyProxy = new TransparentUpgradeableProxy(
-            address(emptyImplementation),
-            address(emptyProxyAdmin),
-            abi.encodeWithSelector(
-                SUSDSCVault.initialize.selector,
-                IERC20(address(usdsc)),
-                admin,
-                pauser
-            )
+        SUSDSCVault emptySUSDSCVault = new SUSDSCVault(
+            IERC20(address(usdsc)),
+            admin,
+            pauser
         );
-        SUSDSCVault emptySUSDSCVault = SUSDSCVault(address(emptyProxy));
         
         // Create new redistributor with empty vaults
         RewardRedistributor rrEmpty = new RewardRedistributor(

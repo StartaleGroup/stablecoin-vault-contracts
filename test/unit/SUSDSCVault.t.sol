@@ -53,19 +53,7 @@ contract UnitSUSDSCVault is Test {
         );
         usdsc = USDSC(address(proxy));
 
-        // Deploy SUSDSCVault with proxy
-        SUSDSCVault vaultImplementation = new SUSDSCVault();
-        TransparentUpgradeableProxy vaultProxy = new TransparentUpgradeableProxy(
-            address(vaultImplementation),
-            address(proxyAdmin),
-            abi.encodeWithSelector(
-                SUSDSCVault.initialize.selector,
-                IERC20(address(usdsc)),
-                admin,
-                pauser
-            )
-        );
-        vault = SUSDSCVault(address(vaultProxy));
+        vault = new SUSDSCVault(IERC20(address(usdsc)), admin, pauser);
     }
 
     function _setupUsers() internal {
