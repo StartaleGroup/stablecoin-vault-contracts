@@ -173,8 +173,8 @@ contract RewardRedistributor is AccessControl, Pausable, ReentrancyGuard {
 
     /// @notice Preview a split using the extension’s **current pending** yield (no carries).
     /// @dev    Reads {IUSDSCMExtension.yield}. Pure preview; does not mutate.
-    /// @return minted            Pending fresh yield on the extension at this moment.
-    /// @return feeToStartale     Fee portion (bps of `minted`) to Startale.
+    /// @return couldBeMinted     Pending fresh yield on the extension at this moment.
+    /// @return feeToStartale     Fee portion (bps of `couldBeMinted`) to Startale.
     /// @return toEarn            Portion of net to EarnVault (OFF) **without carry**.
     /// @return toOn              Portion of net to sUSDSC (ON) **without carry**.
     /// @return toStartaleExtra   Remainder of net: ineligible cohorts + rounding.
@@ -184,7 +184,7 @@ contract RewardRedistributor is AccessControl, Pausable, ReentrancyGuard {
     function previewSplitCurrent()
         external view
         returns (
-            uint256 minted,
+            uint256 couldBeMinted,
             uint256 feeToStartale,
             uint256 toEarn,
             uint256 toOn,
@@ -194,14 +194,14 @@ contract RewardRedistributor is AccessControl, Pausable, ReentrancyGuard {
             uint256 T_yield
         )
     {
-        minted = IMYieldToOne(USDSC_ADDRESS).yield();
-        (feeToStartale, toEarn, toOn, toStartaleExtra, S_base, T_earn, T_yield) = _calculateSplit(minted, false, true);
+        couldBeMinted = IMYieldToOne(USDSC_ADDRESS).yield();
+        (feeToStartale, toEarn, toOn, toStartaleExtra, S_base, T_earn, T_yield) = _calculateSplit(couldBeMinted, false, true);
     }
 
     /// @notice Exact dry-run of {distribute} against current chain state (includes carries).
     /// @dev    Reads extension’s pending yield and current carries; does not mutate state.
-    /// @return minted            Pending fresh yield on the extension at this moment.
-    /// @return feeToStartale     Fee portion (bps of `minted`) to Startale.
+    /// @return couldBeMinted            Pending fresh yield on the extension at this moment.
+    /// @return feeToStartale     Fee portion (bps of `couldBeMinted`) to Startale.
     /// @return toEarn            Portion of net to EarnVault (OFF) **with carry** (exact if called now).
     /// @return toOn              Portion of net to sUSDSC (ON) **with carry** (exact if called now).
     /// @return toStartaleExtra   Remainder of net: ineligible cohorts + rounding.
@@ -211,7 +211,7 @@ contract RewardRedistributor is AccessControl, Pausable, ReentrancyGuard {
     function previewDistribute()
         external view
         returns (
-            uint256 minted,
+            uint256 couldBeMinted,
             uint256 feeToStartale,
             uint256 toEarn,
             uint256 toOn,
@@ -221,8 +221,8 @@ contract RewardRedistributor is AccessControl, Pausable, ReentrancyGuard {
             uint256 T_yield
         )
     {
-        minted = IMYieldToOne(USDSC_ADDRESS).yield();
-        (feeToStartale, toEarn, toOn, toStartaleExtra, S_base, T_earn, T_yield) = _calculateSplit(minted, true, true);
+        couldBeMinted = IMYieldToOne(USDSC_ADDRESS).yield();
+        (feeToStartale, toEarn, toOn, toStartaleExtra, S_base, T_earn, T_yield) = _calculateSplit(couldBeMinted, true, true);
     }
 
     // ---------- core ----------

@@ -30,7 +30,7 @@ The RewardRedistributor uses a single USDSC token address (`USDSC_ADDRESS`) that
   
 - **IMYieldToOne Interface**: Used for yield operations
   - `IMYieldToOne(USDSC_ADDRESS).claimYield()` - Mint fresh yield to contract
-  - `IMYieldToOne(USDSC_ADDRESS).yield()` - Preview pending yield
+  - `IMYieldToOne(USDSC_ADDRESS).yield()` - Preview pending yield that could be minted in USDSC
 
 This design eliminates redundancy since both interfaces point to the same USDSC token contract, while maintaining clear separation of concerns through explicit interface casting.
 
