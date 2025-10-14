@@ -6,6 +6,8 @@ import {console2} from "forge-std/console2.sol";
 import {EarnVault} from "../../src/vaults/earn/EarnVault.sol";
 import {IEarnVaultEventsAndErrors} from "../../src/interfaces/vaults/earn/IEarnVaultEventsAndErrors.sol";
 import {MockERC20} from "../mocks/MockERC20.sol";
+import {Ownable} from "lib/openzeppelin-contracts/contracts/access/Ownable.sol";
+import {Ownable2Step} from "lib/openzeppelin-contracts/contracts/access/Ownable2Step.sol";
 
 contract EarnVaultTest is Test {
     EarnVault public vault;
@@ -588,8 +590,8 @@ contract EarnVaultTest is Test {
     
     /// @notice Test pause functionality
     function test_PauseFunctionality() public {
-        // Owner can pause
-        vm.prank(owner);
+        // Pauser can pause
+        vm.prank(pauser);
         vault.pause();
         
         // Operations should be blocked when paused
@@ -597,8 +599,8 @@ contract EarnVaultTest is Test {
         vm.expectRevert(); // Modern Pausable uses EnforcedPause() error
         vault.deposit(1000e6);
         
-        // Owner can unpause
-        vm.prank(owner);
+        // Pauser can unpause
+        vm.prank(pauser);
         vault.unpause();
         
         // Operations should work after unpause
@@ -609,14 +611,10 @@ contract EarnVaultTest is Test {
     
     /// @notice Test pause access control
     function test_PauseAccessControl() public {
-        // Owner can pause
+        // Owner cannot pause (only pauser can)
         vm.prank(owner);
+        vm.expectRevert(IEarnVaultEventsAndErrors.NotAuthorizedToPause.selector);
         vault.pause();
-        assertTrue(vault.paused(), "Owner should be able to pause");
-        
-        // Unpause for next test
-        vm.prank(owner);
-        vault.unpause();
         
         // Pauser can pause
         vm.prank(pauser);
@@ -634,7 +632,7 @@ contract EarnVaultTest is Test {
         vault.pause();
         
         // Non-authorized user cannot unpause  
-        vm.prank(owner);
+        vm.prank(pauser);
         vault.pause(); // Pause first
         
         vm.prank(alice);
@@ -652,7 +650,7 @@ contract EarnVaultTest is Test {
         // Owner can set new pauser
         vm.prank(owner);
         vault.setPauser(alice);
-        assertTrue(vault.hasRole(vault.PAUSER_ROLE(), alice), "Alice should have PAUSER_ROLE");
+        assertEq(vault.pauser(), alice, "Alice should be the new pauser");
         
         // New pauser can pause
         vm.prank(alice);
@@ -730,7 +728,7 @@ contract EarnVaultTest is Test {
         uint256 initialTreasuryBalance = usdsc.balanceOf(treasury);
         
         // Pause vault for emergency sweep
-        vm.prank(owner);
+        vm.prank(pauser);
         vault.pause();
         
         // Owner can emergency sweep surplus to treasury
@@ -852,7 +850,7 @@ contract EarnVaultTest is Test {
         // Owner can change distributor
         vm.prank(owner);
         vault.setYieldRedistributor(newDistributor);
-        assertTrue(vault.hasRole(vault.YIELD_REDISTRIBUTOR_ROLE(), newDistributor), "New distributor should have YIELD_REDISTRIBUTOR_ROLE");
+        assertEq(vault.yieldRedistributor(), newDistributor, "New distributor should be set");
         
         // Old yield redistributor should no longer work
         vm.prank(yieldRedistributor);
@@ -1190,7 +1188,7 @@ contract EarnVaultTest is Test {
         vault.setYieldRedistributor(newRedistributor);
         
         // Verify change
-        assertTrue(vault.hasRole(vault.YIELD_REDISTRIBUTOR_ROLE(), newRedistributor));
+        assertEq(vault.yieldRedistributor(), newRedistributor);
     }
     
     /// @notice Test setTreasury function
@@ -1214,7 +1212,7 @@ contract EarnVaultTest is Test {
         vault.setPauser(newPauser);
         
         // Verify change
-        assertTrue(vault.hasRole(vault.PAUSER_ROLE(), newPauser));
+        assertEq(vault.pauser(), newPauser);
     }
     
     /// @notice Test setBlacklisted function
@@ -1232,6 +1230,143 @@ contract EarnVaultTest is Test {
         
         // Verify Alice is not blacklisted
         assertFalse(vault.isBlacklisted(alice));
+    }
+    
+    // ========================================
+    // Ownership Transfer Tests (Ownable2Step)
+    // ========================================
+    
+    /// @notice Test 2-step ownership transfer initiation
+    function test_OwnershipTransferInitiation() public {
+        address newOwner = makeAddr("newOwner");
+        
+        // Current owner initiates transfer
+        vm.prank(owner);
+        vault.transferOwnership(newOwner);
+        
+        // Verify pending owner is set
+        assertEq(vault.pendingOwner(), newOwner);
+        
+        // Current owner should still be the same
+        assertEq(vault.owner(), owner);
+        
+        // New owner should not be able to call owner functions yet
+        vm.prank(newOwner);
+        vm.expectRevert();
+        vault.setYieldRedistributor(makeAddr("newDistributor"));
+    }
+    
+    /// @notice Test 2-step ownership transfer acceptance
+    function test_OwnershipTransferAcceptance() public {
+        address newOwner = makeAddr("newOwner");
+        
+        // Step 1: Current owner initiates transfer
+        vm.prank(owner);
+        vault.transferOwnership(newOwner);
+        
+        // Step 2: New owner accepts ownership
+        vm.prank(newOwner);
+        vault.acceptOwnership();
+        
+        // Verify ownership has changed
+        assertEq(vault.owner(), newOwner);
+        assertEq(vault.pendingOwner(), address(0));
+        
+        // New owner should now be able to call owner functions
+        address newDistributor = makeAddr("newDistributor");
+        vm.prank(newOwner);
+        vault.setYieldRedistributor(newDistributor);
+        assertEq(vault.yieldRedistributor(), newDistributor);
+        
+        // Old owner should no longer be able to call owner functions
+        vm.prank(owner);
+        vm.expectRevert();
+        vault.setYieldRedistributor(makeAddr("anotherDistributor"));
+    }
+    
+    /// @notice Test ownership transfer cancellation
+    function test_OwnershipTransferCancellation() public {
+        address newOwner = makeAddr("newOwner");
+        
+        // Step 1: Current owner initiates transfer
+        vm.prank(owner);
+        vault.transferOwnership(newOwner);
+        
+        // Verify pending owner is set
+        assertEq(vault.pendingOwner(), newOwner);
+        
+        // Step 2: Current owner cancels transfer
+        vm.prank(owner);
+        vault.transferOwnership(address(0));
+        
+        // Verify pending owner is cleared
+        assertEq(vault.pendingOwner(), address(0));
+        assertEq(vault.owner(), owner);
+        
+        // New owner should not be able to accept ownership
+        vm.prank(newOwner);
+        vm.expectRevert();
+        vault.acceptOwnership();
+    }
+    
+    /// @notice Test unauthorized ownership transfer attempts
+    function test_UnauthorizedOwnershipTransfer() public {
+        address newOwner = makeAddr("newOwner");
+        
+        // Non-owner cannot initiate transfer
+        vm.prank(alice);
+        vm.expectRevert();
+        vault.transferOwnership(newOwner);
+        
+        // Non-owner cannot accept ownership
+        vm.prank(alice);
+        vm.expectRevert();
+        vault.acceptOwnership();
+        
+        // Pending owner cannot initiate another transfer
+        vm.prank(owner);
+        vault.transferOwnership(newOwner);
+        
+        vm.prank(newOwner);
+        vm.expectRevert();
+        vault.transferOwnership(makeAddr("anotherOwner"));
+    }
+    
+    /// @notice Test ownership transfer events
+    function test_OwnershipTransferEvents() public {
+        address newOwner = makeAddr("newOwner");
+        
+        // Test OwnershipTransferStarted event
+        vm.expectEmit(true, true, true, true);
+        emit Ownable2Step.OwnershipTransferStarted(owner, newOwner);
+        vm.prank(owner);
+        vault.transferOwnership(newOwner);
+        
+        // Test OwnershipTransferred event
+        vm.expectEmit(true, true, true, true);
+        emit Ownable.OwnershipTransferred(owner, newOwner);
+        vm.prank(newOwner);
+        vault.acceptOwnership();
+    }
+    
+    /// @notice Test renounce ownership functionality
+    function test_RenounceOwnership() public {
+        // Owner can renounce ownership
+        vm.prank(owner);
+        vault.renounceOwnership();
+        
+        // Verify ownership is renounced
+        assertEq(vault.owner(), address(0));
+        
+        // No one should be able to call owner functions
+        vm.prank(owner);
+        vm.expectRevert();
+        vault.setYieldRedistributor(makeAddr("newDistributor"));
+        
+        // Even the old owner cannot call owner functions
+        vm.prank(owner);
+        vm.expectRevert();
+        vault.setYieldRedistributor(makeAddr("newDistributor"));
     }
     
     
