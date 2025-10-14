@@ -372,8 +372,9 @@ The RewardRedistributor has comprehensive test coverage including:
 
 ### External claimYield() Handling Fix
 
-**Fix**: Modified `distribute()` to check the contract's USDSC balance when `claimYield()` returns 0. If there's existing balance, it uses that as the `minted` amount for distribution.
+**Fix**: Modified `distribute()` to use `gross = balanceBefore + minted` approach. This elegantly handles both normal flow and external `claimYield()` calls in a single code path, ensuring all yield is always distributed.
 
+**Impact**: Ensures yield is always distributed regardless of whether `claimYield()` was called externally or by the keeper.
 
 ### previewDistribute() S_base Calculation Fix
 

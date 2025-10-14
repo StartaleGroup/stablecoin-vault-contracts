@@ -229,33 +229,28 @@ contract RewardRedistributor is AccessControl, Pausable, ReentrancyGuard {
 
     /// @notice Claims pending USDSC yield from the extension and distributes it per policy.
     /// @dev    Sequence:
-    ///         1) `minted = IMYieldToOne(USDSC_ADDRESS).claimYield()` mints fresh USDSC to this contract (must be yieldRecipient).
-    ///         2) If no new yield was minted, check existing balance to handle external claimYield() calls.
-    ///         3) `feeToStartale = minted * fee_on_yield_bps / 10_000`.
-    ///         4) Compute `S_base = IERC20(USDSC_ADDRESS).totalSupply() - minted` (supply **before** this mint).
-    ///         5) Read TVLs: `T_earn = earnVault.totalPrincipal()`, `T_yield = susdscVault.totalAssets()`.
-    ///         6) Allocate net using carries:
+    ///         1) Record `balanceBefore = IERC20(USDSC_ADDRESS).balanceOf(address(this))`.
+    ///         2) `minted = IMYieldToOne(USDSC_ADDRESS).claimYield()` mints fresh USDSC to this contract (must be yieldRecipient).
+    ///         3) Calculate `gross = balanceBefore + minted` to handle both normal flow and external claimYield() calls.
+    ///         4) `feeToStartale = gross * fee_on_yield_bps / 10_000`.
+    ///         5) Compute `S_base = IERC20(USDSC_ADDRESS).totalSupply() - minted` (supply **before** this mint).
+    ///         6) Read TVLs: `T_earn = earnVault.totalPrincipal()`, `T_yield = susdscVault.totalAssets()`.
+    ///         7) Allocate net using carries:
     ///            `toEarn = floor((net*T_earn + carryEarn)/S_base)`, `carryEarn = (net*T_earn + carryEarn) % S_base`
     ///            `toOn   = floor((net*T_yield   + carryOn)/S_base)`,   `carryOn   = (net*T_yield   + carryOn)   % S_base`
     ///            `toStartaleExtra = net - (toEarn + toOn)`
-    ///         7) Transfers:
+    ///         8) Transfers:
     ///            - Startale: `feeToStartale + toStartaleExtra`
     ///            - EarnVault: transfer `toEarn` **then** call `earnVault.onYield(toEarn)`
     ///            - sUSDSC: transfer `toOn` (PPS rises)
     /// @custom:security nonReentrant and Pausable.
     function distribute() external whenNotPaused onlyRole(OPERATOR_ROLE) nonReentrant {
         // Review: Need to check if only specific role (yield recipient OR yield recipient manager) can call this
+        uint256 balanceBefore = IERC20(USDSC_ADDRESS).balanceOf(address(this));
         uint256 minted = IMYieldToOne(USDSC_ADDRESS).claimYield();
+        uint256 gross = balanceBefore + minted;
         
-        // If no new yield was minted, check if we have existing balance to distribute
-        // This handles the case where claimYield() was called externally before distribute()
-        if (minted == 0) {
-            uint256 balance = IERC20(USDSC_ADDRESS).balanceOf(address(this));
-            if (balance == 0) return; // No yield to distribute
-            
-            // Use existing balance as minted amount
-            minted = balance;
-        }
+        if (gross == 0) return; // No yield to distribute
 
         uint256 feeToStartale;
         uint256 toEarn;
@@ -266,19 +261,19 @@ contract RewardRedistributor is AccessControl, Pausable, ReentrancyGuard {
         uint256 T_yield;
 
         // Use helper for calculation, but we need to handle carries separately since we update state
-        (feeToStartale, toEarn, toOn, toStartaleExtra, S_base, T_earn, T_yield) = _calculateSplit(minted, true, false);
+        (feeToStartale, toEarn, toOn, toStartaleExtra, S_base, T_earn, T_yield) = _calculateSplit(gross, true, false);
 
         // Handle zero S_base case
         if (S_base == 0) {
             if (feeToStartale > 0) IERC20(USDSC_ADDRESS).safeTransfer(treasury, feeToStartale);
             if (toStartaleExtra > 0) IERC20(USDSC_ADDRESS).safeTransfer(treasury, toStartaleExtra);
-            emit Distributed(minted, feeToStartale, 0, 0, toStartaleExtra, 0, 0, 0);
+            emit Distributed(gross, feeToStartale, 0, 0, toStartaleExtra, 0, 0, 0);
             return;
         }
 
         // Update carry state variables (helper doesn't modify state)
         if (S_base > 0) {
-            uint256 net = minted - feeToStartale;
+            uint256 net = gross - feeToStartale;
             uint256 numEarn = net * T_earn + carryEarn;
             carryEarn = numEarn % S_base;
 
@@ -300,7 +295,7 @@ contract RewardRedistributor is AccessControl, Pausable, ReentrancyGuard {
             // optional: susdscVault.syncDonation(toOn);
         }
 
-        emit Distributed(minted, feeToStartale, toEarn, toOn, toStartaleExtra, S_base, T_earn, T_yield);
+        emit Distributed(gross, feeToStartale, toEarn, toOn, toStartaleExtra, S_base, T_earn, T_yield);
     }
 
     // ---------- helpers ----------
