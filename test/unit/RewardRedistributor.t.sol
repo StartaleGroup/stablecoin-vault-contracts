@@ -71,7 +71,7 @@ contract RewardRedistributorTest is Test {
         assertEq(minted, 100_000e6);
         assertEq(Tearn, 1_000_000e6);
         assertEq(T4626,  1_000_000e6);
-        assertEq(S_base, usdsc.totalSupply() /* currently 10M */ - minted);
+        assertEq(S_base, usdsc.totalSupply() /* currently 10M */);
 
         // Keeper Distributes
         vm.prank(operator);
@@ -279,8 +279,8 @@ contract RewardRedistributorTest is Test {
             ,
         ) = rr.previewDistribute();
 
-        // S_base == ASSET.totalSupply() - minted
-        assertEq(S_base, totalSupplyBefore - minted, "correct S_base calculation");
+        // S_base == ASSET.totalSupply() (for preview functions with preMint = true)
+        assertEq(S_base, totalSupplyBefore, "correct S_base calculation");
     }
 
     function testInvariant2_PathologicalZeroSBase() public {
@@ -306,8 +306,8 @@ contract RewardRedistributorTest is Test {
             uint256 T_yield
         ) = rr.previewDistribute();
         
-        // Verify S_base calculation is correct
-        assertEq(S_base, usdsc.totalSupply() - minted, "S_base calculation correct");
+        // Verify S_base calculation is correct (for preview functions with preMint = true)
+        assertEq(S_base, usdsc.totalSupply(), "S_base calculation correct");
         
         // When S_base is very small relative to eligible TVL, most should go to Startale
         uint256 eligibleTVL = T_earn + T_yield;

@@ -222,7 +222,7 @@ contract RewardRedistributor is AccessControl, Pausable, ReentrancyGuard {
         )
     {
         minted = IMYieldToOne(USDSC_ADDRESS).yield();
-        (feeToStartale, toEarn, toOn, toStartaleExtra, S_base, T_earn, T_yield) = _calculateSplit(minted, true, false);
+        (feeToStartale, toEarn, toOn, toStartaleExtra, S_base, T_earn, T_yield) = _calculateSplit(minted, true, true);
     }
 
     // ---------- core ----------
