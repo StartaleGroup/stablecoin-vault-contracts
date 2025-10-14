@@ -3,6 +3,7 @@ pragma solidity ^0.8.26;
 
 import {Test} from 'forge-std/Test.sol';
 import {SUSDSCVault} from '../../src/vaults/4626/SUSDSCVault.sol';
+import {MockSUSDSCVaultV2} from '../mocks/MockSUSDSCVaultV2.sol';
 import {USDSC} from '../../src/coin/mock/USDSC.sol';
 import {MockSwapFacility} from 'm-extensions-test/utils/Mocks.sol';
 import {MockM} from 'm-extensions-test/utils/Mocks.sol';
@@ -140,7 +141,7 @@ contract SUSDSCVaultUpgradeTest is Test {
     //////////////////////////////////////////////////////////////*/
 
     function test_OnlyAdminCanUpgrade() public {
-        SUSDSCVault newImplementation = new SUSDSCVault();
+        MockSUSDSCVaultV2 newImplementation = new MockSUSDSCVaultV2();
 
         // Non-admin cannot upgrade
         vm.prank(attacker);
@@ -153,7 +154,7 @@ contract SUSDSCVaultUpgradeTest is Test {
     }
 
     function test_UpgradeEmitsEvent() public {
-        SUSDSCVault newImplementation = new SUSDSCVault();
+        MockSUSDSCVaultV2 newImplementation = new MockSUSDSCVaultV2();
 
         vm.prank(admin);
         vm.expectEmit(true, false, false, false);
@@ -172,7 +173,7 @@ contract SUSDSCVaultUpgradeTest is Test {
         address assetBefore = address(vault.asset());
         
         // Upgrade
-        SUSDSCVault newImplementation = new SUSDSCVault();
+        MockSUSDSCVaultV2 newImplementation = new MockSUSDSCVaultV2();
         vm.prank(admin);
         proxyAdmin.upgradeAndCall(ITransparentUpgradeableProxy(address(proxy)), address(newImplementation), "");
 
@@ -188,7 +189,7 @@ contract SUSDSCVaultUpgradeTest is Test {
         bool pauserRoleBefore = vault.hasRole(vault.PAUSER_ROLE(), pauser);
 
         // Upgrade
-        SUSDSCVault newImplementation = new SUSDSCVault();
+        MockSUSDSCVaultV2 newImplementation = new MockSUSDSCVaultV2();
         vm.prank(admin);
         proxyAdmin.upgradeAndCall(ITransparentUpgradeableProxy(address(proxy)), address(newImplementation), "");
 
@@ -206,7 +207,7 @@ contract SUSDSCVaultUpgradeTest is Test {
         uint256 assetsBefore = vault.totalAssets();
 
         // Upgrade
-        SUSDSCVault newImplementation = new SUSDSCVault();
+        MockSUSDSCVaultV2 newImplementation = new MockSUSDSCVaultV2();
         vm.prank(admin);
         proxyAdmin.upgradeAndCall(ITransparentUpgradeableProxy(address(proxy)), address(newImplementation), "");
 
@@ -230,7 +231,7 @@ contract SUSDSCVaultUpgradeTest is Test {
         uint256 ppsBefore = vault.convertToAssets(1e6);
 
         // Upgrade
-        SUSDSCVault newImplementation = new SUSDSCVault();
+        MockSUSDSCVaultV2 newImplementation = new MockSUSDSCVaultV2();
         vm.prank(admin);
         proxyAdmin.upgradeAndCall(ITransparentUpgradeableProxy(address(proxy)), address(newImplementation), "");
 
@@ -246,7 +247,7 @@ contract SUSDSCVaultUpgradeTest is Test {
         bool pausedBefore = vault.paused();
 
         // Upgrade
-        SUSDSCVault newImplementation = new SUSDSCVault();
+        MockSUSDSCVaultV2 newImplementation = new MockSUSDSCVaultV2();
         vm.prank(admin);
         proxyAdmin.upgradeAndCall(ITransparentUpgradeableProxy(address(proxy)), address(newImplementation), "");
 
@@ -261,7 +262,7 @@ contract SUSDSCVaultUpgradeTest is Test {
 
     function test_DepositWorksAfterUpgrade() public {
         // Upgrade
-        SUSDSCVault newImplementation = new SUSDSCVault();
+        MockSUSDSCVaultV2 newImplementation = new MockSUSDSCVaultV2();
         vm.prank(admin);
         proxyAdmin.upgradeAndCall(ITransparentUpgradeableProxy(address(proxy)), address(newImplementation), "");
 
@@ -279,7 +280,7 @@ contract SUSDSCVaultUpgradeTest is Test {
         uint256 shares = vault.deposit(DEPOSIT_AMOUNT, user1);
 
         // Upgrade
-        SUSDSCVault newImplementation = new SUSDSCVault();
+        MockSUSDSCVaultV2 newImplementation = new MockSUSDSCVaultV2();
         vm.prank(admin);
         proxyAdmin.upgradeAndCall(ITransparentUpgradeableProxy(address(proxy)), address(newImplementation), "");
 
@@ -293,7 +294,7 @@ contract SUSDSCVaultUpgradeTest is Test {
 
     function test_PauseWorksAfterUpgrade() public {
         // Upgrade
-        SUSDSCVault newImplementation = new SUSDSCVault();
+        MockSUSDSCVaultV2 newImplementation = new MockSUSDSCVaultV2();
         vm.prank(admin);
         proxyAdmin.upgradeAndCall(ITransparentUpgradeableProxy(address(proxy)), address(newImplementation), "");
 
@@ -312,7 +313,7 @@ contract SUSDSCVaultUpgradeTest is Test {
 
     function test_AccessControlWorksAfterUpgrade() public {
         // Upgrade
-        SUSDSCVault newImplementation = new SUSDSCVault();
+        MockSUSDSCVaultV2 newImplementation = new MockSUSDSCVaultV2();
         vm.prank(admin);
         proxyAdmin.upgradeAndCall(ITransparentUpgradeableProxy(address(proxy)), address(newImplementation), "");
 
@@ -346,7 +347,7 @@ contract SUSDSCVaultUpgradeTest is Test {
         uint256 totalAssetsBefore = vault.totalAssets();
 
         // Upgrade
-        SUSDSCVault newImplementation = new SUSDSCVault();
+        MockSUSDSCVaultV2 newImplementation = new MockSUSDSCVaultV2();
         vm.prank(admin);
         proxyAdmin.upgradeAndCall(ITransparentUpgradeableProxy(address(proxy)), address(newImplementation), "");
 
@@ -383,7 +384,7 @@ contract SUSDSCVaultUpgradeTest is Test {
         uint256 sharesBefore = vault.balanceOf(user1);
 
         // Upgrade while paused
-        SUSDSCVault newImplementation = new SUSDSCVault();
+        MockSUSDSCVaultV2 newImplementation = new MockSUSDSCVaultV2();
         vm.prank(admin);
         proxyAdmin.upgradeAndCall(ITransparentUpgradeableProxy(address(proxy)), address(newImplementation), "");
 
@@ -419,7 +420,7 @@ contract SUSDSCVaultUpgradeTest is Test {
         uint256 ppsBefore = vault.convertToAssets(1e6);
 
         // Upgrade
-        SUSDSCVault newImplementation = new SUSDSCVault();
+        MockSUSDSCVaultV2 newImplementation = new MockSUSDSCVaultV2();
         vm.prank(admin);
         proxyAdmin.upgradeAndCall(ITransparentUpgradeableProxy(address(proxy)), address(newImplementation), "");
 
@@ -443,21 +444,21 @@ contract SUSDSCVaultUpgradeTest is Test {
         uint256 initialShares = vault.balanceOf(user1);
 
         // First upgrade
-        SUSDSCVault newImplementation1 = new SUSDSCVault();
+        MockSUSDSCVaultV2 newImplementation1 = new MockSUSDSCVaultV2();
         vm.prank(admin);
         proxyAdmin.upgradeAndCall(ITransparentUpgradeableProxy(address(proxy)), address(newImplementation1), "");
 
         assertEq(vault.balanceOf(user1), initialShares);
 
         // Second upgrade
-        SUSDSCVault newImplementation2 = new SUSDSCVault();
+        MockSUSDSCVaultV2 newImplementation2 = new MockSUSDSCVaultV2();
         vm.prank(admin);
         proxyAdmin.upgradeAndCall(ITransparentUpgradeableProxy(address(proxy)), address(newImplementation2), "");
 
         assertEq(vault.balanceOf(user1), initialShares);
 
         // Third upgrade
-        SUSDSCVault newImplementation3 = new SUSDSCVault();
+        MockSUSDSCVaultV2 newImplementation3 = new MockSUSDSCVaultV2();
         vm.prank(admin);
         proxyAdmin.upgradeAndCall(ITransparentUpgradeableProxy(address(proxy)), address(newImplementation3), "");
 
@@ -498,7 +499,7 @@ contract SUSDSCVaultUpgradeTest is Test {
         vault.grantRole(pauserRole, user1);
 
         // Upgrade
-        SUSDSCVault newImplementation = new SUSDSCVault();
+        MockSUSDSCVaultV2 newImplementation = new MockSUSDSCVaultV2();
         vm.prank(admin);
         proxyAdmin.upgradeAndCall(ITransparentUpgradeableProxy(address(proxy)), address(newImplementation), "");
 
@@ -519,7 +520,7 @@ contract SUSDSCVaultUpgradeTest is Test {
         vault.deposit(DEPOSIT_AMOUNT, user1);
 
         // Upgrade
-        SUSDSCVault newImplementation = new SUSDSCVault();
+        MockSUSDSCVaultV2 newImplementation = new MockSUSDSCVaultV2();
         vm.prank(admin);
         proxyAdmin.upgradeAndCall(ITransparentUpgradeableProxy(address(proxy)), address(newImplementation), "");
 
@@ -532,6 +533,41 @@ contract SUSDSCVaultUpgradeTest is Test {
         assertGt(vault.maxMint(user2), 0);
         assertGt(vault.maxWithdraw(user1), 0);
         assertGt(vault.maxRedeem(user1), 0);
+    }
+
+    function test_V2NewFunctionality() public {
+        // Upgrade to V2
+        MockSUSDSCVaultV2 newImplementation = new MockSUSDSCVaultV2();
+        vm.prank(admin);
+        proxyAdmin.upgradeAndCall(ITransparentUpgradeableProxy(address(proxy)), address(newImplementation), "");
+
+        // Cast to V2 to access new functionality
+        MockSUSDSCVaultV2 vaultV2 = MockSUSDSCVaultV2(address(vault));
+
+        // Test new variable starts at 0
+        assertEq(vaultV2.getNewVariable(), 0);
+
+        // Test version function
+        assertEq(vaultV2.version(), "2.0.0");
+
+        // Test only admin can set new variable
+        vm.prank(attacker);
+        vm.expectRevert();
+        vaultV2.setNewVariable(12345);
+
+        // Test vault admin can set new variable
+        vm.prank(vaultAdmin);
+        vm.expectEmit(true, false, false, true);
+        emit MockSUSDSCVaultV2.NewVariableSet(12345);
+        vaultV2.setNewVariable(12345);
+
+        // Verify new variable was set
+        assertEq(vaultV2.getNewVariable(), 12345);
+
+        // Verify original functionality still works
+        vm.prank(user1);
+        vault.deposit(DEPOSIT_AMOUNT, user1);
+        assertGt(vault.balanceOf(user1), 0);
     }
 
     /*//////////////////////////////////////////////////////////////
