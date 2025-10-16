@@ -81,7 +81,7 @@ contract EarnVaultUpgradesTest is Test {
                 pauser
             )
         );
-        vault = EarnVaultUpgradeable(address(proxy));
+        vault = EarnVaultUpgradeable(payable(address(proxy)));
 
         // Get the auto-created ProxyAdmin from the proxy using ERC1967 admin slot
         bytes32 adminSlot = bytes32(uint256(keccak256("eip1967.proxy.admin")) - 1);
@@ -127,7 +127,7 @@ contract EarnVaultUpgradesTest is Test {
             abi.encodeWithSelector(EarnVaultV2.initializeV2.selector)
         );
         
-        EarnVaultV2 vaultV2 = EarnVaultV2(address(proxy));
+        EarnVaultV2 vaultV2 = EarnVaultV2(payable(address(proxy)));
         
         // Verify implementation updated
         assertEq(_getImplementation(), address(v2Implementation));
@@ -185,7 +185,7 @@ contract EarnVaultUpgradesTest is Test {
             abi.encodeWithSelector(EarnVaultV2.initializeV2.selector)
         );
         
-        EarnVaultV2 vaultV2 = EarnVaultV2(address(proxy));
+        EarnVaultV2 vaultV2 = EarnVaultV2(payable(address(proxy)));
         
         // Verify all state preserved
         assertEq(vaultV2.totalPrincipal(), totalPrincipalBefore);
@@ -215,7 +215,7 @@ contract EarnVaultUpgradesTest is Test {
             abi.encodeWithSelector(EarnVaultV2.initializeV2.selector)
         );
         
-        EarnVaultV2 vaultV2 = EarnVaultV2(address(proxy));
+        EarnVaultV2 vaultV2 = EarnVaultV2(payable(address(proxy)));
         
         // Set up V2 state
         vm.prank(alice);
@@ -248,7 +248,7 @@ contract EarnVaultUpgradesTest is Test {
             abi.encodeWithSelector(EarnVaultV3.initializeV3.selector)
         );
         
-        EarnVaultV3 vaultV3 = EarnVaultV3(address(proxy));
+        EarnVaultV3 vaultV3 = EarnVaultV3(payable(address(proxy)));
         
         // Verify implementation updated
         assertEq(_getImplementation(), address(v3Implementation));
@@ -280,7 +280,7 @@ contract EarnVaultUpgradesTest is Test {
             abi.encodeWithSelector(EarnVaultV2.initializeV2.selector)
         );
         
-        EarnVaultV2 vaultV2 = EarnVaultV2(address(proxy));
+        EarnVaultV2 vaultV2 = EarnVaultV2(payable(address(proxy)));
         
         // Set up complex V2 state
         vm.prank(alice);
@@ -328,7 +328,7 @@ contract EarnVaultUpgradesTest is Test {
             abi.encodeWithSelector(EarnVaultV3.initializeV3.selector)
         );
         
-        EarnVaultV3 vaultV3 = EarnVaultV3(address(proxy));
+        EarnVaultV3 vaultV3 = EarnVaultV3(payable(address(proxy)));
         
         // Verify all state preserved
         assertEq(vaultV3.totalPrincipal(), totalPrincipalBefore);
@@ -373,7 +373,7 @@ contract EarnVaultUpgradesTest is Test {
         vm.prank(admin);
         proxyAdmin.upgradeAndCall(ITransparentUpgradeableProxy(address(proxy)), address(v2Implementation), "");
         
-        EarnVaultV2 vaultV2 = EarnVaultV2(address(proxy));
+        EarnVaultV2 vaultV2 = EarnVaultV2(payable(address(proxy)));
         vaultV2.initializeV2();
         
         // Set V2 features
@@ -384,7 +384,7 @@ contract EarnVaultUpgradesTest is Test {
         vm.prank(admin);
         proxyAdmin.upgradeAndCall(ITransparentUpgradeableProxy(address(proxy)), address(v3Implementation), "");
         
-        EarnVaultV3 vaultV3 = EarnVaultV3(address(proxy));
+        EarnVaultV3 vaultV3 = EarnVaultV3(payable(address(proxy)));
         vaultV3.initializeV3();
         
         // Verify final state
@@ -417,7 +417,7 @@ contract EarnVaultUpgradesTest is Test {
             abi.encodeWithSelector(EarnVaultV3.initializeV3.selector)
         );
         
-        EarnVaultV3 vaultV3 = EarnVaultV3(address(proxy));
+        EarnVaultV3 vaultV3 = EarnVaultV3(payable(address(proxy)));
         
         // Set up deposits
         vm.prank(alice);
@@ -452,7 +452,7 @@ contract EarnVaultUpgradesTest is Test {
             abi.encodeWithSelector(EarnVaultV3.initializeV3.selector)
         );
         
-        EarnVaultV3 vaultV3 = EarnVaultV3(address(proxy));
+        EarnVaultV3 vaultV3 = EarnVaultV3(payable(address(proxy)));
         
         // Enable auto-compound
         vm.prank(owner);
@@ -492,7 +492,7 @@ contract EarnVaultUpgradesTest is Test {
             abi.encodeWithSelector(EarnVaultV3.initializeV3.selector)
         );
         
-        EarnVaultV3 vaultV3 = EarnVaultV3(address(proxy));
+        EarnVaultV3 vaultV3 = EarnVaultV3(payable(address(proxy)));
         
         // Enable auto-compound
         vm.prank(owner);
@@ -552,7 +552,7 @@ contract EarnVaultUpgradesTest is Test {
         vm.prank(admin);
         proxyAdmin.upgradeAndCall(ITransparentUpgradeableProxy(address(proxy)), address(v2Implementation), "");
         
-        EarnVaultV2 vaultV2 = EarnVaultV2(address(proxy));
+        EarnVaultV2 vaultV2 = EarnVaultV2(payable(address(proxy)));
         vaultV2.initializeV2();
         
         // Verify V1 state preserved in V2
@@ -568,7 +568,7 @@ contract EarnVaultUpgradesTest is Test {
         vm.prank(admin);
         proxyAdmin.upgradeAndCall(ITransparentUpgradeableProxy(address(proxy)), address(v3Implementation), "");
         
-        EarnVaultV3 vaultV3 = EarnVaultV3(address(proxy));
+        EarnVaultV3 vaultV3 = EarnVaultV3(payable(address(proxy)));
         vaultV3.initializeV3();
         
         // Verify V1 state still preserved in V3
@@ -597,7 +597,7 @@ contract EarnVaultUpgradesTest is Test {
             abi.encodeWithSelector(EarnVaultV2.initializeV2.selector)
         );
         
-        EarnVaultV2 vaultV2 = EarnVaultV2(address(proxy));
+        EarnVaultV2 vaultV2 = EarnVaultV2(payable(address(proxy)));
         
         assertEq(_getImplementation(), address(v2Implementation));
         assertEq(vaultV2.getVersion(), "EarnVaultV2");
@@ -610,7 +610,7 @@ contract EarnVaultUpgradesTest is Test {
             abi.encodeWithSelector(EarnVaultV3.initializeV3.selector)
         );
         
-        EarnVaultV3 vaultV3 = EarnVaultV3(address(proxy));
+        EarnVaultV3 vaultV3 = EarnVaultV3(payable(address(proxy)));
         
         assertEq(_getImplementation(), address(v3Implementation));
         assertEq(vaultV3.getVersion(), "EarnVaultV3");
@@ -625,7 +625,7 @@ contract EarnVaultUpgradesTest is Test {
             abi.encodeWithSelector(EarnVaultV2.initializeV2.selector)
         );
         
-        EarnVaultV2 vaultV2 = EarnVaultV2(address(proxy));
+        EarnVaultV2 vaultV2 = EarnVaultV2(payable(address(proxy)));
         
         // Try to re-initialize V2 - should fail with OpenZeppelin's InvalidInitialization
         vm.expectRevert();
@@ -641,7 +641,7 @@ contract EarnVaultUpgradesTest is Test {
             abi.encodeWithSelector(EarnVaultV3.initializeV3.selector)
         );
         
-        EarnVaultV3 vaultV3 = EarnVaultV3(address(proxy));
+        EarnVaultV3 vaultV3 = EarnVaultV3(payable(address(proxy)));
         
         // Try to re-initialize V3 - should fail with OpenZeppelin's InvalidInitialization
         vm.expectRevert();

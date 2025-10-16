@@ -69,7 +69,7 @@ contract EarnVaultUpgradeableSimpleTest is Test {
                 pauser
             )
         );
-        vault = EarnVaultUpgradeable(address(proxy));
+        vault = EarnVaultUpgradeable(payable(address(proxy)));
 
         // Get the auto-created ProxyAdmin from the proxy using ERC1967 admin slot
         // keccak256("eip1967.proxy.admin") - 1
@@ -97,7 +97,7 @@ contract EarnVaultUpgradeableSimpleTest is Test {
     }
 
     function test_getImplementation() public view {
-        EarnVaultUpgradeableHarness harness = EarnVaultUpgradeableHarness(address(proxy));
+        EarnVaultUpgradeableHarness harness = EarnVaultUpgradeableHarness(payable(address(proxy)));
         assertEq(harness.getImplementation(), address(implementation));
     }
 
@@ -196,7 +196,7 @@ contract EarnVaultUpgradeableSimpleTest is Test {
             abi.encodeWithSelector(EarnVaultV2.initializeV2.selector)
         );
         
-        EarnVaultV2 vaultV2 = EarnVaultV2(address(proxy));
+        EarnVaultV2 vaultV2 = EarnVaultV2(payable(address(proxy)));
         
         // Verify state is preserved
         assertEq(vaultV2.totalPrincipal(), totalPrincipalBefore);
@@ -241,7 +241,7 @@ contract EarnVaultUpgradeableSimpleTest is Test {
             abi.encodeWithSelector(EarnVaultV2.initializeV2.selector)
         );
         
-        EarnVaultV2 vaultV2 = EarnVaultV2(address(proxy));
+        EarnVaultV2 vaultV2 = EarnVaultV2(payable(address(proxy)));
         
         // Verify balances are preserved
         assertEq(vaultV2.principal(alice), alicePrincipal);
@@ -267,7 +267,7 @@ contract EarnVaultUpgradeableSimpleTest is Test {
         vm.prank(admin);
         proxyAdmin.upgradeAndCall(ITransparentUpgradeableProxy(address(proxy)), address(newImpl), "");
         
-        EarnVaultV2 vaultV2 = EarnVaultV2(address(proxy));
+        EarnVaultV2 vaultV2 = EarnVaultV2(payable(address(proxy)));
         vaultV2.initializeV2();
         
         // Test deposit after upgrade
@@ -293,7 +293,7 @@ contract EarnVaultUpgradeableSimpleTest is Test {
         vm.prank(admin);
         proxyAdmin.upgradeAndCall(ITransparentUpgradeableProxy(address(proxy)), address(newImpl), "");
         
-        EarnVaultV2 vaultV2 = EarnVaultV2(address(proxy));
+        EarnVaultV2 vaultV2 = EarnVaultV2(payable(address(proxy)));
         vaultV2.initializeV2();
         
         // Test withdraw after upgrade
@@ -321,7 +321,7 @@ contract EarnVaultUpgradeableSimpleTest is Test {
         vm.prank(admin);
         proxyAdmin.upgradeAndCall(ITransparentUpgradeableProxy(address(proxy)), address(newImpl), "");
         
-        EarnVaultV2 vaultV2 = EarnVaultV2(address(proxy));
+        EarnVaultV2 vaultV2 = EarnVaultV2(payable(address(proxy)));
         vaultV2.initializeV2();
         
         // Test claim after upgrade
@@ -357,7 +357,7 @@ contract EarnVaultUpgradeableSimpleTest is Test {
         vm.prank(admin);
         proxyAdmin.upgradeAndCall(ITransparentUpgradeableProxy(address(proxy)), address(newImpl), "");
         
-        EarnVaultV2 vaultV2 = EarnVaultV2(address(proxy));
+        EarnVaultV2 vaultV2 = EarnVaultV2(payable(address(proxy)));
         vaultV2.initializeV2();
         
         // Test yield distribution after upgrade
@@ -377,7 +377,7 @@ contract EarnVaultUpgradeableSimpleTest is Test {
         vm.prank(admin);
         proxyAdmin.upgradeAndCall(ITransparentUpgradeableProxy(address(proxy)), address(newImpl), "");
         
-        EarnVaultV2 vaultV2 = EarnVaultV2(address(proxy));
+        EarnVaultV2 vaultV2 = EarnVaultV2(payable(address(proxy)));
         vaultV2.initializeV2();
         
         // Test admin functions still work
@@ -398,7 +398,7 @@ contract EarnVaultUpgradeableSimpleTest is Test {
         vm.prank(admin);
         proxyAdmin.upgradeAndCall(ITransparentUpgradeableProxy(address(proxy)), address(newImpl), "");
         
-        EarnVaultV2 vaultV2 = EarnVaultV2(address(proxy));
+        EarnVaultV2 vaultV2 = EarnVaultV2(payable(address(proxy)));
         vaultV2.initializeV2();
         
         // Test V2 specific features
@@ -426,7 +426,7 @@ contract EarnVaultUpgradeableSimpleTest is Test {
         vm.prank(admin);
         proxyAdmin.upgradeAndCall(ITransparentUpgradeableProxy(address(proxy)), address(newImpl), "");
         
-        EarnVaultV2 vaultV2 = EarnVaultV2(address(proxy));
+        EarnVaultV2 vaultV2 = EarnVaultV2(payable(address(proxy)));
         vaultV2.initializeV2();
         
         // Test pause functionality after upgrade
@@ -472,7 +472,7 @@ contract EarnVaultUpgradeableSimpleTest is Test {
         vm.prank(admin);
         proxyAdmin.upgradeAndCall(ITransparentUpgradeableProxy(address(proxy)), address(newImpl), "");
         
-        EarnVaultV2 vaultV2 = EarnVaultV2(address(proxy));
+        EarnVaultV2 vaultV2 = EarnVaultV2(payable(address(proxy)));
         vaultV2.initializeV2();
         
         // Verify state is preserved and still paused
@@ -521,7 +521,7 @@ contract EarnVaultUpgradeableSimpleTest is Test {
         vm.prank(admin);
         proxyAdmin.upgradeAndCall(ITransparentUpgradeableProxy(address(proxy)), address(newImpl), "");
         
-        EarnVaultV2 vaultV2 = EarnVaultV2(address(proxy));
+        EarnVaultV2 vaultV2 = EarnVaultV2(payable(address(proxy)));
         vaultV2.initializeV2();
         
         // Verify accumulated yield is preserved
@@ -564,7 +564,7 @@ contract EarnVaultUpgradeableSimpleTest is Test {
         vm.prank(admin);
         proxyAdmin.upgradeAndCall(ITransparentUpgradeableProxy(address(proxy)), address(newImpl), "");
         
-        EarnVaultV2 vaultV2 = EarnVaultV2(address(proxy));
+        EarnVaultV2 vaultV2 = EarnVaultV2(payable(address(proxy)));
         vaultV2.initializeV2();
         
         // Verify roles are preserved
@@ -603,7 +603,7 @@ contract EarnVaultUpgradeableSimpleTest is Test {
         vm.prank(admin);
         proxyAdmin.upgradeAndCall(ITransparentUpgradeableProxy(address(proxy)), address(newImpl), "");
         
-        EarnVaultV2 vaultV2 = EarnVaultV2(address(proxy));
+        EarnVaultV2 vaultV2 = EarnVaultV2(payable(address(proxy)));
         vaultV2.initializeV2();
         
         // Test all view functions work after upgrade
@@ -643,7 +643,7 @@ contract EarnVaultUpgradeableSimpleTest is Test {
         vm.prank(admin);
         proxyAdmin.upgradeAndCall(ITransparentUpgradeableProxy(address(proxy)), address(newImpl), "");
         
-        EarnVaultV2 vaultV2 = EarnVaultV2(address(proxy));
+        EarnVaultV2 vaultV2 = EarnVaultV2(payable(address(proxy)));
         vaultV2.initializeV2();
         
         // Verify implementation address is correct

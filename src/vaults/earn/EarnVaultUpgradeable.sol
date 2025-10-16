@@ -638,4 +638,18 @@ contract EarnVaultUpgradeable is
     function getVersion() external pure virtual returns (string memory) {
         return "EarnVaultV1";
     }
+
+    // =========================
+    // ETH Safety
+    // =========================
+
+    /// @dev Reject ETH transfers to prevent accidental loss
+    receive() external payable {
+        revert EthNotAccepted();
+    }
+
+    /// @dev Reject ETH transfers to prevent accidental loss
+    fallback() external payable {
+        revert EthNotAccepted();
+    }
 }
