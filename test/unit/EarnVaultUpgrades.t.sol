@@ -648,6 +648,100 @@ contract EarnVaultUpgradesTest is Test {
         vaultV3.initializeV3();
     }
 
+    // =========================
+    // ETH Safety Tests
+    // =========================
+
+    function test_CannotSendETHToVaultV1() public {
+        // Try to send ETH to V1 vault - should fail
+        vm.expectRevert(abi.encodeWithSelector(IEarnVaultEventsAndErrors.EthNotAccepted.selector));
+        address(vault).call{value: 1 ether}("");
+    }
+
+    function test_CannotSendETHToVaultV2() public {
+        // Upgrade to V2 and initialize
+        vm.prank(admin);
+        proxyAdmin.upgradeAndCall(
+            ITransparentUpgradeableProxy(address(proxy)), 
+            address(v2Implementation), 
+            abi.encodeWithSelector(EarnVaultV2.initializeV2.selector)
+        );
+        
+        EarnVaultV2 vaultV2 = EarnVaultV2(payable(address(proxy)));
+        
+        // Try to send ETH to V2 vault - should fail
+        vm.expectRevert(abi.encodeWithSelector(IEarnVaultEventsAndErrors.EthNotAccepted.selector));
+        address(vaultV2).call{value: 1 ether}("");
+    }
+
+    function test_CannotSendETHToVaultV3() public {
+        // Upgrade to V3 and initialize
+        vm.prank(admin);
+        proxyAdmin.upgradeAndCall(
+            ITransparentUpgradeableProxy(address(proxy)), 
+            address(v3Implementation), 
+            abi.encodeWithSelector(EarnVaultV3.initializeV3.selector)
+        );
+        
+        EarnVaultV3 vaultV3 = EarnVaultV3(payable(address(proxy)));
+        
+        // Try to send ETH to V3 vault - should fail
+        vm.expectRevert(abi.encodeWithSelector(IEarnVaultEventsAndErrors.EthNotAccepted.selector));
+        address(vaultV3).call{value: 1 ether}("");
+    }
+
+    function test_EthRejectionWorksThroughUpgradeChain() public {
+        // Set up some state in V1
+        vm.prank(alice);
+        vault.deposit(1000e6);
+        
+        // Test ETH rejection in V1
+        vm.expectRevert(abi.encodeWithSelector(IEarnVaultEventsAndErrors.EthNotAccepted.selector));
+        address(vault).call{value: 1 ether}("");
+        
+        // Upgrade to V2
+        vm.prank(admin);
+        proxyAdmin.upgradeAndCall(
+            ITransparentUpgradeableProxy(address(proxy)), 
+            address(v2Implementation), 
+            abi.encodeWithSelector(EarnVaultV2.initializeV2.selector)
+        );
+        
+        EarnVaultV2 vaultV2 = EarnVaultV2(payable(address(proxy)));
+        
+        // Test ETH rejection in V2
+        vm.expectRevert(abi.encodeWithSelector(IEarnVaultEventsAndErrors.EthNotAccepted.selector));
+        address(vaultV2).call{value: 1 ether}("");
+        
+        // Upgrade to V3
+        vm.prank(admin);
+        proxyAdmin.upgradeAndCall(
+            ITransparentUpgradeableProxy(address(proxy)), 
+            address(v3Implementation), 
+            abi.encodeWithSelector(EarnVaultV3.initializeV3.selector)
+        );
+        
+        EarnVaultV3 vaultV3 = EarnVaultV3(payable(address(proxy)));
+        
+        // Test ETH rejection in V3
+        vm.expectRevert(abi.encodeWithSelector(IEarnVaultEventsAndErrors.EthNotAccepted.selector));
+        address(vaultV3).call{value: 1 ether}("");
+        
+        // Verify vault functionality still works through all upgrades
+        assertEq(vaultV3.principal(alice), 1000e6);
+        assertEq(vaultV3.totalPrincipal(), 1000e6);
+    }
+
+    function test_EthRejectionViaReceiveAndFallback() public {
+        // Test receive() function
+        vm.expectRevert(abi.encodeWithSelector(IEarnVaultEventsAndErrors.EthNotAccepted.selector));
+        address(vault).call{value: 1 ether}("");
+        
+        // Test fallback() function with invalid data
+        vm.expectRevert(abi.encodeWithSelector(IEarnVaultEventsAndErrors.EthNotAccepted.selector));
+        address(vault).call{value: 1 ether}("invalidFunction()");
+    }
+
     /*//////////////////////////////////////////////////////////////
                         HELPER FUNCTIONS
     //////////////////////////////////////////////////////////////*/

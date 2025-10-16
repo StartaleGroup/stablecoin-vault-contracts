@@ -8,6 +8,7 @@ import {EarnVaultUpgradeableHarness} from "../harness/EarnVaultUpgradeableHarnes
 import {EarnVaultV2} from "../mocks/EarnVaultV2.sol";
 import {IEarnVaultEventsAndErrors} from "../../src/interfaces/vaults/earn/IEarnVaultEventsAndErrors.sol";
 import {MockERC20} from "../mocks/MockERC20.sol";
+import {SelfDestructor} from "../mocks/SelfDestructor.sol";
 import {Ownable} from "lib/openzeppelin-contracts/contracts/access/Ownable.sol";
 import {Ownable2Step} from "lib/openzeppelin-contracts/contracts/access/Ownable2Step.sol";
 import {ProxyAdmin} from '@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol';
@@ -674,6 +675,236 @@ contract EarnVaultUpgradeableSimpleTest is Test {
         // Verify V2 storage doesn't interfere with V1 storage
         assertEq(vaultV2.totalPrincipal(), 0); // Should still be 0 from initialization
         assertEq(vaultV2.globalIndex(), RAY); // Should still be RAY from initialization
+    }
+
+    // =========================
+    // ETH Safety Tests
+    // =========================
+
+    function test_CannotSendETHToVaultV1() public {
+        // Try to send ETH to V1 vault - should fail
+        vm.expectRevert(abi.encodeWithSelector(IEarnVaultEventsAndErrors.EthNotAccepted.selector));
+        address(vault).call{value: 1 ether}("");
+    }
+
+    function test_CannotSendETHToVaultV2() public {
+        // Upgrade to V2
+        EarnVaultV2 newImpl = new EarnVaultV2();
+        vm.prank(admin);
+        proxyAdmin.upgradeAndCall(
+            ITransparentUpgradeableProxy(address(proxy)), 
+            address(newImpl), 
+            abi.encodeWithSelector(EarnVaultV2.initializeV2.selector)
+        );
+        
+        EarnVaultV2 vaultV2 = EarnVaultV2(payable(address(proxy)));
+        
+        // Try to send ETH to V2 vault - should fail
+        vm.expectRevert(abi.encodeWithSelector(IEarnVaultEventsAndErrors.EthNotAccepted.selector));
+        address(vaultV2).call{value: 1 ether}("");
+    }
+
+    function test_CannotSendETHViaReceive() public {
+        // Try to trigger receive() function - should fail
+        vm.expectRevert(abi.encodeWithSelector(IEarnVaultEventsAndErrors.EthNotAccepted.selector));
+        address(vault).call{value: 1 ether}("");
+    }
+
+    function test_CannotSendETHViaFallback() public {
+        // Try to trigger fallback() function with invalid data - should fail
+        vm.expectRevert(abi.encodeWithSelector(IEarnVaultEventsAndErrors.EthNotAccepted.selector));
+        address(vault).call{value: 1 ether}("invalidFunction()");
+    }
+
+    function test_EthRejectionWorksAfterUpgrade() public {
+        // Set up some state before upgrade
+        vm.prank(alice);
+        vault.deposit(1000e6);
+        
+        // Upgrade to V2
+        EarnVaultV2 newImpl = new EarnVaultV2();
+        vm.prank(admin);
+        proxyAdmin.upgradeAndCall(
+            ITransparentUpgradeableProxy(address(proxy)), 
+            address(newImpl), 
+            abi.encodeWithSelector(EarnVaultV2.initializeV2.selector)
+        );
+        
+        EarnVaultV2 vaultV2 = EarnVaultV2(payable(address(proxy)));
+        
+        // Verify ETH rejection still works after upgrade
+        vm.expectRevert(abi.encodeWithSelector(IEarnVaultEventsAndErrors.EthNotAccepted.selector));
+        address(vaultV2).call{value: 1 ether}("");
+        
+        // Verify vault functionality still works
+        assertEq(vaultV2.principal(alice), 1000e6);
+        assertEq(vaultV2.totalPrincipal(), 1000e6);
+    }
+
+    // =========================
+    // Native ETH Sweep Tests
+    // =========================
+
+    function test_SweepNativeWorks() public {
+        // Send ETH via selfdestruct (simulate accidental ETH)
+        SelfDestructor destructor = new SelfDestructor{value: 1 ether}();
+        
+        // Selfdestruct to the vault - this bypasses receive/fallback
+        destructor.selfDestruct(payable(address(vault)));
+        
+        // Verify ETH is in the vault
+        assertEq(address(vault).balance, 1 ether);
+        
+        // Owner can sweep the ETH
+        address payable recipient = payable(makeAddr("recipient"));
+        uint256 recipientBalanceBefore = recipient.balance;
+        
+        vm.prank(owner);
+        vault.sweepNative(recipient, 1 ether);
+        
+        // Verify ETH was swept
+        assertEq(address(vault).balance, 0);
+        assertEq(recipient.balance, recipientBalanceBefore + 1 ether);
+    }
+
+    function test_SweepNativeOnlyOwner() public {
+        // Send ETH via selfdestruct
+        SelfDestructor destructor = new SelfDestructor{value: 1 ether}();
+        destructor.selfDestruct(payable(address(vault)));
+        
+        // Non-owner cannot sweep
+        address payable recipient = payable(makeAddr("recipient"));
+        
+        vm.prank(alice);
+        vm.expectRevert();
+        vault.sweepNative(recipient, 1 ether);
+        
+        // Owner can sweep
+        vm.prank(owner);
+        vault.sweepNative(recipient, 1 ether);
+        
+        assertEq(address(vault).balance, 0);
+    }
+
+    function test_SweepNativeZeroAddress() public {
+        // Send ETH via selfdestruct
+        SelfDestructor destructor = new SelfDestructor{value: 1 ether}();
+        destructor.selfDestruct(payable(address(vault)));
+        
+        // Cannot sweep to zero address
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(IEarnVaultEventsAndErrors.CanNotBeZeroAddress.selector));
+        vault.sweepNative(payable(address(0)), 1 ether);
+    }
+
+    function test_SweepNativeInsufficientBalance() public {
+        // Try to sweep more than available
+        address payable recipient = payable(makeAddr("recipient"));
+        
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(IEarnVaultEventsAndErrors.SweepFailed.selector));
+        vault.sweepNative(recipient, 1 ether);
+    }
+
+    function test_SweepNativeAfterUpgrade() public {
+        // Send ETH via selfdestruct
+        SelfDestructor destructor = new SelfDestructor{value: 1 ether}();
+        destructor.selfDestruct(payable(address(vault)));
+        
+        // Upgrade to V2
+        EarnVaultV2 newImpl = new EarnVaultV2();
+        vm.prank(admin);
+        proxyAdmin.upgradeAndCall(
+            ITransparentUpgradeableProxy(address(proxy)), 
+            address(newImpl), 
+            abi.encodeWithSelector(EarnVaultV2.initializeV2.selector)
+        );
+        
+        EarnVaultV2 vaultV2 = EarnVaultV2(payable(address(proxy)));
+        
+        // Owner can still sweep after upgrade
+        address payable recipient = payable(makeAddr("recipient"));
+        uint256 recipientBalanceBefore = recipient.balance;
+        
+        vm.prank(owner);
+        vaultV2.sweepNative(recipient, 1 ether);
+        
+        // Verify ETH was swept
+        assertEq(address(vaultV2).balance, 0);
+        assertEq(recipient.balance, recipientBalanceBefore + 1 ether);
+    }
+
+    function test_AdminCannotSweepNative() public {
+        // Send ETH via selfdestruct
+        SelfDestructor destructor = new SelfDestructor{value: 1 ether}();
+        destructor.selfDestruct(payable(address(vault)));
+        
+        // Admin (proxy admin) cannot sweep - only owner can
+        address payable recipient = payable(makeAddr("recipient"));
+        
+        vm.prank(admin);
+        vm.expectRevert();
+        vault.sweepNative(recipient, 1 ether);
+        
+        // Owner can sweep
+        vm.prank(owner);
+        vault.sweepNative(recipient, 1 ether);
+        
+        assertEq(address(vault).balance, 0);
+    }
+
+    function test_EthRejectionScenarios() public {
+        // Test 1: Non-admin sending ETH via call should revert with EthNotAccepted
+        vm.expectRevert(abi.encodeWithSelector(IEarnVaultEventsAndErrors.EthNotAccepted.selector));
+        address(vault).call{value: 1 ether}("");
+        
+        // Test 2: Admin sending ETH via call should also revert with EthNotAccepted
+        // (The proxy delegates to implementation, so admin gets same error)
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(IEarnVaultEventsAndErrors.EthNotAccepted.selector));
+        address(vault).call{value: 1 ether}("");
+        
+        // Test 3: Send ETH via selfdestruct (bypasses receive/fallback)
+        SelfDestructor destructor = new SelfDestructor{value: 1 ether}();
+        destructor.selfDestruct(payable(address(vault)));
+        
+        // Verify ETH is in vault
+        assertEq(address(vault).balance, 1 ether);
+        
+        // Test 4: Owner can sweep the ETH
+        address payable recipient = payable(makeAddr("recipient"));
+        vm.prank(owner);
+        vault.sweepNative(recipient, 1 ether);
+        
+        assertEq(address(vault).balance, 0);
+        assertEq(recipient.balance, 1 ether);
+    }
+
+    function test_SelfDestructorCodeRemainsAfterDestruct() public {
+        // Deploy SelfDestructor with ETH
+        SelfDestructor destructor = new SelfDestructor{value: 1 ether}();
+        address destructorAddress = address(destructor);
+        
+        // Get code before selfdestruct
+        bytes memory codeBefore = destructorAddress.code;
+        assertTrue(codeBefore.length > 0, "Code should exist before selfdestruct");
+        
+        // Call selfdestruct
+        destructor.selfDestruct(payable(address(vault)));
+        
+        // Verify ETH was transferred
+        assertEq(address(vault).balance, 1 ether);
+        
+        // Verify code still exists after selfdestruct (Cancun behavior)
+        bytes memory codeAfter = destructorAddress.code;
+        assertTrue(codeAfter.length > 0, "Code should still exist after selfdestruct (Cancun behavior)");
+        assertEq(codeAfter.length, codeBefore.length, "Code length should remain the same");
+        
+        // Verify the code content is identical
+        assertEq(keccak256(codeAfter), keccak256(codeBefore), "Code content should be identical");
+        
+        // Verify contract balance is 0 (ETH was transferred)
+        assertEq(destructorAddress.balance, 0);
     }
 
     /*//////////////////////////////////////////////////////////////

@@ -6,6 +6,7 @@ import {console2} from "forge-std/console2.sol";
 import {EarnVault} from "../../src/vaults/earn/EarnVault.sol";
 import {IEarnVaultEventsAndErrors} from "../../src/interfaces/vaults/earn/IEarnVaultEventsAndErrors.sol";
 import {MockERC20} from "../mocks/MockERC20.sol";
+import {SelfDestructor} from "../mocks/SelfDestructor.sol";
 import {Ownable} from "lib/openzeppelin-contracts/contracts/access/Ownable.sol";
 import {Ownable2Step} from "lib/openzeppelin-contracts/contracts/access/Ownable2Step.sol";
 
@@ -2002,6 +2003,28 @@ contract EarnVaultTest is Test {
         vm.prank(alice);
         vm.expectRevert(IEarnVaultEventsAndErrors.AddressBlacklisted.selector);
         vault.deposit(100e6);
+    }
+
+    function test_SweepNativeWorks() public {
+        // Send ETH via selfdestruct (simulate accidental ETH)
+        SelfDestructor destructor = new SelfDestructor{value: 1 ether}();
+        
+        // Selfdestruct to the vault - this bypasses receive/fallback
+        destructor.selfDestruct(payable(address(vault)));
+        
+        // Verify ETH is in the vault
+        assertEq(address(vault).balance, 1 ether);
+        
+        // Owner can sweep the ETH
+        address payable recipient = payable(makeAddr("recipient"));
+        uint256 recipientBalanceBefore = recipient.balance;
+        
+        vm.prank(owner);
+        vault.sweepNative(recipient, 1 ether);
+        
+        // Verify ETH was swept
+        assertEq(address(vault).balance, 0);
+        assertEq(recipient.balance, recipientBalanceBefore + 1 ether);
     }
     
 }

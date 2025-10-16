@@ -643,6 +643,19 @@ contract EarnVaultUpgradeable is
     // ETH Safety
     // =========================
 
+    /// @notice Sweep native ETH from contract (only owner)
+    /// @dev Allows recovery of ETH sent via selfdestruct or other means
+    /// @param to Address to send ETH to
+    /// @param amount Amount of ETH to sweep
+    function sweepNative(address payable to, uint256 amount) external onlyOwner {
+        if (to == address(0)) revert CanNotBeZeroAddress();
+        
+        (bool success,) = to.call{value: amount}("");
+        if (!success) revert SweepFailed();
+        
+        emit NativeSwept(to, amount);
+    }
+
     /// @dev Reject ETH transfers to prevent accidental loss
     receive() external payable {
         revert EthNotAccepted();
