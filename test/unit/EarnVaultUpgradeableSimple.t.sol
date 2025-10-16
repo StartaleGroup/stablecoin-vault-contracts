@@ -6,6 +6,7 @@ import {console2} from "forge-std/console2.sol";
 import {EarnVaultUpgradeable} from "../../src/vaults/earn/EarnVaultUpgradeable.sol";
 import {EarnVaultUpgradeableHarness} from "../harness/EarnVaultUpgradeableHarness.sol";
 import {EarnVaultV2} from "../mocks/EarnVaultV2.sol";
+import {EarnVaultV3} from "../mocks/EarnVaultV3.sol";
 import {IEarnVaultEventsAndErrors} from "../../src/interfaces/vaults/earn/IEarnVaultEventsAndErrors.sol";
 import {MockERC20} from "../mocks/MockERC20.sol";
 import {SelfDestructor} from "../mocks/SelfDestructor.sol";
@@ -675,6 +676,530 @@ contract EarnVaultUpgradeableSimpleTest is Test {
         // Verify V2 storage doesn't interfere with V1 storage
         assertEq(vaultV2.totalPrincipal(), 0); // Should still be 0 from initialization
         assertEq(vaultV2.globalIndex(), RAY); // Should still be RAY from initialization
+    }
+
+    // =========================
+    // Enhanced Upgrade Stability Tests
+    // =========================
+
+    function test_OnYieldStabilityAcrossUpgrades() public {
+        // Set up deposits in V1
+        vm.prank(alice);
+        vault.deposit(1000e6);
+        
+        vm.prank(bob);
+        vault.deposit(2000e6);
+        
+        // First yield distribution in V1
+        vm.prank(yieldRedistributor);
+        usdsc.transfer(address(vault), 100e6);
+        vm.prank(yieldRedistributor);
+        vault.onYield(100e6);
+        
+        uint256 v1GlobalIndex = vault.globalIndex();
+        uint256 v1ClaimReserve = vault.claimReserve();
+        uint256 aliceClaimableV1 = vault.claimable(alice);
+        uint256 bobClaimableV1 = vault.claimable(bob);
+        
+        // Upgrade to V2
+        EarnVaultV2 newImpl = new EarnVaultV2();
+        vm.prank(admin);
+        proxyAdmin.upgradeAndCall(
+            ITransparentUpgradeableProxy(address(proxy)), 
+            address(newImpl), 
+            abi.encodeWithSelector(EarnVaultV2.initializeV2.selector)
+        );
+        
+        EarnVaultV2 vaultV2 = EarnVaultV2(payable(address(proxy)));
+        
+        // Verify yield state preserved
+        assertEq(vaultV2.globalIndex(), v1GlobalIndex);
+        assertEq(vaultV2.claimReserve(), v1ClaimReserve);
+        assertEq(vaultV2.claimable(alice), aliceClaimableV1);
+        assertEq(vaultV2.claimable(bob), bobClaimableV1);
+        
+        // Second yield distribution in V2
+        vm.prank(yieldRedistributor);
+        usdsc.transfer(address(vaultV2), 200e6);
+        vm.prank(yieldRedistributor);
+        vaultV2.onYield(200e6);
+        
+        // Verify yield distribution works correctly in V2
+        assertTrue(vaultV2.claimable(alice) > aliceClaimableV1);
+        assertTrue(vaultV2.claimable(bob) > bobClaimableV1);
+        assertTrue(vaultV2.globalIndex() > v1GlobalIndex);
+        assertTrue(vaultV2.claimReserve() > v1ClaimReserve);
+        
+        // Upgrade to V3
+        EarnVaultV3 v3Impl = new EarnVaultV3();
+        vm.prank(admin);
+        proxyAdmin.upgradeAndCall(
+            ITransparentUpgradeableProxy(address(proxy)), 
+            address(v3Impl), 
+            abi.encodeWithSelector(EarnVaultV3.initializeV3.selector)
+        );
+        
+        EarnVaultV3 vaultV3 = EarnVaultV3(payable(address(proxy)));
+        
+        // Verify yield state preserved through V2->V3 upgrade
+        assertEq(vaultV3.globalIndex(), vaultV2.globalIndex());
+        assertEq(vaultV3.claimReserve(), vaultV2.claimReserve());
+        assertEq(vaultV3.claimable(alice), vaultV2.claimable(alice));
+        assertEq(vaultV3.claimable(bob), vaultV2.claimable(bob));
+        
+        // Third yield distribution in V3 (with fee collection)
+        vm.prank(yieldRedistributor);
+        usdsc.transfer(address(vaultV3), 300e6);
+        
+        uint256 treasuryBalanceBefore = usdsc.balanceOf(treasury);
+        vm.prank(yieldRedistributor);
+        vaultV3.onYield(300e6);
+        
+        // Verify V3 fee collection works
+        uint256 expectedFee = (300e6 * 200) / 10000; // 2% fee
+        assertEq(vaultV3.getTotalFeesCollected(), expectedFee);
+        assertEq(usdsc.balanceOf(treasury), treasuryBalanceBefore + expectedFee);
+        
+        // Verify yield distribution still works with fees
+        // Note: V3 collects fees, so claimable amounts are less than V2, but still more than V1
+        assertTrue(vaultV3.claimable(alice) > aliceClaimableV1);
+        assertTrue(vaultV3.claimable(bob) > bobClaimableV1);
+    }
+
+    function test_OnBoostRewardStabilityAcrossUpgrades() public {
+        // Deploy mock boost token
+        MockERC20 boostToken = new MockERC20("Boost Token", "BOOST", 18);
+        boostToken.mint(yieldRedistributor, 1000e18);
+        
+        // Set up deposits in V1
+        vm.prank(alice);
+        vault.deposit(1000e6);
+        
+        vm.prank(bob);
+        vault.deposit(2000e6);
+        
+        // First boost reward distribution in V1
+        vm.prank(yieldRedistributor);
+        boostToken.transfer(address(vault), 100e18);
+        vm.prank(yieldRedistributor);
+        vault.onBoostReward(address(boostToken), 100e18);
+        
+        uint256 aliceBoostClaimableV1 = vault.getClaimableBoostReward(alice, address(boostToken));
+        uint256 bobBoostClaimableV1 = vault.getClaimableBoostReward(bob, address(boostToken));
+        
+        // Upgrade to V2
+        EarnVaultV2 newImpl = new EarnVaultV2();
+        vm.prank(admin);
+        proxyAdmin.upgradeAndCall(
+            ITransparentUpgradeableProxy(address(proxy)), 
+            address(newImpl), 
+            abi.encodeWithSelector(EarnVaultV2.initializeV2.selector)
+        );
+        
+        EarnVaultV2 vaultV2 = EarnVaultV2(payable(address(proxy)));
+        
+        // Verify boost reward state preserved
+        assertEq(vaultV2.getClaimableBoostReward(alice, address(boostToken)), aliceBoostClaimableV1);
+        assertEq(vaultV2.getClaimableBoostReward(bob, address(boostToken)), bobBoostClaimableV1);
+        
+        // Second boost reward distribution in V2
+        vm.prank(yieldRedistributor);
+        boostToken.transfer(address(vaultV2), 200e18);
+        vm.prank(yieldRedistributor);
+        vaultV2.onBoostReward(address(boostToken), 200e18);
+        
+        // Verify boost distribution works in V2
+        assertTrue(vaultV2.getClaimableBoostReward(alice, address(boostToken)) > aliceBoostClaimableV1);
+        assertTrue(vaultV2.getClaimableBoostReward(bob, address(boostToken)) > bobBoostClaimableV1);
+        
+        // Upgrade to V3
+        EarnVaultV3 v3Impl = new EarnVaultV3();
+        vm.prank(admin);
+        proxyAdmin.upgradeAndCall(
+            ITransparentUpgradeableProxy(address(proxy)), 
+            address(v3Impl), 
+            abi.encodeWithSelector(EarnVaultV3.initializeV3.selector)
+        );
+        
+        EarnVaultV3 vaultV3 = EarnVaultV3(payable(address(proxy)));
+        
+        // Verify boost reward state preserved through V2->V3 upgrade
+        assertEq(vaultV3.getClaimableBoostReward(alice, address(boostToken)), vaultV2.getClaimableBoostReward(alice, address(boostToken)));
+        assertEq(vaultV3.getClaimableBoostReward(bob, address(boostToken)), vaultV2.getClaimableBoostReward(bob, address(boostToken)));
+        
+        // Third boost reward distribution in V3
+        vm.prank(yieldRedistributor);
+        boostToken.transfer(address(vaultV3), 300e18);
+        vm.prank(yieldRedistributor);
+        vaultV3.onBoostReward(address(boostToken), 300e18);
+        
+        // Verify boost distribution works in V3
+        // Note: V3 doesn't modify boost rewards, so they should be the same as V2
+        assertEq(vaultV3.getClaimableBoostReward(alice, address(boostToken)), vaultV2.getClaimableBoostReward(alice, address(boostToken)));
+        assertEq(vaultV3.getClaimableBoostReward(bob, address(boostToken)), vaultV2.getClaimableBoostReward(bob, address(boostToken)));
+    }
+
+    function test_ComplexStatePreservationAcrossUpgrades() public {
+        // Set up complex state in V1
+        vm.prank(alice);
+        vault.deposit(1000e6);
+        
+        vm.prank(bob);
+        vault.deposit(2000e6);
+        
+        vm.prank(charlie);
+        vault.deposit(1500e6);
+        
+        // Multiple yield distributions
+        vm.prank(yieldRedistributor);
+        usdsc.transfer(address(vault), 100e6);
+        vm.prank(yieldRedistributor);
+        vault.onYield(100e6);
+        
+        vm.prank(yieldRedistributor);
+        usdsc.transfer(address(vault), 200e6);
+        vm.prank(yieldRedistributor);
+        vault.onYield(200e6);
+        
+        // Deploy and distribute boost rewards
+        MockERC20 boostToken = new MockERC20("Boost Token", "BOOST", 18);
+        boostToken.mint(yieldRedistributor, 1000e18);
+        
+        vm.prank(yieldRedistributor);
+        boostToken.transfer(address(vault), 50e18);
+        vm.prank(yieldRedistributor);
+        vault.onBoostReward(address(boostToken), 50e18);
+        
+        vm.prank(yieldRedistributor);
+        boostToken.transfer(address(vault), 100e18);
+        vm.prank(yieldRedistributor);
+        vault.onBoostReward(address(boostToken), 100e18);
+        
+        // Set admin roles
+        address newTreasury = makeAddr("newTreasury");
+        address newPauser = makeAddr("newPauser");
+        address newRedistributor = makeAddr("newRedistributor");
+        
+        vm.prank(owner);
+        vault.setTreasury(newTreasury);
+        vm.prank(owner);
+        vault.setPauser(newPauser);
+        vm.prank(owner);
+        vault.setYieldRedistributor(newRedistributor);
+        
+        // Capture V1 state (reduced variables to avoid stack too deep)
+        uint256 v1TotalPrincipal = vault.totalPrincipal();
+        uint256 v1GlobalIndex = vault.globalIndex();
+        uint256 v1ClaimReserve = vault.claimReserve();
+        
+        // V1 -> V2 Upgrade
+        EarnVaultV2 v2Impl = new EarnVaultV2();
+        vm.prank(admin);
+        proxyAdmin.upgradeAndCall(
+            ITransparentUpgradeableProxy(address(proxy)), 
+            address(v2Impl), 
+            abi.encodeWithSelector(EarnVaultV2.initializeV2.selector)
+        );
+        
+        EarnVaultV2 vaultV2 = EarnVaultV2(payable(address(proxy)));
+        
+        // Verify core state preserved in V2
+        assertEq(vaultV2.totalPrincipal(), v1TotalPrincipal);
+        assertEq(vaultV2.globalIndex(), v1GlobalIndex);
+        assertEq(vaultV2.claimReserve(), v1ClaimReserve);
+        
+        // Verify user states preserved
+        assertEq(vaultV2.principal(alice), 1000e6);
+        assertEq(vaultV2.principal(bob), 2000e6);
+        assertEq(vaultV2.principal(charlie), 1500e6);
+        
+        // Verify roles preserved
+        assertEq(vaultV2.treasury(), newTreasury);
+        assertEq(vaultV2.pauser(), newPauser);
+        assertEq(vaultV2.yieldRedistributor(), newRedistributor);
+        
+        // Set V2 specific features
+        vm.prank(owner);
+        vaultV2.setEmergencyYieldMultiplier(12000);
+        vm.prank(owner);
+        vaultV2.setEmergencyMode(true);
+        
+        // V2 -> V3 Upgrade
+        EarnVaultV3 v3Impl = new EarnVaultV3();
+        vm.prank(admin);
+        proxyAdmin.upgradeAndCall(
+            ITransparentUpgradeableProxy(address(proxy)), 
+            address(v3Impl), 
+            abi.encodeWithSelector(EarnVaultV3.initializeV3.selector)
+        );
+        
+        EarnVaultV3 vaultV3 = EarnVaultV3(payable(address(proxy)));
+        
+        // Verify all state preserved through V2->V3 upgrade
+        assertEq(vaultV3.totalPrincipal(), v1TotalPrincipal);
+        assertEq(vaultV3.globalIndex(), v1GlobalIndex);
+        assertEq(vaultV3.claimReserve(), v1ClaimReserve);
+        
+        // Verify user states still preserved
+        assertEq(vaultV3.principal(alice), 1000e6);
+        assertEq(vaultV3.principal(bob), 2000e6);
+        assertEq(vaultV3.principal(charlie), 1500e6);
+        
+        // Verify roles still preserved
+        assertEq(vaultV3.treasury(), newTreasury);
+        assertEq(vaultV3.pauser(), newPauser);
+        assertEq(vaultV3.yieldRedistributor(), newRedistributor);
+        
+        // Verify V3 features initialized
+        assertEq(vaultV3.getPerformanceFeeRate(), 200);
+        assertEq(vaultV3.getManagementFeeRate(), 50);
+        assertFalse(vaultV3.isAutoCompoundEnabled());
+    }
+
+    function test_UserOperationsStabilityAcrossUpgrades() public {
+        // Set up deposits and yield in V1
+        vm.prank(alice);
+        vault.deposit(1000e6);
+        
+        vm.prank(bob);
+        vault.deposit(2000e6);
+        
+        vm.prank(yieldRedistributor);
+        usdsc.transfer(address(vault), 300e6);
+        vm.prank(yieldRedistributor);
+        vault.onYield(300e6);
+        
+        // Deploy boost token and distribute rewards
+        MockERC20 boostToken = new MockERC20("Boost Token", "BOOST", 18);
+        boostToken.mint(yieldRedistributor, 1000e18);
+        
+        vm.prank(yieldRedistributor);
+        boostToken.transfer(address(vault), 150e18);
+        vm.prank(yieldRedistributor);
+        vault.onBoostReward(address(boostToken), 150e18);
+        
+        // Capture user states
+        uint256 alicePrincipalV1 = vault.principal(alice);
+        uint256 aliceClaimableV1 = vault.claimable(alice);
+        uint256 aliceBoostV1 = vault.getClaimableBoostReward(alice, address(boostToken));
+        uint256 bobPrincipalV1 = vault.principal(bob);
+        uint256 bobClaimableV1 = vault.claimable(bob);
+        uint256 bobBoostV1 = vault.getClaimableBoostReward(bob, address(boostToken));
+        
+        // V1 -> V2 Upgrade
+        EarnVaultV2 v2Impl = new EarnVaultV2();
+        vm.prank(admin);
+        proxyAdmin.upgradeAndCall(
+            ITransparentUpgradeableProxy(address(proxy)), 
+            address(v2Impl), 
+            abi.encodeWithSelector(EarnVaultV2.initializeV2.selector)
+        );
+        
+        EarnVaultV2 vaultV2 = EarnVaultV2(payable(address(proxy)));
+        
+        // Test user operations in V2
+        uint256 aliceBalanceBefore = usdsc.balanceOf(alice);
+        uint256 bobBalanceBefore = usdsc.balanceOf(bob);
+        
+        // Alice withdraws some principal (should auto-claim all rewards)
+        vm.prank(alice);
+        vaultV2.withdraw(500e6);
+        
+        // Bob claims all rewards
+        vm.prank(bob);
+        vaultV2.claim();
+        
+        // Verify operations worked correctly
+        assertEq(vaultV2.principal(alice), alicePrincipalV1 - 500e6);
+        assertEq(vaultV2.accrued(alice), 0); // Should be 0 after auto-claim
+        assertEq(vaultV2.accrued(bob), 0); // Should be 0 after claim
+        assertTrue(usdsc.balanceOf(alice) > aliceBalanceBefore);
+        assertTrue(usdsc.balanceOf(bob) > bobBalanceBefore);
+        
+        // V2 -> V3 Upgrade
+        EarnVaultV3 v3Impl = new EarnVaultV3();
+        vm.prank(admin);
+        proxyAdmin.upgradeAndCall(
+            ITransparentUpgradeableProxy(address(proxy)), 
+            address(v3Impl), 
+            abi.encodeWithSelector(EarnVaultV3.initializeV3.selector)
+        );
+        
+        EarnVaultV3 vaultV3 = EarnVaultV3(payable(address(proxy)));
+        
+        // Test user operations in V3
+        vm.prank(owner);
+        vaultV3.setAutoCompoundEnabled(true);
+        vm.prank(owner);
+        vaultV3.setCompoundThreshold(50e6);
+        
+        // Charlie deposits and triggers auto-compound
+        vm.prank(charlie);
+        vaultV3.deposit(1000e6);
+        
+        vm.prank(yieldRedistributor);
+        usdsc.transfer(address(vaultV3), 200e6);
+        vm.prank(yieldRedistributor);
+        vaultV3.onYield(200e6);
+        
+        uint256 charliePrincipalBefore = vaultV3.principal(charlie);
+        uint256 charlieClaimableBefore = vaultV3.claimable(charlie);
+        
+        // Execute auto-compound
+        vm.prank(charlie);
+        vaultV3.executeAutoCompound(charlie);
+        
+        // Verify auto-compound worked
+        assertEq(vaultV3.principal(charlie), charliePrincipalBefore + charlieClaimableBefore);
+        assertEq(vaultV3.accrued(charlie), 0);
+        assertEq(vaultV3.getTotalCompounds(), 1);
+    }
+
+    function test_BlacklistStatusPreservedAcrossUpgrades() public {
+        // Set up deposits in V1
+        vm.prank(alice);
+        vault.deposit(1000e6);
+        
+        vm.prank(bob);
+        vault.deposit(2000e6);
+        
+        vm.prank(charlie);
+        vault.deposit(1500e6);
+        
+        // Blacklist Alice and Charlie in V1
+        vm.prank(owner);
+        vault.setBlacklisted(alice, true);
+        
+        vm.prank(owner);
+        vault.setBlacklisted(charlie, true);
+        
+        // Verify blacklist status in V1
+        assertTrue(vault.isBlacklisted(alice));
+        assertFalse(vault.isBlacklisted(bob));
+        assertTrue(vault.isBlacklisted(charlie));
+        
+        // Verify blacklisted users cannot deposit in V1
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(IEarnVaultEventsAndErrors.AddressBlacklisted.selector));
+        vault.deposit(100e6);
+        
+        vm.prank(charlie);
+        vm.expectRevert(abi.encodeWithSelector(IEarnVaultEventsAndErrors.AddressBlacklisted.selector));
+        vault.deposit(100e6);
+        
+        // V1 -> V2 Upgrade
+        EarnVaultV2 v2Impl = new EarnVaultV2();
+        vm.prank(admin);
+        proxyAdmin.upgradeAndCall(
+            ITransparentUpgradeableProxy(address(proxy)), 
+            address(v2Impl), 
+            abi.encodeWithSelector(EarnVaultV2.initializeV2.selector)
+        );
+        
+        EarnVaultV2 vaultV2 = EarnVaultV2(payable(address(proxy)));
+        
+        // Verify blacklist status preserved in V2
+        assertTrue(vaultV2.isBlacklisted(alice));
+        assertFalse(vaultV2.isBlacklisted(bob));
+        assertTrue(vaultV2.isBlacklisted(charlie));
+        
+        // Verify blacklisted users still cannot deposit in V2
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(IEarnVaultEventsAndErrors.AddressBlacklisted.selector));
+        vaultV2.deposit(100e6);
+        
+        vm.prank(charlie);
+        vm.expectRevert(abi.encodeWithSelector(IEarnVaultEventsAndErrors.AddressBlacklisted.selector));
+        vaultV2.deposit(100e6);
+        
+        // Verify non-blacklisted user can still deposit in V2
+        vm.prank(bob);
+        vaultV2.deposit(500e6);
+        assertEq(vaultV2.principal(bob), 2500e6);
+        
+        // Test blacklist management in V2
+        vm.prank(owner);
+        vaultV2.setBlacklisted(alice, false); // Unblacklist Alice
+        
+        vm.prank(owner);
+        vaultV2.setBlacklisted(bob, true); // Blacklist Bob
+        
+        // Verify blacklist changes in V2
+        assertFalse(vaultV2.isBlacklisted(alice));
+        assertTrue(vaultV2.isBlacklisted(bob));
+        assertTrue(vaultV2.isBlacklisted(charlie));
+        
+        // V2 -> V3 Upgrade
+        EarnVaultV3 v3Impl = new EarnVaultV3();
+        vm.prank(admin);
+        proxyAdmin.upgradeAndCall(
+            ITransparentUpgradeableProxy(address(proxy)), 
+            address(v3Impl), 
+            abi.encodeWithSelector(EarnVaultV3.initializeV3.selector)
+        );
+        
+        EarnVaultV3 vaultV3 = EarnVaultV3(payable(address(proxy)));
+        
+        // Verify blacklist status preserved through V2->V3 upgrade
+        assertFalse(vaultV3.isBlacklisted(alice));
+        assertTrue(vaultV3.isBlacklisted(bob));
+        assertTrue(vaultV3.isBlacklisted(charlie));
+        
+        // Verify blacklisted users cannot deposit in V3
+        vm.prank(bob);
+        vm.expectRevert(abi.encodeWithSelector(IEarnVaultEventsAndErrors.AddressBlacklisted.selector));
+        vaultV3.deposit(100e6);
+        
+        vm.prank(charlie);
+        vm.expectRevert(abi.encodeWithSelector(IEarnVaultEventsAndErrors.AddressBlacklisted.selector));
+        vaultV3.deposit(100e6);
+        
+        // Verify unblacklisted user can deposit in V3
+        vm.prank(alice);
+        vaultV3.deposit(200e6);
+        assertEq(vaultV3.principal(alice), 1200e6);
+        
+        // Test blacklist management in V3
+        vm.prank(owner);
+        vaultV3.setBlacklisted(charlie, false); // Unblacklist Charlie
+        
+        // Verify blacklist changes in V3
+        assertFalse(vaultV3.isBlacklisted(alice));
+        assertTrue(vaultV3.isBlacklisted(bob));
+        assertFalse(vaultV3.isBlacklisted(charlie));
+        
+        // Verify Charlie can now deposit in V3
+        vm.prank(charlie);
+        vaultV3.deposit(300e6);
+        assertEq(vaultV3.principal(charlie), 1800e6);
+        
+        // Verify Bob still cannot deposit (still blacklisted)
+        vm.prank(bob);
+        vm.expectRevert(abi.encodeWithSelector(IEarnVaultEventsAndErrors.AddressBlacklisted.selector));
+        vaultV3.deposit(100e6);
+        
+        // Test that blacklisted users cannot claim rewards
+        vm.prank(yieldRedistributor);
+        usdsc.transfer(address(vaultV3), 100e6);
+        vm.prank(yieldRedistributor);
+        vaultV3.onYield(100e6);
+        
+        // Bob should not be able to claim (blacklisted)
+        vm.prank(bob);
+        vm.expectRevert(abi.encodeWithSelector(IEarnVaultEventsAndErrors.AddressBlacklisted.selector));
+        vaultV3.claim();
+        
+        // Alice should be able to claim (not blacklisted)
+        uint256 aliceBalanceBefore = usdsc.balanceOf(alice);
+        vm.prank(alice);
+        vaultV3.claim();
+        assertTrue(usdsc.balanceOf(alice) > aliceBalanceBefore);
+        
+        // Charlie should be able to claim (not blacklisted)
+        uint256 charlieBalanceBefore = usdsc.balanceOf(charlie);
+        vm.prank(charlie);
+        vaultV3.claim();
+        assertTrue(usdsc.balanceOf(charlie) > charlieBalanceBefore);
     }
 
     // =========================

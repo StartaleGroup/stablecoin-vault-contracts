@@ -204,6 +204,11 @@ contract EarnVaultUpgradeable is
         return $.pauser;
     }
 
+    function isBlacklisted(address user) external view returns (bool) {
+        EarnVaultStorage storage $ = _getStorage();
+        return $.isBlacklisted[user];
+    }
+
     function claimable(address user) external view returns (uint256) {
         EarnVaultStorage storage $ = _getStorage();
         uint256 p = $.principal[user];
