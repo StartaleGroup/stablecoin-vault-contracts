@@ -1371,22 +1371,22 @@ contract EarnVaultTest is Test {
     
     
     /// @notice Test asset function
-    function test_Asset() public {
+    function test_Asset() public view {
         assertEq(vault.asset(), address(usdsc));
     }
     
     /// @notice Test claimable function with no deposits
-    function test_ClaimableNoDeposits() public {
+    function test_ClaimableNoDeposits() public view {
         assertEq(vault.claimable(alice), 0);
     }
     
     /// @notice Test totalValue function with no deposits
-    function test_TotalValueNoDeposits() public {
+    function test_TotalValueNoDeposits() public view {
         assertEq(vault.totalValue(alice), 0);
     }
     
     /// @notice Test getUserInfo function with no deposits
-    function test_GetUserInfoNoDeposits() public {
+    function test_GetUserInfoNoDeposits() public view {
         (uint256 principal, uint256 claimable, uint256 total, uint256 lastIndex) = vault.getUserInfo(alice);
         assertEq(principal, 0);
         assertEq(claimable, 0);
