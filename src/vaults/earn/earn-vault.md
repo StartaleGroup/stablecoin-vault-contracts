@@ -58,6 +58,9 @@ pause() / unpause()                        // Emergency stop/resume
 sweepSurplusToTreasury()                  // Sweep excess funds to treasury
 recoverERC20(address token, address to, uint256 amount)  // Emergency token recovery
 
+// ETH safety (owner only)
+sweepNative(address payable to, uint256 amount)  // Recover accidentally sent ETH
+
 // Vault statistics
 getVaultStats() → (uint256 totalPrincipal, uint256 claimReserve, uint256 globalIndex, uint256 pendingDelta, uint256 balance)
 ```
@@ -315,6 +318,41 @@ function getVaultStats() external view returns (
 - **2-Step Ownership**: Secure ownership transfer using OpenZeppelin's Ownable2Step
 - **Role Separation**: Clear separation between owner, yield redistributor, and pauser roles
 
+## ETH Safety & Recovery
+
+### ETH Rejection
+The contract explicitly rejects ETH transfers to prevent accidental loss:
+
+```solidity
+receive() external payable {
+    revert EthNotAccepted();
+}
+
+fallback() external payable {
+    revert EthNotAccepted();
+}
+```
+
+### ETH Recovery
+Owner can recover accidentally sent ETH (e.g., via `selfdestruct`):
+
+```solidity
+function sweepNative(address payable to, uint256 amount) external onlyOwner {
+    if (to == address(0)) revert CanNotBeZeroAddress();
+    
+    (bool success,) = to.call{value: amount}("");
+    if (!success) revert SweepFailed();
+    
+    emit NativeSwept(to, amount);
+}
+```
+
+### ETH Safety Scenarios
+1. **Direct ETH Transfer**: Reverts with `EthNotAccepted()`
+2. **ETH via `receive()`**: Reverts with `EthNotAccepted()`
+3. **ETH via `fallback()`**: Reverts with `EthNotAccepted()`
+4. **ETH via `selfdestruct`**: ETH accumulates, recoverable via `sweepNative()`
+
 ## Withdrawal Examples
 
 ###  Withdrawal Logic
@@ -503,6 +541,7 @@ uint256 dotRewards = vault.getClaimableBoostReward(user, address(dot));
 - `ContractNotPaused()`: Operation requires paused state
 - `ExceedsSurplus()`: Amount exceeds available surplus
 - `EthNotAccepted()`: Contract doesn't accept ETH
+- `SweepFailed()`: ETH sweep operation failed
 - `PermitFailed()`: Permit operation failed (token may not support it)
 
 ## Events
@@ -518,6 +557,9 @@ uint256 dotRewards = vault.getClaimableBoostReward(user, address(dot));
 - **`BoostRewardIndexed(address indexed token, uint256 amount, uint256 newGlobalIndex, uint256 newClaimReserve)`**: Boost rewards distributed to users
 - **`BoostRewardTransferredToTreasury(address indexed token, uint256 amount)`**: Boost rewards transferred to treasury when no deposits exist
 - **`BoostRewardClaimed(address indexed user, address indexed token, uint256 amount)`**: User claims boost rewards
+
+### ETH Safety Events
+- **`NativeSwept(address indexed to, uint256 amount)`**: Owner recovered accidentally sent ETH
 
 ## Technical Notes
 

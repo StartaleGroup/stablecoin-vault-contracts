@@ -4,6 +4,8 @@
 
 The **RewardRedistributor** is a core component of the USDSC stablecoin ecosystem that manages the distribution of freshly minted USDSC yield to eligible recipients. It pulls yield from the M0 extension (MYieldToOne), applies an optional fee to Startale, and allocates the remaining yield proportionally to two main vaults based on their share of the base USDSC supply.
 
+> **Note**: This contract is **non-upgradeable** (immutable implementation). All logic and parameters must be carefully verified before deployment as they cannot be changed afterward.
+
 ## Architecture
 
 ### Core Components
@@ -265,15 +267,15 @@ IERC20(USDSC_ADDRESS).balanceOf(address(this)) == 0  // No dust retention
 
 ```solidity
 // Preview hypothetical yield allocation
-(uint256 fee, uint256 toEarn, uint256 toOn, uint256 extra, uint256 sBase, uint256 tEarn, uint256 tYield) = 
+(uint256 feeToStartale, uint256 toEarn, uint256 toOn, uint256 toStartaleExtra, uint256 S_base, uint256 T_earn, uint256 T_yield) = 
     rewardRedistributor.previewSplit(1000e6);  // 1000 USDSC hypothetical yield
 
 // Preview current pending yield allocation  
-(uint256 minted, uint256 fee, uint256 toEarn, uint256 toOn, uint256 extra, uint256 sBase, uint256 tEarn, uint256 tYield) = 
+(uint256 couldBeMinted, uint256 feeToStartale, uint256 toEarn, uint256 toOn, uint256 toStartaleExtra, uint256 S_base, uint256 T_earn, uint256 T_yield) = 
     rewardRedistributor.previewSplitCurrent();
 
 // Preview exact distribution (dry-run)
-(uint256 minted, uint256 fee, uint256 toEarn, uint256 toOn, uint256 extra, uint256 sBase, uint256 tEarn, uint256 tYield) = 
+(uint256 couldBeMinted, uint256 feeToStartale, uint256 toEarn, uint256 toOn, uint256 toStartaleExtra, uint256 S_base, uint256 T_earn, uint256 T_yield) = 
     rewardRedistributor.previewDistribute();
 ```
 
