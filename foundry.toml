@@ -9,6 +9,13 @@ solc_version = "0.8.26"
 libs = ['node_modules', 'lib']
 verbosity = 3
 
+[profile.default.fuzz]
+runs = 5_000  # Reduced from 1,000 for faster CI
+
+[profile.default.invariant]
+runs = 512   
+depth = 50
+
 [fmt]
 line_length = 120
 tab_width = 2
