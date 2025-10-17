@@ -4,6 +4,8 @@
 
 Users deposit USDSC tokens and earn claimable yield over time, plus additional boost rewards in other ERC20 tokens (ASTR, DOT, etc.). Users maintain full control over their principal and can withdraw any amount up to their principal, with all accrued rewards (USDSC yield + boost rewards) automatically claimed on any withdrawal.
 
+> **Note**: This contract is designed to be upgradeable. The upgradeable version is available at `src/vaults/earn/EarnVaultUpgradeable.sol` with comprehensive upgrade testing and documentation in `src/vaults/earn/earn-vault-upgradeable.md`.
+
 ## Key Features
 
 - **Principal Protection**: Withdraw original deposit anytime
