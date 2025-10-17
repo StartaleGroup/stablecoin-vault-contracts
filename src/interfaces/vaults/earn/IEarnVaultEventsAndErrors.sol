@@ -83,6 +83,11 @@ interface IEarnVaultEventsAndErrors {
     /// @param amount Amount of surplus swept to treasury
     event SurplusSweptToTreasury(uint256 amount);
     
+    /// @notice Emitted when native ETH is swept from the contract
+    /// @param to Address that received the ETH
+    /// @param amount Amount of ETH swept
+    event NativeSwept(address indexed to, uint256 amount);
+    
     
     /// @notice Emitted when a user claims accrued interest
     /// @param user Address that claimed interest
@@ -149,6 +154,9 @@ interface IEarnVaultEventsAndErrors {
     
     /// @notice Thrown when contract receives ETH but shouldn't accept it
     error EthNotAccepted();
+    
+    /// @notice Thrown when native ETH sweep operation fails
+    error SweepFailed();
     
     /// @notice Thrown when boost reward distribution fails due to insufficient token balance
     error InsufficientBoostTokenBalance();

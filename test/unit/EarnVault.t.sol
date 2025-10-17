@@ -6,6 +6,7 @@ import {console2} from "forge-std/console2.sol";
 import {EarnVault} from "../../src/vaults/earn/EarnVault.sol";
 import {IEarnVaultEventsAndErrors} from "../../src/interfaces/vaults/earn/IEarnVaultEventsAndErrors.sol";
 import {MockERC20} from "../mocks/MockERC20.sol";
+import {SelfDestructor} from "../mocks/SelfDestructor.sol";
 import {Ownable} from "lib/openzeppelin-contracts/contracts/access/Ownable.sol";
 import {Ownable2Step} from "lib/openzeppelin-contracts/contracts/access/Ownable2Step.sol";
 
@@ -1371,22 +1372,22 @@ contract EarnVaultTest is Test {
     
     
     /// @notice Test asset function
-    function test_Asset() public {
+    function test_Asset() public view {
         assertEq(vault.asset(), address(usdsc));
     }
     
     /// @notice Test claimable function with no deposits
-    function test_ClaimableNoDeposits() public {
+    function test_ClaimableNoDeposits() public view {
         assertEq(vault.claimable(alice), 0);
     }
     
     /// @notice Test totalValue function with no deposits
-    function test_TotalValueNoDeposits() public {
+    function test_TotalValueNoDeposits() public view {
         assertEq(vault.totalValue(alice), 0);
     }
     
     /// @notice Test getUserInfo function with no deposits
-    function test_GetUserInfoNoDeposits() public {
+    function test_GetUserInfoNoDeposits() public view {
         (uint256 principal, uint256 claimable, uint256 total, uint256 lastIndex) = vault.getUserInfo(alice);
         assertEq(principal, 0);
         assertEq(claimable, 0);
@@ -2002,6 +2003,28 @@ contract EarnVaultTest is Test {
         vm.prank(alice);
         vm.expectRevert(IEarnVaultEventsAndErrors.AddressBlacklisted.selector);
         vault.deposit(100e6);
+    }
+
+    function test_SweepNativeWorks() public {
+        // Send ETH via selfdestruct (simulate accidental ETH)
+        SelfDestructor destructor = new SelfDestructor{value: 1 ether}();
+        
+        // Selfdestruct to the vault - this bypasses receive/fallback
+        destructor.selfDestruct(payable(address(vault)));
+        
+        // Verify ETH is in the vault
+        assertEq(address(vault).balance, 1 ether);
+        
+        // Owner can sweep the ETH
+        address payable recipient = payable(makeAddr("recipient"));
+        uint256 recipientBalanceBefore = recipient.balance;
+        
+        vm.prank(owner);
+        vault.sweepNative(recipient, 1 ether);
+        
+        // Verify ETH was swept
+        assertEq(address(vault).balance, 0);
+        assertEq(recipient.balance, recipientBalanceBefore + 1 ether);
     }
     
 }

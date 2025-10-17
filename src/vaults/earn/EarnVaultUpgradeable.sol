@@ -2,18 +2,19 @@
 pragma solidity ^0.8.26;
 
 import {IERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
+import {Initializable} from '@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol';
 import {IERC20Permit} from "lib/openzeppelin-contracts/contracts/token/ERC20/extensions/IERC20Permit.sol";
 import {SafeERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Math} from "lib/openzeppelin-contracts/contracts/utils/math/Math.sol";
-import {Ownable} from "lib/openzeppelin-contracts/contracts/access/Ownable.sol";
-import {Ownable2Step} from "lib/openzeppelin-contracts/contracts/access/Ownable2Step.sol";
-import {Pausable} from "lib/openzeppelin-contracts/contracts/utils/Pausable.sol";
-import {ReentrancyGuard} from "lib/openzeppelin-contracts/contracts/utils/ReentrancyGuard.sol";
+import {Ownable2StepUpgradeable} from "lib/openzeppelin-contracts-upgradeable/contracts/access/Ownable2StepUpgradeable.sol";
+import {PausableUpgradeable} from "lib/openzeppelin-contracts-upgradeable/contracts/utils/PausableUpgradeable.sol";
+import {ReentrancyGuardUpgradeable} from "lib/openzeppelin-contracts-upgradeable/contracts/utils/ReentrancyGuardUpgradeable.sol";
 import {IEarnVault} from "../../interfaces/vaults/earn/IEarnVault.sol";
 import {IEarnVaultEventsAndErrors} from "../../interfaces/vaults/earn/IEarnVaultEventsAndErrors.sol";
 import {BoostRewardsLib} from "./BoostRewardsLib.sol";
+import {EarnVaultStorageBase} from "./EarnVaultStorageBase.sol";
 
-/// @title EarnVault (claimable yield)
+/// @title EarnVaultUpgradeable (claimable yield)
 /// @notice Users deposit USDSC, accrue claimable USDSC via index accounting, and can claim/withdraw anytime.
 ///         A distributor pushes yield: transfer USDSC to this contract, then call onYield(amount).
 /// Accounting:
@@ -22,42 +23,15 @@ import {BoostRewardsLib} from "./BoostRewardsLib.sol";
 ///   - When yield arrives and totalPrincipal>0: globalIndex += amount*RAY/totalPrincipal.
 ///   - If totalPrincipal==0 at yield time: amount is transferred directly to treasury.
 /// Invariant (funding): USDSC balance >= claimReserve.
-contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausable, ReentrancyGuard {
+contract EarnVaultUpgradeable is 
+    Initializable,
+    Ownable2StepUpgradeable, 
+    PausableUpgradeable, 
+    ReentrancyGuardUpgradeable,
+    EarnVaultStorageBase,
+    IEarnVault
+{
     using SafeERC20 for IERC20;
-
-    // -------- Constants --------
-    uint256 public constant RAY = 1e27;  // High precision for yield calculations (MakerDAO standard)
-    
-    // -------- Access Control --------
-    address public yieldRedistributor;    // Address authorized to call onYield() and onBoostReward()
-    address public pauser;               // Address authorized to pause/unpause the contract
-
-    // -------- Immutables --------
-    IERC20 public immutable USDSC;
-
-    // -------- Roles / endpoints --------
-    address public treasury;             // receives yield when no deposits exist, surplus sweeps
-
-    // -------- Optional blacklist --------
-    mapping(address => bool) public isBlacklisted;
-
-    // -------- Vault accounting --------
-    uint256 public totalPrincipal;       // sum of user principals
-    uint256 public globalIndex = RAY;    // global index (scaled 1e27 - RAY precision)
-    uint256 public claimReserve;         // assets available to pay claims/withdraws
-    uint256 private _carryRay;           // remainder in "RAY * principal" space for exact precision
-
-    mapping(address => uint256) public principal;
-    mapping(address => uint256) public userIndex;
-    mapping(address => uint256) public accrued;
-
-    // -------- Boost rewards accounting (same logic as USDSC yield) --------
-    mapping(address => uint256) public boostGlobalIndex; // token => global boost index
-    mapping(address => uint256) public boostClaimReserve; // token => claimable boost reserves
-    mapping(address => mapping(address => uint256)) public userBoostIndex; // user => token => last boost index
-    mapping(address => mapping(address => uint256)) public userBoostAccrued; // user => token => accrued boost rewards
-    address[] public activeBoostTokens; // list of tokens that have been distributed
-    mapping(address => uint256) public boostTokenIndex; // token => index in activeBoostTokens array
 
     // -------- Events and Errors --------
     // All events and errors are inherited from IEarnVaultEventsAndErrors interface
@@ -66,25 +40,56 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     
     /// @dev Modifier to check if caller is the yield redistributor
     modifier onlyYieldRedistributor() {
-        if (msg.sender != yieldRedistributor) revert IEarnVaultEventsAndErrors.NotYieldRedistributor();
+        EarnVaultStorage storage $ = _getStorage();
+        if (msg.sender != $.yieldRedistributor) revert IEarnVaultEventsAndErrors.NotYieldRedistributor();
         _;
     }
     
     /// @dev Modifier to check if caller is the pauser
     modifier onlyPauser() {
-        if (msg.sender != pauser) revert IEarnVaultEventsAndErrors.NotAuthorizedToPause();
+        EarnVaultStorage storage $ = _getStorage();
+        if (msg.sender != $.pauser) revert IEarnVaultEventsAndErrors.NotAuthorizedToPause();
         _;
     }
 
-    constructor(address usdsc, address owner, address yieldRedistributorAddr, address treasuryAddr, address pauserAddr) Ownable(owner) {
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
+    /// @notice Initialize the upgradeable EarnVault
+    /// @param usdsc USDSC token contract address
+    /// @param owner Initial owner address
+    /// @param yieldRedistributorAddr Yield redistributor address
+    /// @param treasuryAddr Treasury address
+    /// @param pauserAddr Pauser address
+    function initialize(
+        address usdsc,
+        address owner,
+        address yieldRedistributorAddr,
+        address treasuryAddr,
+        address pauserAddr
+    ) public initializer {
         if (usdsc == address(0) || owner == address(0)) revert CanNotBeZeroAddress();
         if (yieldRedistributorAddr == address(0) || treasuryAddr == address(0)) revert CanNotBeZeroAddress();
         if (pauserAddr == address(0)) revert CanNotBeZeroAddress();
         
-        USDSC = IERC20(usdsc);
-        treasury = treasuryAddr;
-        yieldRedistributor = yieldRedistributorAddr;
-        pauser = pauserAddr;
+        // Initialize upgradeable contracts
+        __Ownable2Step_init();
+        __Pausable_init();
+        __ReentrancyGuard_init();
+        
+        // Set owner
+        _transferOwnership(owner);
+        
+        // Initialize storage
+        EarnVaultStorage storage $ = _getStorage();
+        $.RAY = 1e27;
+        $.USDSC = IERC20(usdsc);
+        $.treasury = treasuryAddr;
+        $.yieldRedistributor = yieldRedistributorAddr;
+        $.pauser = pauserAddr;
+        $.globalIndex = $.RAY; // Initialize to RAY
     }
 
     // =========================
@@ -95,8 +100,9 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     /// @param who New yield redistributor address
     function setYieldRedistributor(address who) external onlyOwner {
         if (who == address(0)) revert CanNotBeZeroAddress();
-        address oldRedistributor = yieldRedistributor;
-        yieldRedistributor = who;
+        EarnVaultStorage storage $ = _getStorage();
+        address oldRedistributor = $.yieldRedistributor;
+        $.yieldRedistributor = who;
         emit YieldRedistributorChanged(msg.sender, oldRedistributor, who);
     }
 
@@ -104,8 +110,9 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     /// @param who New treasury address
     function setTreasury(address who) external onlyOwner {
         if (who == address(0)) revert CanNotBeZeroAddress();
-        address oldTreasury = treasury;
-        treasury = who;
+        EarnVaultStorage storage $ = _getStorage();
+        address oldTreasury = $.treasury;
+        $.treasury = who;
         emit TreasuryChanged(msg.sender, oldTreasury, who);
     }
 
@@ -114,19 +121,20 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     function setPauser(address who) external onlyOwner {
         if (who == address(0)) revert CanNotBeZeroAddress();
         
-        address oldPauser = pauser;
-        pauser = who;
+        EarnVaultStorage storage $ = _getStorage();
+        address oldPauser = $.pauser;
+        $.pauser = who;
         
         emit PauserChanged(msg.sender, oldPauser, who);
     }
-
 
     /// @notice Set blacklist status for an address
     /// @param who Address to update blacklist status for
     /// @param blacklisted Whether address should be blacklisted
     function setBlacklisted(address who, bool blacklisted) external onlyOwner {
-        bool oldStatus = isBlacklisted[who];
-        isBlacklisted[who] = blacklisted;
+        EarnVaultStorage storage $ = _getStorage();
+        bool oldStatus = $.isBlacklisted[who];
+        $.isBlacklisted[who] = blacklisted;
         emit BlacklistStatusChanged(msg.sender, who, oldStatus, blacklisted);
     }
 
@@ -147,34 +155,87 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     // =========================
 
     function asset() external view returns (address) {
-        return address(USDSC);
+        EarnVaultStorage storage $ = _getStorage();
+        return address($.USDSC);
+    }
+
+    function totalPrincipal() external view returns (uint256) {
+        EarnVaultStorage storage $ = _getStorage();
+        return $.totalPrincipal;
+    }
+
+    function globalIndex() external view returns (uint256) {
+        EarnVaultStorage storage $ = _getStorage();
+        return $.globalIndex;
+    }
+
+    function claimReserve() external view returns (uint256) {
+        EarnVaultStorage storage $ = _getStorage();
+        return $.claimReserve;
+    }
+
+    function principal(address user) external view returns (uint256) {
+        EarnVaultStorage storage $ = _getStorage();
+        return $.principal[user];
+    }
+
+    function accrued(address user) external view returns (uint256) {
+        EarnVaultStorage storage $ = _getStorage();
+        return $.accrued[user];
+    }
+
+    function userIndex(address user) external view returns (uint256) {
+        EarnVaultStorage storage $ = _getStorage();
+        return $.userIndex[user];
+    }
+
+    function yieldRedistributor() external view returns (address) {
+        EarnVaultStorage storage $ = _getStorage();
+        return $.yieldRedistributor;
+    }
+
+    function treasury() external view returns (address) {
+        EarnVaultStorage storage $ = _getStorage();
+        return $.treasury;
+    }
+
+    function pauser() external view returns (address) {
+        EarnVaultStorage storage $ = _getStorage();
+        return $.pauser;
+    }
+
+    function isBlacklisted(address user) external view returns (bool) {
+        EarnVaultStorage storage $ = _getStorage();
+        return $.isBlacklisted[user];
     }
 
     function claimable(address user) external view returns (uint256) {
-        uint256 p = principal[user];
-        if (p == 0) return accrued[user];
+        EarnVaultStorage storage $ = _getStorage();
+        uint256 p = $.principal[user];
+        if (p == 0) return $.accrued[user];
         
-        uint256 ui = userIndex[user];
-        uint256 gi = globalIndex;
+        uint256 ui = $.userIndex[user];
+        uint256 gi = $.globalIndex;
         if (gi > ui) {
-            uint256 owed = Math.mulDiv(p, gi - ui, RAY);
-            return accrued[user] + owed;
+            uint256 owed = Math.mulDiv(p, gi - ui, $.RAY);
+            return $.accrued[user] + owed;
         }
-        return accrued[user];
+        return $.accrued[user];
     }
 
     /// @notice Get user's total value (principal + claimable interest)
     function totalValue(address user) external view returns (uint256) {
-        uint256 p = principal[user];
-        if (p == 0) return accrued[user];
+        EarnVaultStorage storage $ = _getStorage();
+        uint256 p = $.principal[user];
+        if (p == 0) return $.accrued[user];
         
-        uint256 ui = userIndex[user];
-        uint256 gi = globalIndex;
+        uint256 ui = $.userIndex[user];
+        uint256 gi = $.globalIndex;
         if (gi > ui) {
-            uint256 owed = Math.mulDiv(p, gi - ui, RAY);
-            return p + accrued[user] + owed;
+            uint256 owed = Math.mulDiv(p, gi - ui, $.RAY);
+            return p + $.accrued[user] + owed;
         }
-        return p + accrued[user];
+        return p + $.accrued[user];
     }
 
     /// @notice Get user's complete account info in one call
@@ -184,21 +245,22 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
         uint256 userTotal,
         uint256 userLastIndex
     ) {
-        userPrincipal = principal[user];
-        userLastIndex = userIndex[user];
+        EarnVaultStorage storage $ = _getStorage();
+        userPrincipal = $.principal[user];
+        userLastIndex = $.userIndex[user];
         
         // Inline claimable logic to avoid expensive external call
         uint256 p = userPrincipal;
         uint256 ui = userLastIndex;
-        uint256 gi = globalIndex;
+        uint256 gi = $.globalIndex;
         
         if (p == 0) {
-            userClaimable = accrued[user];
+            userClaimable = $.accrued[user];
         } else if (gi > ui) {
-            uint256 owed = Math.mulDiv(p, gi - ui, RAY);
-            userClaimable = accrued[user] + owed;
+            uint256 owed = Math.mulDiv(p, gi - ui, $.RAY);
+            userClaimable = $.accrued[user] + owed;
         } else {
-            userClaimable = accrued[user];
+            userClaimable = $.accrued[user];
         }
         
         userTotal = userPrincipal + userClaimable;
@@ -212,25 +274,27 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
         uint256 vaultBalance,
         uint256 vaultCarryRay
     ) {
-        vaultTotalPrincipal = totalPrincipal;
-        vaultClaimReserve = claimReserve;
-        vaultGlobalIndex = globalIndex;
-        vaultBalance = USDSC.balanceOf(address(this));
-        vaultCarryRay = _carryRay;
+        EarnVaultStorage storage $ = _getStorage();
+        vaultTotalPrincipal = $.totalPrincipal;
+        vaultClaimReserve = $.claimReserve;
+        vaultGlobalIndex = $.globalIndex;
+        vaultBalance = $.USDSC.balanceOf(address(this));
+        vaultCarryRay = $._carryRay;
     }
 
     /// @notice Get user's claimable boost rewards for a specific token
     /// @param user User address to check
     /// @param token Token address to check boost rewards for
     function getClaimableBoostReward(address user, address token) external view returns (uint256) {
+        EarnVaultStorage storage $ = _getStorage();
         _checkNotBlacklisted(user);
         return BoostRewardsLib.getClaimableBoostReward(
             user,
             token,
-            principal[user],
-            userBoostIndex[user][token],
-            boostGlobalIndex[token],
-            userBoostAccrued
+            $.principal[user],
+            $.userBoostIndex[user][token],
+            $.boostGlobalIndex[token],
+            $.userBoostAccrued
         );
     }
 
@@ -244,26 +308,27 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
         address[] memory boostTokens,
         uint256[] memory boostAmounts
     ) {
+        EarnVaultStorage storage $ = _getStorage();
         _checkNotBlacklisted(user);
         
         // Get USDSC claimable yield
         usdscClaimable = this.claimable(user);
         
         // Get all active boost tokens
-        boostTokens = new address[](activeBoostTokens.length);
-        boostAmounts = new uint256[](activeBoostTokens.length);
+        boostTokens = new address[]($.activeBoostTokens.length);
+        boostAmounts = new uint256[]($.activeBoostTokens.length);
         
         // Calculate claimable amounts for each boost token
-        for (uint256 i = 0; i < activeBoostTokens.length; i++) {
-            address token = activeBoostTokens[i];
+        for (uint256 i = 0; i < $.activeBoostTokens.length; i++) {
+            address token = $.activeBoostTokens[i];
             boostTokens[i] = token;
             boostAmounts[i] = BoostRewardsLib.getClaimableBoostReward(
                 user,
                 token,
-                principal[user],
-                userBoostIndex[user][token],
-                boostGlobalIndex[token],
-                userBoostAccrued
+                $.principal[user],
+                $.userBoostIndex[user][token],
+                $.boostGlobalIndex[token],
+                $.userBoostAccrued
             );
         }
     }
@@ -275,16 +340,17 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     /// @notice Deposit USDSC tokens to earn yield
     /// @dev Reserves principal 1:1 in claimReserve to ensure withdrawals are always possible
     /// @param amount Amount of USDSC tokens to deposit
-    function deposit(uint256 amount) external whenNotPaused nonReentrant {
+    function deposit(uint256 amount) external virtual whenNotPaused nonReentrant {
+        EarnVaultStorage storage $ = _getStorage();
         _checkNotBlacklisted(msg.sender);
         if (amount == 0) revert ZeroAmount();
 
         _settle(msg.sender);
         
-        USDSC.safeTransferFrom(msg.sender, address(this), amount);
-        principal[msg.sender] += amount;
-        totalPrincipal += amount;
-        claimReserve += amount;  // reserve principal 1:1
+        $.USDSC.safeTransferFrom(msg.sender, address(this), amount);
+        $.principal[msg.sender] += amount;
+        $.totalPrincipal += amount;
+        $.claimReserve += amount;  // reserve principal 1:1
 
         emit Deposit(msg.sender, amount);
     }
@@ -302,11 +368,12 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
         uint256 deadline,
         uint8 v, bytes32 r, bytes32 s
     ) external whenNotPaused nonReentrant {
+        EarnVaultStorage storage $ = _getStorage();
         _checkNotBlacklisted(msg.sender);
         if (amount == 0) revert ZeroAmount();
 
         // Safely attempt permit - revert with clear error if not supported
-        try IERC20Permit(address(USDSC)).permit(msg.sender, address(this), amount, deadline, v, r, s) {
+        try IERC20Permit(address($.USDSC)).permit(msg.sender, address(this), amount, deadline, v, r, s) {
             // Permit succeeded, continue with deposit
         } catch {
             revert PermitFailed();
@@ -314,10 +381,10 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
 
         _settle(msg.sender);
         
-        USDSC.safeTransferFrom(msg.sender, address(this), amount);
-        principal[msg.sender] += amount;
-        totalPrincipal += amount;
-        claimReserve += amount;  // reserve principal 1:1
+        $.USDSC.safeTransferFrom(msg.sender, address(this), amount);
+        $.principal[msg.sender] += amount;
+        $.totalPrincipal += amount;
+        $.claimReserve += amount;  // reserve principal 1:1
 
         emit Deposit(msg.sender, amount);
     }
@@ -326,45 +393,46 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     /// @param amount Amount of principal to withdraw (max: user's principal)
     /// @dev Automatically claims ALL accrued interest (USDSC + boost rewards) when withdrawing
     /// @dev User can only withdraw their principal, but gets all rewards automatically
-    function withdraw(uint256 amount) external whenNotPaused nonReentrant {
+    function withdraw(uint256 amount) external virtual whenNotPaused nonReentrant {
+        EarnVaultStorage storage $ = _getStorage();
         _checkNotBlacklisted(msg.sender);
         if (amount == 0) revert ZeroAmount();
 
         _settle(msg.sender);
         
-        uint256 p = principal[msg.sender];
+        uint256 p = $.principal[msg.sender];
         if (amount > p) revert InsufficientPrincipal();
 
         // Settle and claim ALL boost rewards in single loop
-        for (uint256 i = 0; i < activeBoostTokens.length; i++) {
-            address token = activeBoostTokens[i];
+        for (uint256 i = 0; i < $.activeBoostTokens.length; i++) {
+            address token = $.activeBoostTokens[i];
             _settleBoost(msg.sender, token);
             BoostRewardsLib.claimBoostReward(
                 msg.sender,
                 token,
                 p, // Use original principal before withdrawal
-                userBoostIndex[msg.sender][token],
-                boostGlobalIndex[token],
-                userBoostAccrued,
-                boostClaimReserve
+                $.userBoostIndex[msg.sender][token],
+                $.boostGlobalIndex[token],
+                $.userBoostAccrued,
+                $.boostClaimReserve
             );
         }
 
         // Update state AFTER settling all rewards
-        principal[msg.sender] = p - amount;
-        totalPrincipal -= amount;
-        claimReserve -= amount; // Reduce claim reserve by withdrawn principal
+        $.principal[msg.sender] = p - amount;
+        $.totalPrincipal -= amount;
+        $.claimReserve -= amount; // Reduce claim reserve by withdrawn principal
         
         // Transfer principal
-        USDSC.safeTransfer(msg.sender, amount);
+        $.USDSC.safeTransfer(msg.sender, amount);
         
         // Automatically claim ALL USDSC yield
-        uint256 usdscYield = accrued[msg.sender];
+        uint256 usdscYield = $.accrued[msg.sender];
         if (usdscYield > 0) {
-            if (claimReserve < usdscYield) revert InsufficientFunding();
-            accrued[msg.sender] = 0;
-            claimReserve -= usdscYield;
-            USDSC.safeTransfer(msg.sender, usdscYield);
+            if ($.claimReserve < usdscYield) revert InsufficientFunding();
+            $.accrued[msg.sender] = 0;
+            $.claimReserve -= usdscYield;
+            $.USDSC.safeTransfer(msg.sender, usdscYield);
             emit InterestClaimed(msg.sender, usdscYield);
         }
         
@@ -372,38 +440,38 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
         emit Withdraw(msg.sender, amount);
     }
 
-
     /// @notice Claim all accrued interest to caller's address
     /// @dev Settles user's position and transfers all accrued yield (USDSC + boost rewards)
-    function claim() external whenNotPaused nonReentrant {
+    function claim() external virtual whenNotPaused nonReentrant {
+        EarnVaultStorage storage $ = _getStorage();
         _checkNotBlacklisted(msg.sender);
         _settle(msg.sender);
         
-        uint256 usdscAmt = accrued[msg.sender];
+        uint256 usdscAmt = $.accrued[msg.sender];
         bool hasUSDSCClaim = usdscAmt > 0;
         bool hasBoostClaim = false;
         
         // Claim USDSC interest
         if (hasUSDSCClaim) {
-            if (claimReserve < usdscAmt) revert InsufficientFunding();
-            accrued[msg.sender] = 0;
-            claimReserve -= usdscAmt;
-            USDSC.safeTransfer(msg.sender, usdscAmt);
+            if ($.claimReserve < usdscAmt) revert InsufficientFunding();
+            $.accrued[msg.sender] = 0;
+            $.claimReserve -= usdscAmt;
+            $.USDSC.safeTransfer(msg.sender, usdscAmt);
             emit InterestClaimed(msg.sender, usdscAmt);
         }
         
         // Settle and claim all boost rewards in single loop
-        for (uint256 i = 0; i < activeBoostTokens.length; i++) {
-            address token = activeBoostTokens[i];
+        for (uint256 i = 0; i < $.activeBoostTokens.length; i++) {
+            address token = $.activeBoostTokens[i];
             _settleBoost(msg.sender, token);
             uint256 claimedAmount = BoostRewardsLib.claimBoostReward(
                 msg.sender,
                 token,
-                principal[msg.sender],
-                userBoostIndex[msg.sender][token],
-                boostGlobalIndex[token],
-                userBoostAccrued,
-                boostClaimReserve
+                $.principal[msg.sender],
+                $.userBoostIndex[msg.sender][token],
+                $.boostGlobalIndex[token],
+                $.userBoostAccrued,
+                $.boostClaimReserve
             );
             if (claimedAmount > 0) {
                 hasBoostClaim = true;
@@ -413,7 +481,6 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
         if (!hasUSDSCClaim && !hasBoostClaim) revert NothingToClaim();
     }
 
-
     // =========================
     // Distributor hooks
     // =========================
@@ -422,35 +489,36 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     /// @dev MUST be called AFTER transferring `amount` USDSC to this contract
     /// @dev Enforces funding invariant: USDSC.balance >= claimReserve + amount
     /// @param amount Amount of USDSC yield to distribute
-    function onYield(uint256 amount) external onlyYieldRedistributor nonReentrant {
+    function onYield(uint256 amount) external virtual onlyYieldRedistributor nonReentrant {
+        EarnVaultStorage storage $ = _getStorage();
         if (amount == 0) return;
         
         // Verify actual balance before updating accounting
-        uint256 bal = USDSC.balanceOf(address(this));
+        uint256 bal = $.USDSC.balanceOf(address(this));
         
-        if (totalPrincipal == 0) {
+        if ($.totalPrincipal == 0) {
             // No deposits: just need enough for treasury transfer
             if (bal < amount) revert InsufficientFunding();
-            USDSC.safeTransfer(treasury, amount);
+            $.USDSC.safeTransfer($.treasury, amount);
             emit YieldTransferredToTreasury(amount);
             return;
         }
         
         // Deposits exist: need enough for claimReserve + new yield
-        if (bal < claimReserve + amount) revert InsufficientFunding();
+        if (bal < $.claimReserve + amount) revert InsufficientFunding();
         
         // Exact, immediate index update with Ray remainder carry
         // delta = floor( (amount*RAY + _carryRay) / totalPrincipal )
         // _carryRay = (amount*RAY + _carryRay) % totalPrincipal
         unchecked {
-            uint256 num = amount * RAY + _carryRay;
-            uint256 delta = num / totalPrincipal;
-            _carryRay = num % totalPrincipal;
-            globalIndex += delta;
+            uint256 num = amount * $.RAY + $._carryRay;
+            uint256 delta = num / $.totalPrincipal;
+            $._carryRay = num % $.totalPrincipal;
+            $.globalIndex += delta;
         }
         
-        claimReserve += amount;
-        emit YieldIndexed(amount, globalIndex, claimReserve);
+        $.claimReserve += amount;
+        emit YieldIndexed(amount, $.globalIndex, $.claimReserve);
     }
 
     /// @notice Distribute boost rewards (ASTR, DOT, etc.) to vault users
@@ -459,15 +527,16 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     /// @param token Token address to distribute as boost rewards
     /// @param amount Amount of boost tokens to distribute
     function onBoostReward(address token, uint256 amount) external onlyYieldRedistributor nonReentrant {
+        EarnVaultStorage storage $ = _getStorage();
         BoostRewardsLib.distributeBoostReward(
             token,
             amount,
-            totalPrincipal,
-            treasury,
-            boostGlobalIndex,
-            boostClaimReserve,
-            activeBoostTokens,
-            boostTokenIndex
+            $.totalPrincipal,
+            $.treasury,
+            $.boostGlobalIndex,
+            $.boostClaimReserve,
+            $.activeBoostTokens,
+            $.boostTokenIndex
         );
     }
 
@@ -479,20 +548,21 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     /// @dev Must ALWAYS be called before modifying principal[user] or accrued[user]
     /// @dev For first-time users, sets userIndex to current globalIndex to prevent over-allocation
     /// @param user Address to settle
-    function _settle(address user) internal {
-        uint256 p = principal[user];
+    function _settle(address user) internal virtual {
+        EarnVaultStorage storage $ = _getStorage();
+        uint256 p = $.principal[user];
         if (p == 0) { 
-            userIndex[user] = globalIndex; 
+            $.userIndex[user] = $.globalIndex; 
             return; 
         }
         
-        uint256 ui = userIndex[user];
-        uint256 gi = globalIndex;
+        uint256 ui = $.userIndex[user];
+        uint256 gi = $.globalIndex;
         if (gi > ui) {
-            uint256 owed = Math.mulDiv(p, gi - ui, RAY);
-            accrued[user] += owed;
+            uint256 owed = Math.mulDiv(p, gi - ui, $.RAY);
+            $.accrued[user] += owed;
         }
-        userIndex[user] = gi;  // Always update index for consistency
+        $.userIndex[user] = gi;  // Always update index for consistency
     }
 
     /// @dev Settles user's accrued boost rewards for a specific token
@@ -500,23 +570,24 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     /// @param user Address to settle
     /// @param token Token address to settle boost rewards for
     function _settleBoost(address user, address token) internal {
+        EarnVaultStorage storage $ = _getStorage();
         BoostRewardsLib.settleBoost(
             user,
             token,
-            principal[user],
-            userBoostIndex[user][token],
-            boostGlobalIndex[token],
-            userBoostAccrued
+            $.principal[user],
+            $.userBoostIndex[user][token],
+            $.boostGlobalIndex[token],
+            $.userBoostAccrued
         );
-        userBoostIndex[user][token] = boostGlobalIndex[token];
+        $.userBoostIndex[user][token] = $.boostGlobalIndex[token];
     }
 
     /// @dev Check if user is not blacklisted, revert if they are
     /// @param user Address to check blacklist status for
-    function _checkNotBlacklisted(address user) internal view {
-        if (isBlacklisted[user]) revert AddressBlacklisted();
+    function _checkNotBlacklisted(address user) internal view virtual {
+        EarnVaultStorage storage $ = _getStorage();
+        if ($.isBlacklisted[user]) revert AddressBlacklisted();
     }
-
 
     // =========================
     // Emergency (owner)
@@ -528,13 +599,14 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     /// @param to Address to send tokens to
     /// @param amount Amount to recover
     function recoverERC20(address token, address to, uint256 amount) external onlyOwner {
+        EarnVaultStorage storage $ = _getStorage();
         if (to == address(0)) revert CanNotBeZeroAddress();
 
-        if (token == address(USDSC)) {
+        if (token == address($.USDSC)) {
             if (!paused()) revert ContractNotPaused();
             // allow sweeping only true surplus
-            uint256 bal = USDSC.balanceOf(address(this));
-            uint256 minRequired = claimReserve;
+            uint256 bal = $.USDSC.balanceOf(address(this));
+            uint256 minRequired = $.claimReserve;
             if (bal <= minRequired) revert InsufficientFunding();
             uint256 maxSweep = bal - minRequired;
             if (amount > maxSweep) revert ExceedsSurplus();
@@ -544,8 +616,8 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
             if (amount > tokenBalance) revert ExceedsSurplus();
             
             // For boost tokens, ensure we don't recover reserved amounts
-            if (boostClaimReserve[token] > 0) {
-                uint256 availableAmount = tokenBalance - boostClaimReserve[token];
+            if ($.boostClaimReserve[token] > 0) {
+                uint256 availableAmount = tokenBalance - $.boostClaimReserve[token];
                 if (amount > availableAmount) revert ExceedsSurplus();
             }
         }
@@ -556,14 +628,20 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     /// @notice Sweep excess USDSC yield to treasury (when vault has surplus above reserves)
     /// @dev Sweeps all surplus above minimum required reserves
     function sweepSurplusToTreasury() external onlyOwner {
-        uint256 bal = USDSC.balanceOf(address(this));
-        uint256 minRequired = claimReserve;
+        EarnVaultStorage storage $ = _getStorage();
+        uint256 bal = $.USDSC.balanceOf(address(this));
+        uint256 minRequired = $.claimReserve;
         
         if (bal <= minRequired) return; // No surplus to sweep
         
         uint256 surplus = bal - minRequired;
-        USDSC.safeTransfer(treasury, surplus);
+        $.USDSC.safeTransfer($.treasury, surplus);
         emit SurplusSweptToTreasury(surplus);
+    }
+    
+    /// @notice Get version info (virtual for overrides)
+    function getVersion() external pure virtual returns (string memory) {
+        return "EarnVaultV1";
     }
 
     // =========================
