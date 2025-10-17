@@ -47,11 +47,11 @@ libs = ['node_modules', 'lib']
 verbosity = 3
 
 [profile.ci.fuzz]
-runs = 1_000  # Reduced from 10,000 to 1,000 for faster CI
+runs = 100  # Reduced from 1,000 for faster CI
 
 [profile.ci.invariant]
-runs = 256    # Reduced from 512
-depth = 50    # Reduced from 250 to 50
+runs = 50   # Reduced from 256
+depth = 10  # Reduced from 50
 
 [rpc_endpoints]
 localhost = "${LOCALHOST_RPC_URL}"

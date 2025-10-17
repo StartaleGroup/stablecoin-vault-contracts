@@ -28,7 +28,7 @@ jobs:
         id: build
 
       - name: Run Forge tests with gas report
-        run: make gas-report profile=ci --no-match-test "testFuzz|testInvariant"
+        run: make gas-report profile=ci
         env:
           # make fuzzing semi-deterministic to avoid noisy gas cost estimation
           # due to non-deterministic fuzzing (but still use pseudo-random fuzzing seeds)
