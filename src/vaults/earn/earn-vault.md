@@ -4,6 +4,8 @@
 
 Users deposit USDSC tokens and earn claimable yield over time, plus additional boost rewards in other ERC20 tokens (ASTR, DOT, etc.). Users maintain full control over their principal and can withdraw any amount up to their principal, with all accrued rewards (USDSC yield + boost rewards) automatically claimed on any withdrawal.
 
+> **Note**: This contract is designed to be upgradeable. The upgradeable version is available at `src/vaults/earn/EarnVaultUpgradeable.sol` with comprehensive upgrade testing and documentation in `src/vaults/earn/earn-vault-upgradeable.md`.
+
 ## Key Features
 
 - **Principal Protection**: Withdraw original deposit anytime
@@ -49,12 +51,15 @@ setTreasury(address who)                   // Update treasury address
 setPauser(address who)                     // Update pauser address
 setBlacklisted(address who, bool status)   // Manage blacklist
 
-// Emergency controls (owner or pauser)
+// Emergency controls (pauser only)
 pause() / unpause()                        // Emergency stop/resume
 
 // Treasury operations (owner only, when paused)
 sweepSurplusToTreasury()                  // Sweep excess funds to treasury
 recoverERC20(address token, address to, uint256 amount)  // Emergency token recovery
+
+// ETH safety (owner only)
+sweepNative(address payable to, uint256 amount)  // Recover accidentally sent ETH
 
 // Vault statistics
 getVaultStats() → (uint256 totalPrincipal, uint256 claimReserve, uint256 globalIndex, uint256 pendingDelta, uint256 balance)
@@ -283,9 +288,9 @@ address[] public activeBoostTokens;  // List of tokens that have been distribute
 4. **Automatic**: All active boost tokens are claimed together
 
 ### Role-Based Security
-- **Owner**: Full administrative control, emergency functions
-- **YieldRedistributor**: Can distribute yield to vault users
-- **Pauser**: Can pause/unpause for emergency response
+- **Owner**: Full administrative control, emergency functions, 2-step ownership transfers
+- **YieldRedistributor**: Can distribute yield and boost rewards to vault users
+- **Pauser**: Can pause/unpause the contract for emergency response
 - **Treasury**: Receives swept surplus funds
 
 ### Vault Statistics
@@ -306,10 +311,47 @@ function getVaultStats() external view returns (
 - **Overflow Protection**: Safe arithmetic using `Math.mulDiv` for 512-bit precision
 - **Complete Blacklist**: All user functions respect blacklist status
 - **Reentrancy Protection**: All state-changing functions protected
-- **Pause Mechanism**: Emergency stop for all operations
+- **Pause Mechanism**: Emergency stop for all operations (pauser-only)
 - **Permit Safety**: Graceful handling of tokens that don't support permit
 - **Settlement Ordering**: Critical `_settle()` called before state changes
 - **ETH Safety**: Contract rejects ETH to prevent accidental loss
+- **2-Step Ownership**: Secure ownership transfer using OpenZeppelin's Ownable2Step
+- **Role Separation**: Clear separation between owner, yield redistributor, and pauser roles
+
+## ETH Safety & Recovery
+
+### ETH Rejection
+The contract explicitly rejects ETH transfers to prevent accidental loss:
+
+```solidity
+receive() external payable {
+    revert EthNotAccepted();
+}
+
+fallback() external payable {
+    revert EthNotAccepted();
+}
+```
+
+### ETH Recovery
+Owner can recover accidentally sent ETH (e.g., via `selfdestruct`):
+
+```solidity
+function sweepNative(address payable to, uint256 amount) external onlyOwner {
+    if (to == address(0)) revert CanNotBeZeroAddress();
+    
+    (bool success,) = to.call{value: amount}("");
+    if (!success) revert SweepFailed();
+    
+    emit NativeSwept(to, amount);
+}
+```
+
+### ETH Safety Scenarios
+1. **Direct ETH Transfer**: Reverts with `EthNotAccepted()`
+2. **ETH via `receive()`**: Reverts with `EthNotAccepted()`
+3. **ETH via `fallback()`**: Reverts with `EthNotAccepted()`
+4. **ETH via `selfdestruct`**: ETH accumulates, recoverable via `sweepNative()`
 
 ## Withdrawal Examples
 
@@ -499,6 +541,7 @@ uint256 dotRewards = vault.getClaimableBoostReward(user, address(dot));
 - `ContractNotPaused()`: Operation requires paused state
 - `ExceedsSurplus()`: Amount exceeds available surplus
 - `EthNotAccepted()`: Contract doesn't accept ETH
+- `SweepFailed()`: ETH sweep operation failed
 - `PermitFailed()`: Permit operation failed (token may not support it)
 
 ## Events
@@ -514,6 +557,9 @@ uint256 dotRewards = vault.getClaimableBoostReward(user, address(dot));
 - **`BoostRewardIndexed(address indexed token, uint256 amount, uint256 newGlobalIndex, uint256 newClaimReserve)`**: Boost rewards distributed to users
 - **`BoostRewardTransferredToTreasury(address indexed token, uint256 amount)`**: Boost rewards transferred to treasury when no deposits exist
 - **`BoostRewardClaimed(address indexed user, address indexed token, uint256 amount)`**: User claims boost rewards
+
+### ETH Safety Events
+- **`NativeSwept(address indexed to, uint256 amount)`**: Owner recovered accidentally sent ETH
 
 ## Technical Notes
 
@@ -539,6 +585,15 @@ uint256 dotRewards = vault.getClaimableBoostReward(user, address(dot));
 - **Role-Based Access**: Comprehensive access control with proper role management
 - **Input Validation**: Zero address and amount checks throughout
 
+### Access Control Implementation
+- **Ownable2Step**: Uses OpenZeppelin's secure 2-step ownership transfer
+- **Custom Modifiers**: `onlyYieldRedistributor` and `onlyPauser` for specific role access
+- **Direct Storage**: Simple address variables instead of complex role mappings
+- **Clear Permissions**: Each role has distinct, non-overlapping responsibilities
+- **Owner Functions**: `setYieldRedistributor()`, `setPauser()`, `setTreasury()`, `setBlacklisted()`
+- **Pauser Functions**: `pause()`, `unpause()` (owner cannot directly pause)
+- **Yield Redistributor Functions**: `onYield()`, `onBoostReward()`
+
 ### Library Architecture
 The boost rewards system uses a separate library (`BoostRewardsLib`) for:
 - **Separation of Concerns**: Boost logic isolated from main vault
@@ -547,12 +602,13 @@ The boost rewards system uses a separate library (`BoostRewardsLib`) for:
 ## Role Hierarchy
 
 ```
-Owner (Full Control)
-├── Set all role addresses
+Owner (Full Control via Ownable2Step)
+├── Set all role addresses (yieldRedistributor, pauser, treasury)
 ├── Emergency sweep operations
-├── Blacklist management
+├── Blacklist management (setBlacklisted)
 ├── Treasury operations
-└── Role management (revoke old roles, grant new roles)
+├── 2-step ownership transfers
+└── Renounce ownership
 
 YieldRedistributor (Yield Operations)
 ├── Distribute yield via onYield()
@@ -568,10 +624,11 @@ Treasury (Fund Recipient)
 ```
 
 ### Role Management Features
-- **Automatic Role Revocation**: When updating roles, old roles are automatically revoked
-- **Current Pauser Tracking**: `currentPauser` variable ensures proper role transitions
-- **Role-Based Storage**: No redundant storage variables (uses OpenZeppelin AccessControl)
-- **Secure Transitions**: Prevents unauthorized access during role changes
+- **Direct Storage Variables**: Simple address variables for yieldRedistributor and pauser
+- **Custom Modifiers**: `onlyYieldRedistributor` and `onlyPauser` for access control
+- **Ownable2Step**: Secure 2-step ownership transfer process
+- **Clear Separation**: Each role has distinct, non-overlapping responsibilities
+- **Owner Control**: Owner can change all role addresses but cannot directly pause
 
 ## Deployment Parameters
 

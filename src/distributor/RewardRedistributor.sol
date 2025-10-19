@@ -168,13 +168,13 @@ contract RewardRedistributor is AccessControl, Pausable, ReentrancyGuard {
             uint256 T_yield
         )
     {
-        return _calculateSplit(minted, false);
+        return _calculateSplit(minted, false, true);
     }
 
     /// @notice Preview a split using the extension’s **current pending** yield (no carries).
     /// @dev    Reads {IUSDSCMExtension.yield}. Pure preview; does not mutate.
-    /// @return minted            Pending fresh yield on the extension at this moment.
-    /// @return feeToStartale     Fee portion (bps of `minted`) to Startale.
+    /// @return couldBeMinted     Pending fresh yield on the extension at this moment.
+    /// @return feeToStartale     Fee portion (bps of `couldBeMinted`) to Startale.
     /// @return toEarn            Portion of net to EarnVault (OFF) **without carry**.
     /// @return toOn              Portion of net to sUSDSC (ON) **without carry**.
     /// @return toStartaleExtra   Remainder of net: ineligible cohorts + rounding.
@@ -184,7 +184,7 @@ contract RewardRedistributor is AccessControl, Pausable, ReentrancyGuard {
     function previewSplitCurrent()
         external view
         returns (
-            uint256 minted,
+            uint256 couldBeMinted,
             uint256 feeToStartale,
             uint256 toEarn,
             uint256 toOn,
@@ -194,14 +194,14 @@ contract RewardRedistributor is AccessControl, Pausable, ReentrancyGuard {
             uint256 T_yield
         )
     {
-        minted = IMYieldToOne(USDSC_ADDRESS).yield();
-        (feeToStartale, toEarn, toOn, toStartaleExtra, S_base, T_earn, T_yield) = _calculateSplit(minted, false);
+        couldBeMinted = IMYieldToOne(USDSC_ADDRESS).yield();
+        (feeToStartale, toEarn, toOn, toStartaleExtra, S_base, T_earn, T_yield) = _calculateSplit(couldBeMinted, false, true);
     }
 
     /// @notice Exact dry-run of {distribute} against current chain state (includes carries).
     /// @dev    Reads extension’s pending yield and current carries; does not mutate state.
-    /// @return minted            Pending fresh yield on the extension at this moment.
-    /// @return feeToStartale     Fee portion (bps of `minted`) to Startale.
+    /// @return couldBeMinted            Pending fresh yield on the extension at this moment.
+    /// @return feeToStartale     Fee portion (bps of `couldBeMinted`) to Startale.
     /// @return toEarn            Portion of net to EarnVault (OFF) **with carry** (exact if called now).
     /// @return toOn              Portion of net to sUSDSC (ON) **with carry** (exact if called now).
     /// @return toStartaleExtra   Remainder of net: ineligible cohorts + rounding.
@@ -211,7 +211,7 @@ contract RewardRedistributor is AccessControl, Pausable, ReentrancyGuard {
     function previewDistribute()
         external view
         returns (
-            uint256 minted,
+            uint256 couldBeMinted,
             uint256 feeToStartale,
             uint256 toEarn,
             uint256 toOn,
@@ -221,31 +221,36 @@ contract RewardRedistributor is AccessControl, Pausable, ReentrancyGuard {
             uint256 T_yield
         )
     {
-        minted = IMYieldToOne(USDSC_ADDRESS).yield();
-        (feeToStartale, toEarn, toOn, toStartaleExtra, S_base, T_earn, T_yield) = _calculateSplit(minted, true);
+        couldBeMinted = IMYieldToOne(USDSC_ADDRESS).yield();
+        (feeToStartale, toEarn, toOn, toStartaleExtra, S_base, T_earn, T_yield) = _calculateSplit(couldBeMinted, true, true);
     }
 
     // ---------- core ----------
 
     /// @notice Claims pending USDSC yield from the extension and distributes it per policy.
     /// @dev    Sequence:
-    ///         1) `minted = IMYieldToOne(USDSC_ADDRESS).claimYield()` mints fresh USDSC to this contract (must be yieldRecipient).
-    ///         2) `feeToStartale = minted * fee_on_yield_bps / 10_000`.
-    ///         3) Compute `S_base = IERC20(USDSC_ADDRESS).totalSupply() - minted` (supply **before** this mint).
-    ///         4) Read TVLs: `T_earn = earnVault.totalPrincipal()`, `T_yield = susdscVault.totalAssets()`.
-    ///         5) Allocate net using carries:
+    ///         1) Record `balanceBefore = IERC20(USDSC_ADDRESS).balanceOf(address(this))`.
+    ///         2) `minted = IMYieldToOne(USDSC_ADDRESS).claimYield()` mints fresh USDSC to this contract (must be yieldRecipient).
+    ///         3) Calculate `gross = balanceBefore + minted` to handle both normal flow and external claimYield() calls.
+    ///         4) `feeToStartale = gross * fee_on_yield_bps / 10_000`.
+    ///         5) Compute `S_base = IERC20(USDSC_ADDRESS).totalSupply() - minted` (supply **before** this mint).
+    ///         6) Read TVLs: `T_earn = earnVault.totalPrincipal()`, `T_yield = susdscVault.totalAssets()`.
+    ///         7) Allocate net using carries:
     ///            `toEarn = floor((net*T_earn + carryEarn)/S_base)`, `carryEarn = (net*T_earn + carryEarn) % S_base`
     ///            `toOn   = floor((net*T_yield   + carryOn)/S_base)`,   `carryOn   = (net*T_yield   + carryOn)   % S_base`
     ///            `toStartaleExtra = net - (toEarn + toOn)`
-    ///         6) Transfers:
+    ///         8) Transfers:
     ///            - Startale: `feeToStartale + toStartaleExtra`
     ///            - EarnVault: transfer `toEarn` **then** call `earnVault.onYield(toEarn)`
     ///            - sUSDSC: transfer `toOn` (PPS rises)
     /// @custom:security nonReentrant and Pausable.
     function distribute() external whenNotPaused onlyRole(OPERATOR_ROLE) nonReentrant {
         // Review: Need to check if only specific role (yield recipient OR yield recipient manager) can call this
+        uint256 balanceBefore = IERC20(USDSC_ADDRESS).balanceOf(address(this));
         uint256 minted = IMYieldToOne(USDSC_ADDRESS).claimYield();
-        if (minted == 0) return;
+        uint256 gross = balanceBefore + minted;
+        
+        if (gross == 0) return; // No yield to distribute
 
         uint256 feeToStartale;
         uint256 toEarn;
@@ -256,19 +261,19 @@ contract RewardRedistributor is AccessControl, Pausable, ReentrancyGuard {
         uint256 T_yield;
 
         // Use helper for calculation, but we need to handle carries separately since we update state
-        (feeToStartale, toEarn, toOn, toStartaleExtra, S_base, T_earn, T_yield) = _calculateSplit(minted, true);
+        (feeToStartale, toEarn, toOn, toStartaleExtra, S_base, T_earn, T_yield) = _calculateSplit(gross, true, false);
 
         // Handle zero S_base case
         if (S_base == 0) {
             if (feeToStartale > 0) IERC20(USDSC_ADDRESS).safeTransfer(treasury, feeToStartale);
             if (toStartaleExtra > 0) IERC20(USDSC_ADDRESS).safeTransfer(treasury, toStartaleExtra);
-            emit Distributed(minted, feeToStartale, 0, 0, toStartaleExtra, 0, 0, 0);
+            emit Distributed(gross, feeToStartale, 0, 0, toStartaleExtra, 0, 0, 0);
             return;
         }
 
         // Update carry state variables (helper doesn't modify state)
         if (S_base > 0) {
-            uint256 net = minted - feeToStartale;
+            uint256 net = gross - feeToStartale;
             uint256 numEarn = net * T_earn + carryEarn;
             carryEarn = numEarn % S_base;
 
@@ -290,7 +295,7 @@ contract RewardRedistributor is AccessControl, Pausable, ReentrancyGuard {
             // optional: susdscVault.syncDonation(toOn);
         }
 
-        emit Distributed(minted, feeToStartale, toEarn, toOn, toStartaleExtra, S_base, T_earn, T_yield);
+        emit Distributed(gross, feeToStartale, toEarn, toOn, toStartaleExtra, S_base, T_earn, T_yield);
     }
 
     // ---------- helpers ----------
@@ -299,6 +304,7 @@ contract RewardRedistributor is AccessControl, Pausable, ReentrancyGuard {
     /// @dev    Core calculation logic shared by preview functions and distribute().
     /// @param minted            Amount of fresh yield to allocate (pre-fee).
     /// @param useCarries        Whether to include carry calculations (true for distribute/previewDistribute).
+    /// @param preMint           Whether this is a preview (true) or actual distribution (false).
     /// @return feeToStartale    Fee portion (bps of `minted`) to Startale.
     /// @return toEarn           Portion of net allocated to EarnVault (OFF).
     /// @return toOn             Portion of net allocated to sUSDSC (ON).
@@ -306,7 +312,7 @@ contract RewardRedistributor is AccessControl, Pausable, ReentrancyGuard {
     /// @return S_base           Total USDSC supply **before** this mint.
     /// @return T_earn           EarnVault TVL used for allocation.
     /// @return T_yield          sUSDSCVault TVL used for allocation.
-    function _calculateSplit(uint256 minted, bool useCarries)
+    function _calculateSplit(uint256 minted, bool useCarries, bool preMint)
         internal view
         returns (
             uint256 feeToStartale,
@@ -326,7 +332,13 @@ contract RewardRedistributor is AccessControl, Pausable, ReentrancyGuard {
         uint256 net = minted - feeToStartale;
 
         uint256 SNow = IERC20(USDSC_ADDRESS).totalSupply();
-        S_base = SNow > minted ? SNow - minted : 0;
+        if (preMint) {
+            // For preview functions: minted is pending/hypothetical, so S_base = current supply
+            S_base = SNow;
+        } else {
+            // For actual distribution: minted is real, so S_base = supply before mint
+            S_base = SNow > minted ? SNow - minted : 0;
+        }
 
         T_earn = earnVault.totalPrincipal();
         T_yield = susdscVault.totalAssets();
