@@ -55,6 +55,7 @@ contract SUSDSCVaultUpgradeTest is Test {
         TransparentUpgradeableProxy usdscProxy = new TransparentUpgradeableProxy(
             address(usdscImplementation),
             admin, // OpenZeppelin v5 creates ProxyAdmin automatically with this as owner
+                   // See: https://docs.openzeppelin.com/contracts/5.x/api/proxy#TransparentUpgradeableProxy
             abi.encodeWithSelector(USDSC.initialize.selector, 'USDSC', 'USDSC', vaultAdmin, yieldRecipient)
         );
         usdsc = USDSC(address(usdscProxy));
@@ -64,6 +65,7 @@ contract SUSDSCVaultUpgradeTest is Test {
         proxy = new TransparentUpgradeableProxy(
             address(vaultImplementation),
             admin, // OpenZeppelin v5 creates ProxyAdmin automatically with this as owner
+                   // See: https://docs.openzeppelin.com/contracts/5.x/api/proxy#TransparentUpgradeableProxy
             abi.encodeWithSelector(
                 SUSDSCVaultUpgradable.initialize.selector,
                 IERC20(address(usdsc)),

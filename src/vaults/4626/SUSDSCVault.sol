@@ -74,7 +74,6 @@ contract SUSDSCVault is ERC20, ERC4626, AccessControl, Pausable, ReentrancyGuard
     SafeTransferLib.safeTransfer(token, to, amount);
   }
 
-  // Todo // Review
   /**
    * @dev Override to provide enhanced protection against inflation attacks.
    * 
@@ -89,10 +88,6 @@ contract SUSDSCVault is ERC20, ERC4626, AccessControl, Pausable, ReentrancyGuard
    * we could keep this to zero and put Initial seed deposit upon deployment (say 1000 USDSC)
    */
   function _decimalsOffset() internal pure override returns (uint8) {
-    // return 6;
     return 0;
   }
-
-  // Todo // Review
-  // Decide if we want to accept eth, withdraw eth etc or not.
 }
