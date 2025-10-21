@@ -12,6 +12,7 @@ import "../mocks/MockUSDSC.sol";
 import "../mocks/MockExtension.sol";
 import "../mocks/MockERC20.sol";
 
+
 /// @title RewardRedistributor Integration Tests
 /// @notice Tests RewardRedistributor with real EarnVault and SUSDSCVault contracts
 /// @dev Uses MockUSDSC and MockExtension for yield simulation while testing real vault interactions
@@ -1126,7 +1127,7 @@ contract RewardRedistributorIntegrationTest is Test {
         assertEq(susdscAssetsAfter, susdscAssetsBefore, "sUSDSC assets unchanged");
     }
     
-    function testIntegration_RewardRedistributorZeroSupply() public {
+    function testIntegration_RewardRedistributorZeroSupply() public view{
         // Test distribution when total supply is zero (edge case)
         // This is hard to test with real contracts, so we'll test the preview function
         
@@ -1155,7 +1156,7 @@ contract RewardRedistributorIntegrationTest is Test {
         assertEq(minted, toEarn + toOn + toStartaleExtra, "All yield allocated in preview");
         
         // Test previewSplit function
-        (uint256 previewFee, uint256 previewEarn, uint256 previewOn, uint256 previewExtra, uint256 previewSBase, uint256 previewTEarn, uint256 previewTYield) = rr.previewSplit(5_000e6);
+        (uint256 previewFee, uint256 previewEarn, uint256 previewOn,, uint256 previewSBase, uint256 previewTEarn, uint256 previewTYield) = rr.previewSplit(5_000e6);
         
         assertEq(previewFee, feeToStartale, "PreviewSplit matches previewDistribute fee");
         // Both previewSplit and previewDistribute now use the same S_base calculation (preMint = true)
@@ -1600,7 +1601,7 @@ contract RewardRedistributorIntegrationTest is Test {
         assertEq(userLastIndex, 0, "New user has no index");
         
         // Test getVaultStats
-        (uint256 totalPrincipal, uint256 claimReserve, uint256 globalIndex, uint256 pendingDelta, uint256 balance) = earnVault.getVaultStats();
+        (uint256 totalPrincipal, uint256 claimReserve, uint256 globalIndex, , ) = earnVault.getVaultStats();
         assertGe(totalPrincipal, 0, "Vault has principal (may be zero)");
         assertGe(claimReserve, 0, "Vault has claim reserve (may be zero)");
         assertGe(globalIndex, earnVault.RAY(), "Global index is at least RAY");
