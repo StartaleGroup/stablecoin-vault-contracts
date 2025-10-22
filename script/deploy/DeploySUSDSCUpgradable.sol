@@ -31,8 +31,8 @@ contract DeploySUSDSCVaultUpgradeable is Script, DeployHelpers {
     SUSDSCVaultUpgradable public susdscVault;
 
     // Salt for CREATE3 deployment
-    string public constant IMPLEMENTATION_NAME = "SUSDSCVaultUpgradeable_Implementation";
-    string public constant PROXY_NAME = "SUSDSCVaultUpgradeable_Proxy";
+    string public constant IMPLEMENTATION_NAME = "SUSDSCVaultUpgradeable_Implementation2";
+    string public constant PROXY_NAME = "SUSDSCVaultUpgradeable_Proxy2";
 
     function setUp() public {
         // Load environment variables
@@ -122,6 +122,9 @@ contract DeploySUSDSCVaultUpgradeable is Script, DeployHelpers {
         console.log("Proxy (SUSDSCVault):", address(susdscVault));
         console.log("Address verification: PASSED");
 
+        // Step 4: Make initial deposit
+        _makeInitialDeposit(deployer);
+
         vm.stopBroadcast();
 
         // Post-deployment verification
@@ -130,6 +133,35 @@ contract DeploySUSDSCVaultUpgradeable is Script, DeployHelpers {
         console.log("Vault Symbol:", susdscVault.symbol());
         console.log("Total Assets:", susdscVault.totalAssets());
         console.log("Total Supply:", susdscVault.totalSupply());
+        console.log("Deployer shares:", susdscVault.balanceOf(deployer));
+    }
+
+    /**
+     * @notice Makes an initial deposit to the vault
+     * @dev Deposits 1 USDSC (1e6 units) from the deployer
+     * @param deployer The address making the deposit
+     */
+    function _makeInitialDeposit(address deployer) internal {
+        console.log("\n=== Making Initial Deposit ===");
+        uint256 depositAmount = 1e6; // 1 USDSC (6 decimals)
+        
+        IERC20 usdsc = IERC20(usdscAddress);
+        uint256 deployerBalance = usdsc.balanceOf(deployer);
+        console.log("Deployer USDSC balance:", deployerBalance);
+        
+        if (deployerBalance >= depositAmount) {
+            // Approve vault to spend USDSC
+            usdsc.approve(address(susdscVault), depositAmount);
+            console.log("Approved vault to spend", depositAmount, "USDSC");
+            
+            // Deposit to vault
+            uint256 shares = susdscVault.deposit(depositAmount, deployer);
+            console.log("Deposited", depositAmount, "USDSC");
+            console.log("Received", shares, "shares");
+        } else {
+            console.log("WARNING: Insufficient USDSC balance for initial deposit");
+            console.log("Skipping initial deposit...");
+        }
     }
 
     /**
