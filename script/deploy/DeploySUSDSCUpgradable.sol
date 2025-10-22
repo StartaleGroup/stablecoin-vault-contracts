@@ -5,7 +5,6 @@ import {Script, console} from "forge-std/Script.sol";
 import {SUSDSCVaultUpgradable} from "../../src/vaults/4626/SUSDSCVaultUpgradable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
-import {ProxyAdmin} from "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 import {DeployHelpers} from "./DeployHelpers.sol";
 
 /**

@@ -2,9 +2,7 @@
 pragma solidity ^0.8.26;
 
 import {Test} from "forge-std/Test.sol";
-import {console2} from "forge-std/console2.sol";
 import {EarnVault} from "../../src/vaults/earn/EarnVault.sol";
-import {IEarnVaultEventsAndErrors} from "../../src/interfaces/vaults/earn/IEarnVaultEventsAndErrors.sol";
 import {MockERC20} from "../mocks/MockERC20.sol";
 
 /// @title EarnVault Invariant Tests
@@ -60,7 +58,8 @@ contract EarnVaultInvariants is Test {
         
         // === Distribute yield and verify invariant holds ===
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vault), 100e6);
+        bool success = usdsc.transfer(address(vault), 100e6);
+        require(success, "Transfer failed");
         vm.prank(yieldRedistributor);
         vault.onYield(100e6);
         
@@ -87,7 +86,8 @@ contract EarnVaultInvariants is Test {
             uint256 globalIndexBefore = vault.globalIndex();
             
             vm.prank(yieldRedistributor);
-            usdsc.transfer(address(vault), 10e6);
+            bool success = usdsc.transfer(address(vault), 10e6);
+            require(success, "Transfer failed");
             vm.prank(yieldRedistributor);
             vault.onYield(10e6);
             
@@ -128,7 +128,8 @@ contract EarnVaultInvariants is Test {
         
         // === Test after yield distribution ===
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vault), 100e6);
+        bool success = usdsc.transfer(address(vault), 100e6);
+        require(success, "Transfer failed");
         vm.prank(yieldRedistributor);
         vault.onYield(100e6);
         
@@ -151,7 +152,8 @@ contract EarnVaultInvariants is Test {
         
         // === Distribute yield ===
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vault), 100e6);
+        bool success = usdsc.transfer(address(vault), 100e6);
+        require(success, "Transfer failed");
         vm.prank(yieldRedistributor);
         vault.onYield(100e6);
         
@@ -180,7 +182,8 @@ contract EarnVaultInvariants is Test {
         
         // === Distribute yield ===
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vault), 200e6);
+        bool success = usdsc.transfer(address(vault), 200e6);
+        require(success, "Transfer failed");
         vm.prank(yieldRedistributor);
         vault.onYield(200e6);
         
@@ -202,7 +205,8 @@ contract EarnVaultInvariants is Test {
         vault.deposit(2000e6); // Charlie has 2x principal
         
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vault), 300e6);
+        bool success2 = usdsc.transfer(address(vault), 300e6);
+        require(success2, "Transfer failed");
         vm.prank(yieldRedistributor);
         vault.onYield(300e6);
         
@@ -224,7 +228,8 @@ contract EarnVaultInvariants is Test {
         vault.deposit(1000e6);
         
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vault), 100e6);
+        bool success = usdsc.transfer(address(vault), 100e6);
+        require(success, "Transfer failed");
         vm.prank(yieldRedistributor);
         vault.onYield(100e6);
         
@@ -237,7 +242,8 @@ contract EarnVaultInvariants is Test {
         
         // === Setup for withdraw test ===
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vault), 50e6);
+        bool success2 = usdsc.transfer(address(vault), 50e6);
+        require(success2, "Transfer failed");
         vm.prank(yieldRedistributor);
         vault.onYield(50e6);
         
@@ -263,7 +269,8 @@ contract EarnVaultInvariants is Test {
         // === Distribute boost rewards ===
         vm.startPrank(yieldRedistributor);
         boostToken.approve(address(vault), 100e18);
-        boostToken.transfer(address(vault), 100e18);
+        bool success = boostToken.transfer(address(vault), 100e18);
+        require(success, "Transfer failed");
         vault.onBoostReward(address(boostToken), 100e18);
         vm.stopPrank();
         
@@ -275,7 +282,8 @@ contract EarnVaultInvariants is Test {
         
         vm.startPrank(yieldRedistributor);
         boostToken.approve(address(vault), 50e18);
-        boostToken.transfer(address(vault), 50e18);
+        bool success2 = boostToken.transfer(address(vault), 50e18);
+        require(success2, "Transfer failed");
         vault.onBoostReward(address(boostToken), 50e18);
         vm.stopPrank();
         
@@ -310,7 +318,8 @@ contract EarnVaultInvariants is Test {
         uint256 tinyAmount = 1e18; // 1 token (18 decimals)
         vm.startPrank(yieldRedistributor);
         boostToken.approve(address(vault), tinyAmount);
-        boostToken.transfer(address(vault), tinyAmount);
+        bool success = boostToken.transfer(address(vault), tinyAmount);
+        require(success, "Transfer failed");
         vault.onBoostReward(address(boostToken), tinyAmount);
         vm.stopPrank();
         
@@ -327,7 +336,8 @@ contract EarnVaultInvariants is Test {
         // === Distribute another tiny amount ===
         vm.startPrank(yieldRedistributor);
         boostToken.approve(address(vault), tinyAmount);
-        boostToken.transfer(address(vault), tinyAmount);
+        bool success2 = boostToken.transfer(address(vault), tinyAmount);
+        require(success2, "Transfer failed");
         vault.onBoostReward(address(boostToken), tinyAmount);
         vm.stopPrank();
         
@@ -345,7 +355,8 @@ contract EarnVaultInvariants is Test {
         uint256 largerAmount = 5e6; // 5 USDSC worth
         vm.startPrank(yieldRedistributor);
         boostToken.approve(address(vault), largerAmount);
-        boostToken.transfer(address(vault), largerAmount);
+        bool success3 = boostToken.transfer(address(vault), largerAmount);
+        require(success3, "Transfer failed");
         vault.onBoostReward(address(boostToken), largerAmount);
         vm.stopPrank();
         
@@ -380,7 +391,8 @@ contract EarnVaultInvariants is Test {
         uint256 boostAmount = 100e18; // 100 BOOST tokens
         vm.startPrank(yieldRedistributor);
         boostToken.approve(address(vault), boostAmount);
-        boostToken.transfer(address(vault), boostAmount);
+        bool success = boostToken.transfer(address(vault), boostAmount);
+        require(success, "Transfer failed");
         vault.onBoostReward(address(boostToken), boostAmount);
         vm.stopPrank();
         
@@ -404,7 +416,8 @@ contract EarnVaultInvariants is Test {
         uint256 additionalBoost = 50e18; // 50 more BOOST tokens
         vm.startPrank(yieldRedistributor);
         boostToken.approve(address(vault), additionalBoost);
-        boostToken.transfer(address(vault), additionalBoost);
+        bool success2 = boostToken.transfer(address(vault), additionalBoost);
+        require(success2, "Transfer failed");
         vault.onBoostReward(address(boostToken), additionalBoost);
         vm.stopPrank();
         
@@ -439,7 +452,8 @@ contract EarnVaultInvariants is Test {
         uint256 amountA = 100e18;
         vm.startPrank(yieldRedistributor);
         tokenA.approve(address(vault), amountA);
-        tokenA.transfer(address(vault), amountA);
+        bool success1 = tokenA.transfer(address(vault), amountA);
+        require(success1, "Transfer failed");
         vault.onBoostReward(address(tokenA), amountA);
         vm.stopPrank();
         
@@ -447,7 +461,8 @@ contract EarnVaultInvariants is Test {
         uint256 amountB = 200e18;
         vm.startPrank(yieldRedistributor);
         tokenB.approve(address(vault), amountB);
-        tokenB.transfer(address(vault), amountB);
+        bool success2 = tokenB.transfer(address(vault), amountB);
+        require(success2, "Transfer failed");
         vault.onBoostReward(address(tokenB), amountB);
         vm.stopPrank();
         
@@ -455,7 +470,8 @@ contract EarnVaultInvariants is Test {
         uint256 amountC = 300e6;
         vm.startPrank(yieldRedistributor);
         tokenC.approve(address(vault), amountC);
-        tokenC.transfer(address(vault), amountC);
+        bool success3 = tokenC.transfer(address(vault), amountC);
+        require(success3, "Transfer failed");
         vault.onBoostReward(address(tokenC), amountC);
         vm.stopPrank();
         

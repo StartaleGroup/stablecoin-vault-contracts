@@ -2,7 +2,6 @@
 pragma solidity ^0.8.26;
 
 import {Test} from "forge-std/Test.sol";
-import {console2} from "forge-std/console2.sol";
 import {EarnVaultUpgradeable} from "../../src/vaults/earn/EarnVaultUpgradeable.sol";
 import {EarnVaultUpgradeableHarness} from "../harness/EarnVaultUpgradeableHarness.sol";
 import {EarnVaultV2} from "../mocks/EarnVaultV2.sol";
@@ -109,7 +108,8 @@ contract EarnVaultUpgradesTest is Test {
         vault.deposit(1000e6);
         
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vault), 100e6);
+        bool success = usdsc.transfer(address(vault), 100e6);
+        require(success, "Transfer failed");
         vm.prank(yieldRedistributor);
         vault.onYield(100e6);
         
@@ -159,12 +159,14 @@ contract EarnVaultUpgradesTest is Test {
         
         // Multiple yield distributions
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vault), 100e6);
+        bool success = usdsc.transfer(address(vault), 100e6);
+        require(success, "Transfer failed");
         vm.prank(yieldRedistributor);
         vault.onYield(100e6);
         
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vault), 200e6);
+        success = usdsc.transfer(address(vault), 200e6);
+        require(success, "Transfer failed");
         vm.prank(yieldRedistributor);
         vault.onYield(200e6);
         
@@ -222,7 +224,8 @@ contract EarnVaultUpgradesTest is Test {
         vaultV2.deposit(1000e6);
         
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vaultV2), 100e6);
+        bool success = usdsc.transfer(address(vaultV2), 100e6);
+        require(success, "Transfer failed");
         vm.prank(yieldRedistributor);
         vaultV2.onYield(100e6);
         
@@ -294,12 +297,13 @@ contract EarnVaultUpgradesTest is Test {
         
         // Multiple yield distributions
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vaultV2), 200e6);
+        bool success = usdsc.transfer(address(vaultV2), 200e6);
+        require(success, "Transfer failed");
         vm.prank(yieldRedistributor);
         vaultV2.onYield(200e6);
         
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vaultV2), 300e6);
+        success = usdsc.transfer(address(vaultV2), 300e6);
         vm.prank(yieldRedistributor);
         vaultV2.onYield(300e6);
         
@@ -361,7 +365,8 @@ contract EarnVaultUpgradesTest is Test {
         vault.deposit(1000e6);
         
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vault), 100e6);
+        bool success = usdsc.transfer(address(vault), 100e6);
+        require(success, "Transfer failed");
         vm.prank(yieldRedistributor);
         vault.onYield(100e6);
         
@@ -428,8 +433,9 @@ contract EarnVaultUpgradesTest is Test {
         
         // Distribute yield (should collect fees)
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vaultV3), 1000e6);
-        
+        bool success = usdsc.transfer(address(vaultV3), 1000e6);
+        require(success, "Transfer failed");
+
         uint256 treasuryBalanceBefore = usdsc.balanceOf(treasury);
         
         vm.prank(yieldRedistributor);
@@ -465,7 +471,8 @@ contract EarnVaultUpgradesTest is Test {
         vaultV3.deposit(1000e6);
         
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vaultV3), 100e6);
+        bool success = usdsc.transfer(address(vaultV3), 100e6);
+        require(success, "Transfer failed");
         vm.prank(yieldRedistributor);
         vaultV3.onYield(100e6);
         
@@ -505,7 +512,8 @@ contract EarnVaultUpgradesTest is Test {
         vaultV3.deposit(1000e6);
         
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vaultV3), 100e6);
+        bool success = usdsc.transfer(address(vaultV3), 100e6);
+        require(success, "Transfer failed");
         vm.prank(yieldRedistributor);
         vaultV3.onYield(100e6);
         
@@ -535,7 +543,8 @@ contract EarnVaultUpgradesTest is Test {
         vault.deposit(2000e6);
         
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vault), 300e6);
+        bool success = usdsc.transfer(address(vault), 300e6);
+        require(success, "Transfer failed");
         vm.prank(yieldRedistributor);
         vault.onYield(300e6);
         
@@ -655,7 +664,8 @@ contract EarnVaultUpgradesTest is Test {
     function test_CannotSendETHToVaultV1() public {
         // Try to send ETH to V1 vault - should fail
         vm.expectRevert(abi.encodeWithSelector(IEarnVaultEventsAndErrors.EthNotAccepted.selector));
-        address(vault).call{value: 1 ether}("");
+        (bool success,) = address(vault).call{value: 1 ether}("");
+        success;
     }
 
     function test_CannotSendETHToVaultV2() public {
@@ -671,7 +681,8 @@ contract EarnVaultUpgradesTest is Test {
         
         // Try to send ETH to V2 vault - should fail
         vm.expectRevert(abi.encodeWithSelector(IEarnVaultEventsAndErrors.EthNotAccepted.selector));
-        address(vaultV2).call{value: 1 ether}("");
+        (bool success,) = address(vaultV2).call{value: 1 ether}("");
+        success;
     }
 
     function test_CannotSendETHToVaultV3() public {
@@ -687,7 +698,8 @@ contract EarnVaultUpgradesTest is Test {
         
         // Try to send ETH to V3 vault - should fail
         vm.expectRevert(abi.encodeWithSelector(IEarnVaultEventsAndErrors.EthNotAccepted.selector));
-        address(vaultV3).call{value: 1 ether}("");
+        (bool success,) = address(vaultV3).call{value: 1 ether}("");
+        success;
     }
 
     function test_EthRejectionWorksThroughUpgradeChain() public {
@@ -697,7 +709,8 @@ contract EarnVaultUpgradesTest is Test {
         
         // Test ETH rejection in V1
         vm.expectRevert(abi.encodeWithSelector(IEarnVaultEventsAndErrors.EthNotAccepted.selector));
-        address(vault).call{value: 1 ether}("");
+        (bool success,) = address(vault).call{value: 1 ether}("");
+        success;
         
         // Upgrade to V2
         vm.prank(admin);
@@ -711,7 +724,8 @@ contract EarnVaultUpgradesTest is Test {
         
         // Test ETH rejection in V2
         vm.expectRevert(abi.encodeWithSelector(IEarnVaultEventsAndErrors.EthNotAccepted.selector));
-        address(vaultV2).call{value: 1 ether}("");
+        (bool success2,) = address(vaultV2).call{value: 1 ether}("");
+        success2;
         
         // Upgrade to V3
         vm.prank(admin);
@@ -725,7 +739,8 @@ contract EarnVaultUpgradesTest is Test {
         
         // Test ETH rejection in V3
         vm.expectRevert(abi.encodeWithSelector(IEarnVaultEventsAndErrors.EthNotAccepted.selector));
-        address(vaultV3).call{value: 1 ether}("");
+        (bool success3,) = address(vaultV3).call{value: 1 ether}("");
+        success3;
         
         // Verify vault functionality still works through all upgrades
         assertEq(vaultV3.principal(alice), 1000e6);
@@ -735,11 +750,13 @@ contract EarnVaultUpgradesTest is Test {
     function test_EthRejectionViaReceiveAndFallback() public {
         // Test receive() function
         vm.expectRevert(abi.encodeWithSelector(IEarnVaultEventsAndErrors.EthNotAccepted.selector));
-        address(vault).call{value: 1 ether}("");
+        (bool success1,) = address(vault).call{value: 1 ether}("");
+        success1;
         
         // Test fallback() function with invalid data
         vm.expectRevert(abi.encodeWithSelector(IEarnVaultEventsAndErrors.EthNotAccepted.selector));
-        address(vault).call{value: 1 ether}("invalidFunction()");
+        (bool success2,) = address(vault).call{value: 1 ether}("invalidFunction()");
+        success2;
     }
 
     /*//////////////////////////////////////////////////////////////

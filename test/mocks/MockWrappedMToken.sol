@@ -14,7 +14,8 @@ contract MockWrappedMToken is MockERC20 {
 
   function wrap(address recipient_, uint256 amount_) external returns (uint240 wrapped_) {
     uint256 startingBalance_ = IERC20(mToken).balanceOf(address(this));
-    IERC20(mToken).transferFrom(msg.sender, address(this), amount_);
+    bool success = IERC20(mToken).transferFrom(msg.sender, address(this), amount_);
+    require(success, "Transfer failed");  
     wrapped_ = uint240(IERC20(mToken).balanceOf(address(this)) - startingBalance_);
     _mint(recipient_, wrapped_);
   }
@@ -22,7 +23,8 @@ contract MockWrappedMToken is MockERC20 {
   function unwrap(address recipient_, uint256 amount_) external returns (uint240 unwrapped_) {
     _burn(msg.sender, amount_);
     uint256 startingBalance_ = IERC20(mToken).balanceOf(address(this));
-    IERC20(mToken).transfer(recipient_, amount_);
+    bool success = IERC20(mToken).transfer(recipient_, amount_);
+    require(success, "Transfer failed");
     return uint240(startingBalance_ - IERC20(mToken).balanceOf(address(this)));
   }
 }

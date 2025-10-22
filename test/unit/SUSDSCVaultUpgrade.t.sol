@@ -92,7 +92,8 @@ contract SUSDSCVaultUpgradeTest is Test {
 
         // User1 wraps M tokens to USDSC
         vm.startPrank(user1);
-        mToken.transfer(address(swapFacility), INITIAL_BALANCE);
+        bool success = mToken.transfer(address(swapFacility), INITIAL_BALANCE);
+        require(success, "Transfer failed");
         vm.stopPrank();
         vm.startPrank(address(swapFacility));
         usdsc.wrap(user1, INITIAL_BALANCE);
@@ -100,7 +101,8 @@ contract SUSDSCVaultUpgradeTest is Test {
 
         // User2 wraps M tokens to USDSC
         vm.startPrank(user2);
-        mToken.transfer(address(swapFacility), INITIAL_BALANCE);
+        bool success2 = mToken.transfer(address(swapFacility), INITIAL_BALANCE);
+        require(success2, "Transfer failed");
         vm.stopPrank();
         vm.startPrank(address(swapFacility));
         usdsc.wrap(user2, INITIAL_BALANCE);
@@ -226,7 +228,8 @@ contract SUSDSCVaultUpgradeTest is Test {
         // Simulate yield (transfer USDSC from yieldDistributor to vault)
         deal(address(mToken), yieldRecipient, DEPOSIT_AMOUNT);
         vm.prank(yieldRecipient);
-        mToken.transfer(address(swapFacility), DEPOSIT_AMOUNT);
+        bool success = mToken.transfer(address(swapFacility), DEPOSIT_AMOUNT);
+        require(success, "Transfer failed");
         vm.prank(address(swapFacility));
         usdsc.wrap(address(vault), DEPOSIT_AMOUNT);
 
@@ -413,7 +416,8 @@ contract SUSDSCVaultUpgradeTest is Test {
         uint256 yieldAmount = DEPOSIT_AMOUNT / 2;
         deal(address(mToken), yieldRecipient, yieldAmount);
         vm.prank(yieldRecipient);
-        mToken.transfer(address(swapFacility), yieldAmount);
+        bool success = mToken.transfer(address(swapFacility), yieldAmount);
+        require(success, "Transfer failed");
         vm.prank(address(swapFacility));
         usdsc.wrap(address(vault), yieldAmount);
 

@@ -2,8 +2,6 @@
 pragma solidity ^0.8.26;
 
 import {EarnVaultUpgradeable} from "../../src/vaults/earn/EarnVaultUpgradeable.sol";
-import {EarnVaultStorageBase} from "../../src/vaults/earn/EarnVaultStorageBase.sol";
-import {Initializable} from "lib/openzeppelin-contracts-upgradeable/contracts/proxy/utils/Initializable.sol";
 import {IEarnVaultEventsAndErrors} from "../../src/interfaces/vaults/earn/IEarnVaultEventsAndErrors.sol";
 import {SafeERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
@@ -91,35 +89,35 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
     
     /// @notice Internal function to call parent onYield
     function _onYieldInternal(uint256 amount) internal {
-        EarnVaultStorage storage base$ = _getStorage();
+        EarnVaultStorage storage $ = _getStorage();
         if (amount == 0) return;
         
         // Verify actual balance before updating accounting
-        uint256 bal = base$.USDSC.balanceOf(address(this));
+        uint256 bal = $.USDSC.balanceOf(address(this));
         
-        if (base$.totalPrincipal == 0) {
+        if ($.totalPrincipal == 0) {
             // No deposits: just need enough for treasury transfer
             if (bal < amount) revert IEarnVaultEventsAndErrors.InsufficientFunding();
-            base$.USDSC.safeTransfer(base$.treasury, amount);
+            $.USDSC.safeTransfer($.treasury, amount);
             emit IEarnVaultEventsAndErrors.YieldTransferredToTreasury(amount);
             return;
         }
         
         // Deposits exist: need enough for claimReserve + new yield
-        if (bal < base$.claimReserve + amount) revert IEarnVaultEventsAndErrors.InsufficientFunding();
+        if (bal < $.claimReserve + amount) revert IEarnVaultEventsAndErrors.InsufficientFunding();
         
         // Exact, immediate index update with Ray remainder carry
         // delta = floor( (amount*RAY + _carryRay) / totalPrincipal )
         // _carryRay = (amount*RAY + _carryRay) % totalPrincipal
         unchecked {
-            uint256 num = amount * base$.RAY + base$._carryRay;
-            uint256 delta = num / base$.totalPrincipal;
-            base$._carryRay = num % base$.totalPrincipal;
-            base$.globalIndex += delta;
+            uint256 num = amount * $.RAY + $._carryRay;
+            uint256 delta = num / $.totalPrincipal;
+            $._carryRay = num % $.totalPrincipal;
+            $.globalIndex += delta;
         }
         
-        base$.claimReserve += amount;
-        emit IEarnVaultEventsAndErrors.YieldIndexed(amount, base$.globalIndex, base$.claimReserve);
+        $.claimReserve += amount;
+        emit IEarnVaultEventsAndErrors.YieldIndexed(amount, $.globalIndex, $.claimReserve);
     }
 
     /// @notice Get V2 version info

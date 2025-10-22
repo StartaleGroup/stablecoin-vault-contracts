@@ -81,9 +81,10 @@ contract RewardRedistributorIntegrationTest is Test {
         
         // Mint initial supply and distribute to test users
         usdsc.mint(address(this), 100_000_000e6); // 100M USDSC
-        usdsc.transfer(alice, 10_000_000e6);
-        usdsc.transfer(bob, 5_000_000e6);
-        usdsc.transfer(charlie, 2_000_000e6);
+        bool success1 = usdsc.transfer(alice, 10_000_000e6);
+        bool success2 = usdsc.transfer(bob, 5_000_000e6);
+        bool success3 = usdsc.transfer(charlie, 2_000_000e6);
+        require(success1 && success2 && success3, "Transfer failed");
         
         // Set up initial vault states with user deposits
         _setupInitialVaultStates();
@@ -552,17 +553,17 @@ contract RewardRedistributorIntegrationTest is Test {
         
         // Verify invariants still hold
         uint256 totalEarnPrincipalAfter = earnVault.totalPrincipal();
-        uint256 totalSUSDSCAssetsAfter = susdscVault.totalAssets();
-        uint256 totalSUSDSCSupplyAfter = susdscVault.totalSupply();
+        uint256 totalSusdscAssetsAfter = susdscVault.totalAssets();
+        uint256 totalSusdscSupplyAfter = susdscVault.totalSupply();
         
         assertEq(totalEarnPrincipalAfter, totalEarnPrincipalBefore - aliceWithdrawAmount, 
                 "EarnVault total principal reduced correctly");
         
         // sUSDSC vault should maintain proper asset/supply relationship
-        if (totalSUSDSCSupplyAfter > 0) {
-            uint256 newPPS = (totalSUSDSCAssetsAfter * 1e18) / totalSUSDSCSupplyAfter;
-            uint256 oldPPS = (totalSUSDSCAssetsBefore * 1e18) / totalSUSDSCSupplyBefore;
-            assertGe(newPPS, oldPPS, "PPS maintained or increased after withdrawals");
+        if (totalSusdscSupplyAfter > 0) {
+            uint256 newPps = (totalSusdscAssetsAfter * 1e18) / totalSusdscSupplyAfter;
+            uint256 oldPps = (totalSUSDSCAssetsBefore * 1e18) / totalSUSDSCSupplyBefore;
+            assertGe(newPps, oldPps, "PPS maintained or increased after withdrawals");
         }
         
         // System should still be able to distribute more yield
@@ -593,7 +594,7 @@ contract RewardRedistributorIntegrationTest is Test {
             pauser
         );
         
-        SUSDSCVault emptySUSDSCVault = new SUSDSCVault(
+        SUSDSCVault emptySusdscVault = new SUSDSCVault(
             IERC20(address(usdsc)),
             owner,
             pauser
@@ -604,7 +605,7 @@ contract RewardRedistributorIntegrationTest is Test {
             address(ext),  // MockExtension address (implements both IERC20 and IMYieldToOne)
             startale,
             IEarnVault(address(emptyEarnVault)),
-            IERC4626(address(emptySUSDSCVault)),
+            IERC4626(address(emptySusdscVault)),
             owner
         );
         
@@ -630,7 +631,7 @@ contract RewardRedistributorIntegrationTest is Test {
         // With empty vaults (TVL = 0), all yield should go to Startale
         assertEq(startaleBalanceAfter - startaleBalanceBefore, 50_000e6, "all yield goes to Startale when vaults empty");
         assertEq(usdsc.balanceOf(address(emptyEarnVault)), 0, "empty EarnVault stays empty");
-        assertEq(emptySUSDSCVault.totalAssets(), 0, "empty sUSDSC vault stays empty");
+        assertEq(emptySusdscVault.totalAssets(), 0, "empty sUSDSC vault stays empty");
         
         // Restore original recipient
         ext.setYieldRecipient(originalRecipient);
@@ -792,8 +793,9 @@ contract RewardRedistributorIntegrationTest is Test {
         vm.startPrank(address(rr)); // Simulate yield redistributor role
         
         // Transfer tokens to EarnVault first
-        astr.transfer(address(earnVault), 100e18);
-        dot.transfer(address(earnVault), 50e10);
+        bool success1 = astr.transfer(address(earnVault), 100e18);
+        bool success2 = dot.transfer(address(earnVault), 50e10);
+        require(success1 && success2, "Transfer failed");
         
         // Distribute boost rewards
         earnVault.onBoostReward(address(astr), 100e18);
@@ -801,45 +803,48 @@ contract RewardRedistributorIntegrationTest is Test {
         
         vm.stopPrank();
         
-        // Verify boost rewards are claimable
-        uint256 aliceASTRClaimable = earnVault.getClaimableBoostReward(alice, address(astr));
-        uint256 aliceDOTClaimable = earnVault.getClaimableBoostReward(alice, address(dot));
-        uint256 charlieASTRClaimable = earnVault.getClaimableBoostReward(charlie, address(astr));
-        uint256 charlieDOTClaimable = earnVault.getClaimableBoostReward(charlie, address(dot));
-        
-        assertGt(aliceASTRClaimable, 0, "Alice has claimable ASTR");
-        assertGt(aliceDOTClaimable, 0, "Alice has claimable DOT");
-        assertGt(charlieASTRClaimable, 0, "Charlie has claimable ASTR");
-        assertGt(charlieDOTClaimable, 0, "Charlie has claimable DOT");
-        
-        // Verify proportional distribution based on principal
-        uint256 alicePrincipal = earnVault.principal(alice);
-        uint256 charliePrincipal = earnVault.principal(charlie);
-        
-        // Alice should get more rewards due to higher principal
-        if (alicePrincipal > charliePrincipal) {
-            assertGt(aliceASTRClaimable, charlieASTRClaimable, "Alice gets more ASTR due to higher principal");
-            assertGt(aliceDOTClaimable, charlieDOTClaimable, "Alice gets more DOT due to higher principal");
+        // Scope 1: Verify boost rewards are claimable
+        {
+            uint256 aliceAstrClaimable = earnVault.getClaimableBoostReward(alice, address(astr));
+            uint256 aliceDotClaimable = earnVault.getClaimableBoostReward(alice, address(dot));
+            uint256 charlieAstrClaimable = earnVault.getClaimableBoostReward(charlie, address(astr));
+            uint256 charlieDotClaimable = earnVault.getClaimableBoostReward(charlie, address(dot));
+            
+            assertGt(aliceAstrClaimable, 0, "Alice has claimable ASTR");
+            assertGt(aliceDotClaimable, 0, "Alice has claimable DOT");
+            assertGt(charlieAstrClaimable, 0, "Charlie has claimable ASTR");
+            assertGt(charlieDotClaimable, 0, "Charlie has claimable DOT");
+            
+            // Verify proportional distribution based on principal
+            uint256 alicePrincipal = earnVault.principal(alice);
+            uint256 charliePrincipal = earnVault.principal(charlie);
+            
+            // Alice should get more rewards due to higher principal
+            if (alicePrincipal > charliePrincipal) {
+                assertGt(aliceAstrClaimable, charlieAstrClaimable, "Alice gets more ASTR due to higher principal");
+                assertGt(aliceDotClaimable, charlieDotClaimable, "Alice gets more DOT due to higher principal");
+            }
         }
         
-        // Test claiming boost rewards
-        vm.startPrank(alice);
-        uint256 aliceASTRBalanceBefore = astr.balanceOf(alice);
-        uint256 aliceDOTBalanceBefore = dot.balanceOf(alice);
-        
-        earnVault.claim(); // Claims both USDSC yield and all boost rewards
-        
-        uint256 aliceASTRBalanceAfter = astr.balanceOf(alice);
-        uint256 aliceDOTBalanceAfter = dot.balanceOf(alice);
-        
-        assertEq(aliceASTRBalanceAfter - aliceASTRBalanceBefore, aliceASTRClaimable, "Alice received expected ASTR");
-        assertEq(aliceDOTBalanceAfter - aliceDOTBalanceBefore, aliceDOTClaimable, "Alice received expected DOT");
-        
-        // Verify no remaining claimable boost rewards
-        assertEq(earnVault.getClaimableBoostReward(alice, address(astr)), 0, "No remaining ASTR claimable");
-        assertEq(earnVault.getClaimableBoostReward(alice, address(dot)), 0, "No remaining DOT claimable");
-        
-        vm.stopPrank();
+        // Scope 2: Test claiming boost rewards
+        {
+            vm.startPrank(alice);
+            uint256 aliceAstrClaimable = earnVault.getClaimableBoostReward(alice, address(astr));
+            uint256 aliceDotClaimable = earnVault.getClaimableBoostReward(alice, address(dot));
+            uint256 aliceAstrBalanceBefore = astr.balanceOf(alice);
+            uint256 aliceDotBalanceBefore = dot.balanceOf(alice);
+            
+            earnVault.claim(); // Claims both USDSC yield and all boost rewards
+            
+            assertEq(astr.balanceOf(alice) - aliceAstrBalanceBefore, aliceAstrClaimable, "Alice received expected ASTR");
+            assertEq(dot.balanceOf(alice) - aliceDotBalanceBefore, aliceDotClaimable, "Alice received expected DOT");
+            
+            // Verify no remaining claimable boost rewards
+            assertEq(earnVault.getClaimableBoostReward(alice, address(astr)), 0, "No remaining ASTR claimable");
+            assertEq(earnVault.getClaimableBoostReward(alice, address(dot)), 0, "No remaining DOT claimable");
+            
+            vm.stopPrank();
+        }
     }
     
     function testIntegration_BoostRewardsWithWithdrawals() public {
@@ -859,21 +864,21 @@ contract RewardRedistributorIntegrationTest is Test {
         
         // Alice does partial withdrawal - should auto-claim all rewards
         vm.startPrank(alice);
-        uint256 aliceASTRBalanceBefore = astr.balanceOf(alice);
-        uint256 aliceUSRDBalanceBefore = usdsc.balanceOf(alice);
-        uint256 aliceClaimableUSRD = earnVault.claimable(alice);
-        uint256 aliceClaimableASTR = earnVault.getClaimableBoostReward(alice, address(astr));
+        uint256 aliceAstrBalanceBefore = astr.balanceOf(alice);
+        uint256 aliceUsrdBalanceBefore = usdsc.balanceOf(alice);
+        uint256 aliceClaimableUsrd = earnVault.claimable(alice);
+        uint256 aliceClaimableAstr = earnVault.getClaimableBoostReward(alice, address(astr));
         
         uint256 withdrawAmount = earnVault.principal(alice) / 4; // Withdraw 25%
         earnVault.withdraw(withdrawAmount);
         
-        uint256 aliceASTRBalanceAfter = astr.balanceOf(alice);
-        uint256 aliceUSRDBalanceAfter = usdsc.balanceOf(alice);
+        uint256 aliceAstrBalanceAfter = astr.balanceOf(alice);
+        uint256 aliceUsrdBalanceAfter = usdsc.balanceOf(alice);
         
         // Verify Alice received principal + USDSC yield + boost rewards
-        assertEq(aliceUSRDBalanceAfter - aliceUSRDBalanceBefore, withdrawAmount + aliceClaimableUSRD, 
+        assertEq(aliceUsrdBalanceAfter - aliceUsrdBalanceBefore, withdrawAmount + aliceClaimableUsrd, 
                 "Alice received principal + USDSC yield");
-        assertEq(aliceASTRBalanceAfter - aliceASTRBalanceBefore, aliceClaimableASTR, 
+        assertEq(aliceAstrBalanceAfter - aliceAstrBalanceBefore, aliceClaimableAstr, 
                 "Alice received boost rewards on withdrawal");
         
         // Verify no remaining claimable rewards
@@ -1131,12 +1136,12 @@ contract RewardRedistributorIntegrationTest is Test {
         // Test distribution when total supply is zero (edge case)
         // This is hard to test with real contracts, so we'll test the preview function
         
-        (uint256 minted, uint256 feeToStartale, uint256 toEarn, uint256 toOn, uint256 toStartaleExtra, uint256 S_base, uint256 T_earn, uint256 T_yield) = rr.previewDistribute();
+        (uint256 minted, uint256 feeToStartale, uint256 toEarn, uint256 toOn, uint256 toStartaleExtra, uint256 sBase, uint256 tEarn, uint256 tYield) = rr.previewDistribute();
         
         // Verify preview works correctly
-        assertGe(S_base, 0, "Base supply is non-negative");
-        assertGe(T_earn, 0, "EarnVault TVL is non-negative");
-        assertGe(T_yield, 0, "sUSDSC TVL is non-negative");
+        assertGe(sBase, 0, "Base supply is non-negative");
+        assertGe(tEarn, 0, "EarnVault TVL is non-negative");
+        assertGe(tYield, 0, "sUSDSC TVL is non-negative");
         
         if (minted > 0) {
             assertEq(minted, feeToStartale + toEarn + toOn + toStartaleExtra, "All minted yield allocated");
@@ -1149,7 +1154,7 @@ contract RewardRedistributorIntegrationTest is Test {
         ext.addPending(5_000e6);
         
         // Preview before distribution
-        (uint256 minted, uint256 feeToStartale, uint256 toEarn, uint256 toOn, uint256 toStartaleExtra, uint256 S_base, uint256 T_earn, uint256 T_yield) = rr.previewDistribute();
+        (uint256 minted, uint256 feeToStartale, uint256 toEarn, uint256 toOn, uint256 toStartaleExtra, uint256 sBase, uint256 tEarn, uint256 tYield) = rr.previewDistribute();
         
         assertEq(minted, 5_000e6, "Preview shows correct minted amount");
         assertEq(feeToStartale, 0, "No fee with 0 bps");
@@ -1160,9 +1165,9 @@ contract RewardRedistributorIntegrationTest is Test {
         
         assertEq(previewFee, feeToStartale, "PreviewSplit matches previewDistribute fee");
         // Both previewSplit and previewDistribute now use the same S_base calculation (preMint = true)
-        assertEq(previewSBase, S_base, "PreviewSplit S_base should match previewDistribute S_base");
-        assertEq(previewTEarn, T_earn, "PreviewSplit matches previewDistribute T_earn");
-        assertEq(previewTYield, T_yield, "PreviewSplit matches previewDistribute T_yield");
+        assertEq(previewSBase, sBase, "PreviewSplit S_base should match previewDistribute S_base");
+        assertEq(previewTEarn, tEarn, "PreviewSplit matches previewDistribute T_earn");
+        assertEq(previewTYield, tYield, "PreviewSplit matches previewDistribute T_yield");
         
         // Note: previewSplit doesn't use carry, so allocations will differ from previewDistribute
         assertApproxEqAbs(previewEarn, toEarn, 10000, "PreviewSplit earn allocation close to previewDistribute");

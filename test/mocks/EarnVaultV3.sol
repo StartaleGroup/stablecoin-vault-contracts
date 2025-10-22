@@ -104,14 +104,14 @@ contract EarnVaultV3 is EarnVaultUpgradeable {
         
         // Auto-compound by adding claimable to principal
         _settle(user);
-        EarnVaultStorage storage $base = _getStorage();
-        uint256 p = $base.principal[user];
-        uint256 accrued = $base.accrued[user];
+        EarnVaultStorage storage baseStorage = _getStorage();
+        uint256 p = baseStorage.principal[user];
+        uint256 accrued = baseStorage.accrued[user];
         
         if (accrued > 0) {
-            $base.principal[user] = p + accrued;
-            $base.totalPrincipal += accrued;
-            $base.accrued[user] = 0;
+            baseStorage.principal[user] = p + accrued;
+            baseStorage.totalPrincipal += accrued;
+            baseStorage.accrued[user] = 0;
             $.userLastCompoundTime[user] = block.timestamp;
             $.totalCompounds++;
             

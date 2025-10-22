@@ -173,7 +173,8 @@ contract EarnVaultTest is Test {
         
         // Distributor sends yield
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vault), yieldAmount);
+        bool success = usdsc.transfer(address(vault), yieldAmount);
+        require(success, "Transfer failed");
         
         vm.prank(yieldRedistributor);
         vm.expectEmit(false, false, false, true);
@@ -205,7 +206,8 @@ contract EarnVaultTest is Test {
         
         // Distributor sends yield
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vault), yieldAmount);
+        bool success = usdsc.transfer(address(vault), yieldAmount);
+        require(success, "Transfer failed");
         
         vm.prank(yieldRedistributor);
         vault.onYield(yieldAmount);
@@ -229,8 +231,9 @@ contract EarnVaultTest is Test {
         // Send yield when no one has deposited (totalPrincipal = 0)
         uint256 initialTreasuryBalance = usdsc.balanceOf(treasury);
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vault), yieldAmount);
-        
+        bool success = usdsc.transfer(address(vault), yieldAmount);
+        require(success, "Transfer failed");
+
         vm.prank(yieldRedistributor);
         vault.onYield(yieldAmount);
         
@@ -251,7 +254,7 @@ contract EarnVaultTest is Test {
         // When new yield arrives, it gets processed normally
         uint256 newYieldAmount = 200e6;
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vault), newYieldAmount);
+        bool success2 = usdsc.transfer(address(vault), newYieldAmount);
         
         vm.prank(yieldRedistributor);
         vault.onYield(newYieldAmount);
@@ -275,7 +278,8 @@ contract EarnVaultTest is Test {
         vault.deposit(depositAmount);
         
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vault), yieldAmount);
+        bool success = usdsc.transfer(address(vault), yieldAmount);
+        require(success, "Transfer failed");
         vm.prank(yieldRedistributor);
         vault.onYield(yieldAmount);
         
@@ -305,7 +309,8 @@ contract EarnVaultTest is Test {
         
         // First yield distribution: 100 USDSC
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vault), 100e6);
+        bool success = usdsc.transfer(address(vault), 100e6);
+        require(success, "Transfer failed");
         vm.prank(yieldRedistributor);
         vault.onYield(100e6);
         
@@ -316,7 +321,8 @@ contract EarnVaultTest is Test {
         
         // Second yield distribution: 50 USDSC
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vault), 50e6);
+        bool success2 = usdsc.transfer(address(vault), 50e6);
+        require(success2, "Transfer failed");
         vm.prank(yieldRedistributor);
         vault.onYield(50e6);
         
@@ -342,7 +348,8 @@ contract EarnVaultTest is Test {
         vm.prank(alice);
         vault.deposit(depositAmount);
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vault), yieldAmount);
+        bool success = usdsc.transfer(address(vault), yieldAmount);
+        require(success, "Transfer failed");
         vm.prank(yieldRedistributor);
         vault.onYield(yieldAmount);
         
@@ -369,7 +376,8 @@ contract EarnVaultTest is Test {
         vm.prank(alice);
         vault.deposit(depositAmount);
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vault), yieldAmount);
+        bool success = usdsc.transfer(address(vault), yieldAmount);
+        require(success, "Transfer failed");
         vm.prank(yieldRedistributor);
         vault.onYield(yieldAmount);
         
@@ -395,7 +403,8 @@ contract EarnVaultTest is Test {
         vault.deposit(depositAmount);
         
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vault), yieldAmount);
+        bool success = usdsc.transfer(address(vault), yieldAmount);
+        require(success, "Transfer failed");
         vm.prank(yieldRedistributor);
         vault.onYield(yieldAmount);
         
@@ -425,7 +434,8 @@ contract EarnVaultTest is Test {
         
         // First yield: 100 USDSC on 1000 principal
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vault), 100e6);
+        bool success = usdsc.transfer(address(vault), 100e6);
+        require(success, "Transfer failed");
         vm.prank(yieldRedistributor);
         vault.onYield(100e6);
         
@@ -443,7 +453,8 @@ contract EarnVaultTest is Test {
         
         // Second yield: 200 USDSC on 2000 total principal
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vault), 200e6);
+        bool success2 = usdsc.transfer(address(vault), 200e6);
+        require(success2, "Transfer failed");
         vm.prank(yieldRedistributor);
         vault.onYield(200e6);
         
@@ -459,7 +470,8 @@ contract EarnVaultTest is Test {
         
         // First yield: 100 USDSC (Alice gets all)
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vault), 100e6);
+        bool success = usdsc.transfer(address(vault), 100e6);
+        require(success, "Transfer failed");
         vm.prank(yieldRedistributor);
         vault.onYield(100e6);
         
@@ -471,7 +483,8 @@ contract EarnVaultTest is Test {
         
         // Second yield: 200 USDSC (Alice and Bob should split 50/50)
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vault), 200e6);
+        bool success2 = usdsc.transfer(address(vault), 200e6);
+        require(success2, "Transfer failed");
         vm.prank(yieldRedistributor);
         vault.onYield(200e6);
         
@@ -548,7 +561,8 @@ contract EarnVaultTest is Test {
         
         // Distribute yield
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vault), 100e6);
+        bool success = usdsc.transfer(address(vault), 100e6);
+        require(success, "Transfer failed");
         vm.prank(yieldRedistributor);
         vault.onYield(100e6);
         
@@ -693,7 +707,8 @@ contract EarnVaultTest is Test {
         vault.deposit(depositAmount);
         
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vault), yieldAmount);
+        bool success = usdsc.transfer(address(vault), yieldAmount);
+        require(success, "Transfer failed");
         vm.prank(yieldRedistributor);
         vault.onYield(yieldAmount);
         
@@ -867,7 +882,8 @@ contract EarnVaultTest is Test {
         vault.deposit(1000e6);
         
         vm.prank(newDistributor);
-        usdsc.transfer(address(vault), 100e6);
+        bool success = usdsc.transfer(address(vault), 100e6);
+        require(success, "Transfer failed");
         vm.prank(newDistributor);
         vault.onYield(100e6); // Should not revert
     }
@@ -889,7 +905,8 @@ contract EarnVaultTest is Test {
         
         // === Phase 2: First yield distribution ===
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vault), 300e6);
+        bool success = usdsc.transfer(address(vault), 300e6);
+        require(success, "Transfer failed");
         vm.prank(yieldRedistributor);
         vault.onYield(300e6);
         
@@ -912,7 +929,8 @@ contract EarnVaultTest is Test {
         
         // === Phase 5: Second yield distribution ===
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vault), 600e6);
+        bool success2 = usdsc.transfer(address(vault), 600e6);
+        require(success2, "Transfer failed");
         vm.prank(yieldRedistributor);
         vault.onYield(600e6);
         
@@ -956,8 +974,8 @@ contract EarnVaultTest is Test {
         
         // Yield redistributor sends 100 USDSC but forgets to call onYield
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vault), 100e6);
-        
+        bool success = usdsc.transfer(address(vault), 100e6);
+        require(success, "Transfer failed");
         // Verify vault received the funds
         assertEq(usdsc.balanceOf(address(vault)), initialBalance + 100e6, "Vault should receive funds");
         
@@ -987,8 +1005,9 @@ contract EarnVaultTest is Test {
         
         // Yield redistributor sends 100 USDSC
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vault), 100e6);
-        
+        bool success = usdsc.transfer(address(vault), 100e6);
+        require(success, "Transfer failed");
+
         // Try to call onYield with excessive amount (200 instead of 100)
         vm.prank(yieldRedistributor);
         vm.expectRevert(IEarnVaultEventsAndErrors.InsufficientFunding.selector);
@@ -1017,8 +1036,9 @@ contract EarnVaultTest is Test {
         
         // Yield redistributor sends 100 USDSC
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vault), 100e6);
-        
+        bool success = usdsc.transfer(address(vault), 100e6);
+        require(success, "Transfer failed");
+
         // Try to call onYield with excessive amount (200 instead of 100)
         vm.prank(yieldRedistributor);
         vm.expectRevert(IEarnVaultEventsAndErrors.InsufficientFunding.selector);
@@ -1040,8 +1060,9 @@ contract EarnVaultTest is Test {
         
         // Yield redistributor sends 150 USDSC but calls onYield with 200 USDSC (excessive)
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vault), 150e6);
-        
+        bool success = usdsc.transfer(address(vault), 150e6);
+        require(success, "Transfer failed");
+
         // Should fail because balance (3150) < claimReserve (3000) + amount (200)
         vm.prank(yieldRedistributor);
         vm.expectRevert(IEarnVaultEventsAndErrors.InsufficientFunding.selector);
@@ -1065,8 +1086,9 @@ contract EarnVaultTest is Test {
     function test_FundingInvariantNoDeposits() public {
         // No deposits, but yield redistributor sends 100 USDSC
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vault), 100e6);
-        
+        bool success = usdsc.transfer(address(vault), 100e6);
+        require(success, "Transfer failed");
+
         // onYield should work and transfer to treasury
         vm.prank(yieldRedistributor);
         vault.onYield(100e6);
@@ -1077,8 +1099,8 @@ contract EarnVaultTest is Test {
         
         // But if we try to call onYield with wrong amount, it should fail
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vault), 50e6);
-        
+        bool success2 = usdsc.transfer(address(vault), 50e6);
+        require(success2, "Transfer failed");
         vm.prank(yieldRedistributor);
         vm.expectRevert(IEarnVaultEventsAndErrors.InsufficientFunding.selector);
         vault.onYield(100e6); // Trying to claim 100 when only 50 was sent
@@ -1092,8 +1114,9 @@ contract EarnVaultTest is Test {
         
         // Yield redistributor sends 200 USDSC but only calls onYield for 100 USDSC
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vault), 200e6);
-        
+        bool success = usdsc.transfer(address(vault), 200e6);
+        require(success, "Transfer failed");
+
         vm.prank(yieldRedistributor);
         vault.onYield(100e6);
         
@@ -1129,8 +1152,9 @@ contract EarnVaultTest is Test {
         
         // Yield redistributor sends the large amount
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vault), largeYield);
-        
+        bool success = usdsc.transfer(address(vault), largeYield);
+        require(success, "Transfer failed");
+
         // Call onYield with the large amount
         vm.prank(yieldRedistributor);
         vault.onYield(largeYield);
@@ -1158,8 +1182,9 @@ contract EarnVaultTest is Test {
         
         // Yield redistributor sends the high yield
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vault), highYield);
-        
+        bool success = usdsc.transfer(address(vault), highYield);
+        require(success, "Transfer failed");
+
         // Call onYield with the high yield
         vm.prank(yieldRedistributor);
         vault.onYield(highYield);
@@ -1435,7 +1460,8 @@ contract EarnVaultTest is Test {
         
         // === Distribute USDSC yield ===
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vault), 100e6);
+        bool success = usdsc.transfer(address(vault), 100e6);
+        require(success, "Transfer failed");
         vm.prank(yieldRedistributor);
         vault.onYield(100e6);
         
@@ -1445,11 +1471,13 @@ contract EarnVaultTest is Test {
         
         vm.startPrank(yieldRedistributor);
         tokenA.approve(address(vault), amountA);
-        tokenA.transfer(address(vault), amountA);
+        bool successA = tokenA.transfer(address(vault), amountA);
+        require(successA, "Transfer failed");
         vault.onBoostReward(address(tokenA), amountA);
         
         tokenB.approve(address(vault), amountB);
-        tokenB.transfer(address(vault), amountB);
+        bool successB = tokenB.transfer(address(vault), amountB);
+        require(successB, "Transfer failed");
         vault.onBoostReward(address(tokenB), amountB);
         vm.stopPrank();
         
@@ -1479,7 +1507,8 @@ contract EarnVaultTest is Test {
         
         // === Distribute USDSC yield ===
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vault), 50e6);
+        bool success = usdsc.transfer(address(vault), 50e6);
+        require(success, "Transfer failed");
         vm.prank(yieldRedistributor);
         vault.onYield(50e6);
         
@@ -1564,7 +1593,8 @@ contract EarnVaultTest is Test {
         
         // === Phase 1: Distribute 100 USDSC yield ===
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vault), 100e6);
+        bool success = usdsc.transfer(address(vault), 100e6);
+        require(success, "Transfer failed");
         vm.prank(yieldRedistributor);
         vault.onYield(100e6);
         
@@ -1588,7 +1618,8 @@ contract EarnVaultTest is Test {
         
         // === Phase 3: Distribute another 100 USDSC yield ===
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vault), 100e6);
+        bool success2 = usdsc.transfer(address(vault), 100e6);
+        require(success2, "Transfer failed");
         vm.prank(yieldRedistributor);
         vault.onYield(100e6);
         
@@ -1613,7 +1644,8 @@ contract EarnVaultTest is Test {
         // === Simulate 28 cycles of yield (1 USDSC per cycle) ===
         for (uint256 i = 0; i < 28; i++) {
             vm.prank(yieldRedistributor);
-            usdsc.transfer(address(vault), 1e6);
+            bool success = usdsc.transfer(address(vault), 1e6);
+            require(success, "Transfer failed");
             vm.prank(yieldRedistributor);
             vault.onYield(1e6);
         }
@@ -1637,7 +1669,8 @@ contract EarnVaultTest is Test {
         
         // === Simulate next yield cycle (should get 0.5 USDSC) ===
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vault), 1e6);
+        bool success = usdsc.transfer(address(vault), 1e6);
+        require(success, "Transfer failed");
         vm.prank(yieldRedistributor);
         vault.onYield(1e6);
         
@@ -1648,7 +1681,8 @@ contract EarnVaultTest is Test {
         // Each cycle gives 1 USDSC, so 28 USDSC / 1 USDSC = 28 cycles
         for (uint256 i = 0; i < 27; i++) { // 27 more cycles (28 total)
             vm.prank(yieldRedistributor);
-            usdsc.transfer(address(vault), 1e6);
+            bool success = usdsc.transfer(address(vault), 1e6);
+            require(success, "Transfer failed");
             vm.prank(yieldRedistributor);
             vault.onYield(1e6);
         }
@@ -1666,7 +1700,8 @@ contract EarnVaultTest is Test {
         
         // === Distribute 100 USDSC yield ===
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vault), 100e6);
+        bool success = usdsc.transfer(address(vault), 100e6);
+        require(success, "Transfer failed");
         vm.prank(yieldRedistributor);
         vault.onYield(100e6);
         
@@ -1681,7 +1716,8 @@ contract EarnVaultTest is Test {
         
         // === Distribute another 100 USDSC yield ===
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vault), 100e6);
+        bool success2 = usdsc.transfer(address(vault), 100e6);
+        require(success2, "Transfer failed");
         vm.prank(yieldRedistributor);
         vault.onYield(100e6);
         
@@ -1719,7 +1755,8 @@ contract EarnVaultTest is Test {
         // Distribute yield over 5 periods
         for (uint256 i = 0; i < numPeriods; i++) {
             vm.prank(yieldRedistributor);
-            usdsc.transfer(address(vault), periodYield);
+            bool success = usdsc.transfer(address(vault), periodYield);
+            require(success, "Transfer failed");
             vm.prank(yieldRedistributor);
             vault.onYield(periodYield);
         }
@@ -1755,7 +1792,8 @@ contract EarnVaultTest is Test {
         // =========================
         // Distribute another 10 USDSC yield
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vault), periodYield);
+        bool success = usdsc.transfer(address(vault), periodYield);
+        require(success, "Transfer failed");
         vm.prank(yieldRedistributor);
         vault.onYield(periodYield);
         
@@ -1775,7 +1813,8 @@ contract EarnVaultTest is Test {
         // Distribute yield for the required periods
         for (uint256 i = 0; i < periodsNeeded; i++) {
             vm.prank(yieldRedistributor);
-            usdsc.transfer(address(vault), periodYield);
+            bool success = usdsc.transfer(address(vault), periodYield);
+            require(success, "Transfer failed");
             vm.prank(yieldRedistributor);
             vault.onYield(periodYield);
         }
@@ -1800,7 +1839,8 @@ contract EarnVaultTest is Test {
         
         // Distribute 30 USDSC yield
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vault), 30e6);
+        bool success2 = usdsc.transfer(address(vault), 30e6);
+        require(success2, "Transfer failed");
         vm.prank(yieldRedistributor);
         vault.onYield(30e6);
         
@@ -1838,7 +1878,8 @@ contract EarnVaultTest is Test {
         
         // === Distribute yield ===
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vault), 100e6);
+        bool success = usdsc.transfer(address(vault), 100e6);
+        require(success, "Transfer failed");
         vm.prank(yieldRedistributor);
         vault.onYield(100e6);
         
@@ -1857,7 +1898,8 @@ contract EarnVaultTest is Test {
         
         // === Distribute more yield ===
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vault), 50e6);
+        bool success2 = usdsc.transfer(address(vault), 50e6);
+        require(success2, "Transfer failed");
         vm.prank(yieldRedistributor);
         vault.onYield(50e6);
         
@@ -1881,7 +1923,8 @@ contract EarnVaultTest is Test {
         
         // === Phase 1: Distribute 100 USDSC yield ===
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vault), 100e6);
+        bool success = usdsc.transfer(address(vault), 100e6);
+        require(success, "Transfer failed");
         vm.prank(yieldRedistributor);
         vault.onYield(100e6);
         
@@ -1911,7 +1954,8 @@ contract EarnVaultTest is Test {
         
         // === Phase 4: Distribute another 100 USDSC yield ===
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vault), 100e6);
+        bool success2 = usdsc.transfer(address(vault), 100e6);
+        require(success2, "Transfer failed");
         vm.prank(yieldRedistributor);
         vault.onYield(100e6);
         

@@ -2,14 +2,13 @@
 pragma solidity ^0.8.26;
 
 import {Test} from "forge-std/Test.sol";
-import {console2} from "forge-std/console2.sol";
 import {EarnVaultUpgradeable} from "../../src/vaults/earn/EarnVaultUpgradeable.sol";
 import {EarnVaultV2} from "../mocks/EarnVaultV2.sol";
 import {EarnVaultV3} from "../mocks/EarnVaultV3.sol";
 import {IEarnVaultEventsAndErrors} from "../../src/interfaces/vaults/earn/IEarnVaultEventsAndErrors.sol";
 import {MockERC20} from "../mocks/MockERC20.sol";
 import {SelfDestructor} from "../mocks/SelfDestructor.sol";
-import {Upgrades, UnsafeUpgrades} from "lib/openzeppelin-foundry-upgrades/src/Upgrades.sol";
+import {UnsafeUpgrades} from "lib/openzeppelin-foundry-upgrades/src/Upgrades.sol";
 
 /// @title EarnVaultUpgradeableUsingOzTest
 /// @notice Test suite using OpenZeppelin Foundry Upgrades for cleaner proxy management
@@ -224,7 +223,8 @@ contract EarnVaultUpgradeableUsingOzTest is Test {
         
         // Distribute yield
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vault), 300e6);
+        bool success = usdsc.transfer(address(vault), 300e6);
+        require(success, "Transfer failed");
         vm.prank(yieldRedistributor);
         vault.onYield(300e6);
         
@@ -255,7 +255,8 @@ contract EarnVaultUpgradeableUsingOzTest is Test {
         vault.deposit(1000e6);
         
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vault), 100e6);
+        bool success = usdsc.transfer(address(vault), 100e6);
+        require(success, "Transfer failed");
         vm.prank(yieldRedistributor);
         vault.onYield(100e6);
         
@@ -311,7 +312,8 @@ contract EarnVaultUpgradeableUsingOzTest is Test {
         vaultV2.deposit(1000e6);
         
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vaultV2), 100e6);
+        bool success = usdsc.transfer(address(vaultV2), 100e6);
+        require(success, "Transfer failed");
         vm.prank(yieldRedistributor);
         vaultV2.onYield(100e6);
         
@@ -361,7 +363,8 @@ contract EarnVaultUpgradeableUsingOzTest is Test {
         vault.deposit(1000e6);
         
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vault), 100e6);
+        bool success = usdsc.transfer(address(vault), 100e6);
+        require(success, "Transfer failed");
         vm.prank(yieldRedistributor);
         vault.onYield(100e6);
         
@@ -431,8 +434,9 @@ contract EarnVaultUpgradeableUsingOzTest is Test {
         
         // Distribute yield (should collect fees)
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vaultV3), 1000e6);
-        
+        bool success = usdsc.transfer(address(vaultV3), 1000e6);
+        require(success, "Transfer failed");
+
         uint256 treasuryBalanceBefore = usdsc.balanceOf(treasury);
         
         vm.prank(yieldRedistributor);
@@ -468,7 +472,8 @@ contract EarnVaultUpgradeableUsingOzTest is Test {
         vaultV3.deposit(1000e6);
         
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vaultV3), 100e6);
+        bool success = usdsc.transfer(address(vaultV3), 100e6);
+        require(success, "Transfer failed");
         vm.prank(yieldRedistributor);
         vaultV3.onYield(100e6);
         
@@ -493,7 +498,8 @@ contract EarnVaultUpgradeableUsingOzTest is Test {
     function test_CannotSendETHToVault() public {
         // Try to send ETH to vault - should fail
         vm.expectRevert(abi.encodeWithSelector(IEarnVaultEventsAndErrors.EthNotAccepted.selector));
-        address(vault).call{value: 1 ether}("");
+        (bool success,) = address(vault).call{value: 1 ether}("");
+        success;
     }
 
     function test_SweepNativeWorks() public {
@@ -569,7 +575,8 @@ contract EarnVaultUpgradeableUsingOzTest is Test {
         
         // Verify blacklisted user cannot claim
         vm.prank(yieldRedistributor);
-        usdsc.transfer(address(vault), 100e6);
+        bool success = usdsc.transfer(address(vault), 100e6);
+        require(success, "Transfer failed");
         vm.prank(yieldRedistributor);
         vault.onYield(100e6);
         

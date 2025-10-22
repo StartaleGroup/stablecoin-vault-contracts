@@ -63,7 +63,8 @@ contract UnitSUSDSCVault is Test {
         deal(address(mToken), yieldDistributor, INITIAL_USDSC_AMOUNT);
 
         vm.startPrank(depositorA);
-        mToken.transfer(address(swapFacility), INITIAL_USDSC_AMOUNT);
+        bool success = mToken.transfer(address(swapFacility), INITIAL_USDSC_AMOUNT);
+        require(success, "Transfer failed");
         vm.stopPrank();
 
         vm.startPrank(address(swapFacility));
@@ -71,7 +72,8 @@ contract UnitSUSDSCVault is Test {
         vm.stopPrank();
 
         vm.startPrank(depositorB);
-        mToken.transfer(address(swapFacility), INITIAL_USDSC_AMOUNT);
+        success = mToken.transfer(address(swapFacility), INITIAL_USDSC_AMOUNT);
+        require(success, "Transfer failed");
         vm.stopPrank();
 
         vm.startPrank(address(swapFacility));
@@ -79,7 +81,8 @@ contract UnitSUSDSCVault is Test {
         vm.stopPrank();
 
         vm.startPrank(depositorC);
-        mToken.transfer(address(swapFacility), INITIAL_USDSC_AMOUNT);
+        success = mToken.transfer(address(swapFacility), INITIAL_USDSC_AMOUNT);
+        require(success, "Transfer failed");
         vm.stopPrank();
 
         vm.startPrank(address(swapFacility));
@@ -87,7 +90,8 @@ contract UnitSUSDSCVault is Test {
         vm.stopPrank();
 
         vm.startPrank(yieldDistributor);
-        mToken.transfer(address(swapFacility), INITIAL_USDSC_AMOUNT);
+        success = mToken.transfer(address(swapFacility), INITIAL_USDSC_AMOUNT);
+        require(success, "Transfer failed");
         vm.stopPrank();
 
         vm.startPrank(address(swapFacility));
@@ -142,7 +146,8 @@ contract UnitSUSDSCVault is Test {
         uint256 yieldAmount = 500 ether;
         
         vm.startPrank(yieldDistributor);
-        usdsc.transfer(address(vault), yieldAmount);
+        bool success = usdsc.transfer(address(vault), yieldAmount);
+        require(success, "Transfer failed");
         vm.stopPrank();
 
         uint256 newPPS = vault.convertToAssets(1 ether);
@@ -158,7 +163,8 @@ contract UnitSUSDSCVault is Test {
         
         uint256 yieldAmount = 200 ether;
         vm.startPrank(yieldDistributor);
-        usdsc.transfer(address(vault), yieldAmount);
+        bool success = usdsc.transfer(address(vault), yieldAmount);
+        require(success, "Transfer failed");
         vm.stopPrank();
 
         vm.startPrank(depositorA);
@@ -178,7 +184,8 @@ contract UnitSUSDSCVault is Test {
         uint256 yieldAmount = 450 ether; // let's say 10% yield
 
         vm.startPrank(yieldDistributor);
-        usdsc.transfer(address(vault), yieldAmount);
+        bool success = usdsc.transfer(address(vault), yieldAmount);
+        require(success, "Transfer failed");
         vm.stopPrank();
 
         assertEq(vault.totalAssets(), totalDeposited + yieldAmount);
@@ -350,7 +357,8 @@ contract UnitSUSDSCVault is Test {
         
         uint256 yieldAmount = 800 ether;
         vm.startPrank(yieldDistributor);
-        usdsc.transfer(address(vault), yieldAmount);
+        bool success = usdsc.transfer(address(vault), yieldAmount);
+        require(success, "Transfer failed");
         vm.stopPrank();
 
         uint256 assetsA = vault.convertToAssets(sharesA);
@@ -366,13 +374,15 @@ contract UnitSUSDSCVault is Test {
         uint256 initialShares = vault.balanceOf(depositorA);
         
         vm.startPrank(yieldDistributor);
-        usdsc.transfer(address(vault), 100 ether);
+        bool success = usdsc.transfer(address(vault), 100 ether);
+        require(success, "Transfer failed");    
         vm.stopPrank();
         
         uint256 assetsAfterFirstYield = vault.convertToAssets(initialShares);
         
         vm.startPrank(yieldDistributor);
-        usdsc.transfer(address(vault), 150 ether);
+        success = usdsc.transfer(address(vault), 150 ether);
+        require(success, "Transfer failed");
         vm.stopPrank();
         
         uint256 assetsAfterSecondYield = vault.convertToAssets(initialShares);
@@ -387,7 +397,8 @@ contract UnitSUSDSCVault is Test {
         uint256 sharesA = vault.balanceOf(depositorA);
         
         vm.startPrank(yieldDistributor);
-        usdsc.transfer(address(vault), 500 ether);
+        bool success = usdsc.transfer(address(vault), 500 ether);
+        require(success, "Transfer failed");
         vm.stopPrank();
 
         _depositFor(depositorB, DEPOSIT_AMOUNT);
@@ -547,7 +558,8 @@ contract UnitSUSDSCVault is Test {
         uint256 sharesA = vault.balanceOf(depositorA);
         
         vm.startPrank(yieldDistributor);
-        usdsc.transfer(address(vault), 300 ether);
+        bool success = usdsc.transfer(address(vault), 300 ether);
+        require(success, "Transfer failed");
         vm.stopPrank();
         
         _depositFor(depositorB, DEPOSIT_AMOUNT);
@@ -586,9 +598,12 @@ contract UnitSUSDSCVault is Test {
         uint256 initialShares = vault.balanceOf(depositorA);
         
         vm.startPrank(yieldDistributor);
-        usdsc.transfer(address(vault), 100 ether);
-        usdsc.transfer(address(vault), 150 ether);
-        usdsc.transfer(address(vault), 75 ether);
+        bool success = usdsc.transfer(address(vault), 100 ether);
+        require(success, "Transfer failed");
+        success = usdsc.transfer(address(vault), 150 ether);
+        require(success, "Transfer failed");
+        success = usdsc.transfer(address(vault), 75 ether);
+        require(success, "Transfer failed");
         vm.stopPrank();
         
         uint256 expectedAssets = vault.previewRedeem(initialShares);
@@ -623,7 +638,8 @@ contract UnitSUSDSCVault is Test {
         
         uint256 largeYieldAmount = 2000 ether;
         vm.startPrank(yieldDistributor);
-        usdsc.transfer(address(vault), largeYieldAmount);
+        bool success = usdsc.transfer(address(vault), largeYieldAmount);
+        require(success, "Transfer failed");
         vm.stopPrank();
         
         uint256 depositAmountForB = DEPOSIT_AMOUNT;
@@ -651,7 +667,8 @@ contract UnitSUSDSCVault is Test {
         
         // Send yield to vault when there are no shareholders
         vm.startPrank(yieldDistributor);
-        usdsc.transfer(address(vault), yieldAmount);
+        bool success = usdsc.transfer(address(vault), yieldAmount);
+        require(success, "Transfer failed");
         vm.stopPrank();
         
         // Vault should have assets but no shares
@@ -751,7 +768,8 @@ contract UnitSUSDSCVault is Test {
         // Test 4: Add yield and verify behavior
         uint256 yieldAmount = 100 ether;
         vm.startPrank(yieldDistributor);
-        usdsc.transfer(address(vault), yieldAmount);
+        bool success = usdsc.transfer(address(vault), yieldAmount);
+        require(success, "Transfer failed");
         vm.stopPrank();
         
         // Test 5: Verify that small shareholders get proportional yield
@@ -790,7 +808,8 @@ contract UnitSUSDSCVault is Test {
             
             // Setup USDSC for test user
             vm.startPrank(testUser);
-            mToken.transfer(address(swapFacility), minViableDeposit * 2);
+            success = mToken.transfer(address(swapFacility), minViableDeposit * 2);
+            require(success, "Transfer failed");    
             vm.stopPrank();
             
             vm.startPrank(address(swapFacility));

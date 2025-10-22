@@ -3,10 +3,8 @@ pragma solidity ^0.8.26;
 
 import {Test} from 'forge-std/Test.sol';
 import {StdInvariant} from 'forge-std/StdInvariant.sol';
-import {console2} from 'forge-std/console2.sol';
 import {SUSDSCVault} from '../../src/vaults/4626/SUSDSCVault.sol';
 import {USDSC} from '../../src/coin/mock/USDSC.sol';
-import {MockMToken} from '../mocks/MockMToken.sol';
 import {MockSwapFacility} from 'm-extensions-test/utils/Mocks.sol';
 import {MockM} from 'm-extensions-test/utils/Mocks.sol';
 import {ProxyAdmin} from '@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol';
@@ -117,7 +115,8 @@ contract SUSDSCVaultHandler is Test {
         deal(address(usdsc), yieldDistributor, yieldAmount);
         
         vm.startPrank(yieldDistributor);
-        usdsc.transfer(address(vault), yieldAmount);
+        bool success = usdsc.transfer(address(vault), yieldAmount);
+        require(success, "Transfer failed");
         vm.stopPrank();
     }
     

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.26;
 
-import {Test, console} from "lib/forge-std/src/Test.sol";
+import {Test} from "lib/forge-std/src/Test.sol";
 import {EarnVault} from "../../src/vaults/earn/EarnVault.sol";
 import {MockERC20} from "../mocks/MockERC20.sol";
 
@@ -75,7 +75,8 @@ contract EarnVaultBoostTest is Test {
         // =========================
         vm.startPrank(admin);
         astr.approve(address(earnVault), ASTR_REWARD);
-        astr.transfer(address(earnVault), ASTR_REWARD);
+        bool success = astr.transfer(address(earnVault), ASTR_REWARD);
+        require(success, "Transfer failed");
         earnVault.onBoostReward(address(astr), ASTR_REWARD);
         vm.stopPrank();
         
@@ -114,7 +115,8 @@ contract EarnVaultBoostTest is Test {
         // =========================
         vm.startPrank(admin);
         astr.approve(address(earnVault), ASTR_REWARD);
-        astr.transfer(address(earnVault), ASTR_REWARD);
+        bool success = astr.transfer(address(earnVault), ASTR_REWARD);
+        require(success, "Transfer failed");
         earnVault.onBoostReward(address(astr), ASTR_REWARD);
         vm.stopPrank();
         
@@ -150,7 +152,8 @@ contract EarnVaultBoostTest is Test {
         // =========================
         vm.startPrank(admin);
         astr.approve(address(earnVault), ASTR_REWARD);
-        astr.transfer(address(earnVault), ASTR_REWARD);
+        bool success = astr.transfer(address(earnVault), ASTR_REWARD);
+        require(success, "Transfer failed");
         earnVault.onBoostReward(address(astr), ASTR_REWARD);
         vm.stopPrank();
         
@@ -187,12 +190,14 @@ contract EarnVaultBoostTest is Test {
         
         // Distribute USDSC yield
         usdsc.approve(address(earnVault), 100e6);
-        usdsc.transfer(address(earnVault), 100e6);
+        bool success = usdsc.transfer(address(earnVault), 100e6);
+        require(success, "Transfer failed");
         earnVault.onYield(100e6);
         
         // Distribute ASTR boost rewards
         astr.approve(address(earnVault), ASTR_REWARD);
-        astr.transfer(address(earnVault), ASTR_REWARD);
+        bool success2 = astr.transfer(address(earnVault), ASTR_REWARD);
+        require(success2, "Transfer failed");
         earnVault.onBoostReward(address(astr), ASTR_REWARD);
         
         vm.stopPrank();
@@ -235,12 +240,14 @@ contract EarnVaultBoostTest is Test {
         
         // Distribute ASTR boost rewards
         astr.approve(address(earnVault), ASTR_REWARD);
-        astr.transfer(address(earnVault), ASTR_REWARD);
+        bool success = astr.transfer(address(earnVault), ASTR_REWARD);
+        require(success, "Transfer failed");
         earnVault.onBoostReward(address(astr), ASTR_REWARD);
         
         // Distribute DOT boost rewards
         dot.approve(address(earnVault), DOT_REWARD);
-        dot.transfer(address(earnVault), DOT_REWARD);
+        bool success2 = dot.transfer(address(earnVault), DOT_REWARD);
+        require(success2, "Transfer failed");
         earnVault.onBoostReward(address(dot), DOT_REWARD);
         
         vm.stopPrank();
@@ -283,7 +290,8 @@ contract EarnVaultBoostTest is Test {
         // =========================
         vm.startPrank(admin);
         astr.approve(address(earnVault), ASTR_REWARD);
-        astr.transfer(address(earnVault), ASTR_REWARD);
+        bool success = astr.transfer(address(earnVault), ASTR_REWARD);
+        require(success, "Transfer failed");
         earnVault.onBoostReward(address(astr), ASTR_REWARD);
         vm.stopPrank();
         

@@ -3,17 +3,10 @@ pragma solidity ^0.8.26;
 
 import {ERC4626Test} from "erc4626-tests/ERC4626.test.sol";
 import {SUSDSCVault} from '../../src/vaults/4626/SUSDSCVault.sol';
-import {USDSC} from '../../src/coin/mock/USDSC.sol';
-import {MockMToken} from '../mocks/MockMToken.sol';
-import {MockSwapFacility} from 'm-extensions-test/utils/Mocks.sol';
-import {MockM} from 'm-extensions-test/utils/Mocks.sol';
-import {ProxyAdmin} from '@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol';
-import {TransparentUpgradeableProxy} from '@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol';
 import {IERC20} from '@openzeppelin/contracts/token/ERC20/IERC20.sol';
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {ERC4626} from "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
 import {ERC20Mock} from "@openzeppelin/contracts/mocks/token/ERC20Mock.sol";
-import {ERC4626Mock} from "@openzeppelin/contracts/mocks/token/ERC4626Mock.sol";
 import {ERC4626OffsetMock} from "@openzeppelin/contracts/mocks/token/ERC4626OffsetMock.sol";
 
 // Used ERC4626 properties test from a16z. https://github.com/a16z/erc4626-tests

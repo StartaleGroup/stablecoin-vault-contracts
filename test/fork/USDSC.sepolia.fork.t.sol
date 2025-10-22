@@ -8,9 +8,7 @@ import {IERC20} from '@openzeppelin/contracts/token/ERC20/IERC20.sol';
 import {IERC20Metadata} from '@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol';
 import {IMTokenLike} from 'm-extensions/interfaces/IMTokenLike.sol';
 import {console2} from 'forge-std/console2.sol';
-// Todo
-// Import swapFacility
-import {ISwapFacility} from 'm-extensions/swap/interfaces/ISwapFacility.sol';
+
 
 contract ForkUSDSC is Test {
     IMYieldToOne internal usdsc;
@@ -178,8 +176,9 @@ contract ForkUSDSC is Test {
         // Test 1: Zelda transfers to Bob
         uint256 transferAmount1 = 100e6; // 100 USDSC
         vm.prank(zelda);
-        usdscToken.transfer(bob, transferAmount1);
-        
+        bool success = usdscToken.transfer(bob, transferAmount1);
+        require(success, "Transfer failed");
+
         assertEq(usdscToken.balanceOf(bob), bobInitialBalance + transferAmount1, "Bob should receive transferred tokens");
         assertEq(usdscToken.balanceOf(zelda), zeldaInitialBalance - transferAmount1, "Zelda balance should decrease");
         
@@ -193,8 +192,9 @@ contract ForkUSDSC is Test {
         uint256 charlieInitialBalance = usdscToken.balanceOf(charlie);
         
         vm.prank(SEPOLIA_USDSC_ADMIN);
-        usdscToken.transfer(charlie, transferAmount2);
-        
+        success = usdscToken.transfer(charlie, transferAmount2);
+        require(success, "Transfer failed");
+
         assertEq(usdscToken.balanceOf(charlie), charlieInitialBalance + transferAmount2, "Charlie should receive transferred tokens");
         assertEq(usdscToken.balanceOf(SEPOLIA_USDSC_ADMIN), adminInitialBalance - transferAmount2, "Admin balance should decrease");
         
@@ -218,8 +218,9 @@ contract ForkUSDSC is Test {
         uint256 bobBalanceBeforeTransferFrom = usdscToken.balanceOf(bob);
         
         vm.prank(charlie);
-        usdscToken.transferFrom(bob, user, transferAmount3);
-        
+        success = usdscToken.transferFrom(bob, user, transferAmount3);
+        require(success, "Transfer failed");
+
         assertEq(usdscToken.balanceOf(user), userInitialBalance + transferAmount3, "User should receive transferred tokens");
         assertEq(usdscToken.balanceOf(bob), bobBalanceBeforeTransferFrom - transferAmount3, "Bob balance should decrease");
         assertEq(usdscToken.allowance(bob, charlie), approveAmount - transferAmount3, "Allowance should be reduced");
@@ -290,8 +291,9 @@ contract ForkUSDSC is Test {
         if (adminMBalanceAfterStore >= wrapAmount) {
             // Transfer M tokens to SwapFacility first
             vm.prank(SEPOLIA_USDSC_ADMIN);
-            mTokenERC20.transfer(SEPOLIA_SWAP_FACILITY_ADDRESS, wrapAmount);
-            
+            bool success = mTokenERC20.transfer(SEPOLIA_SWAP_FACILITY_ADDRESS, wrapAmount);
+            require(success, "Transfer failed");
+
             uint256 swapFacilityMBalance = mTokenERC20.balanceOf(SEPOLIA_SWAP_FACILITY_ADDRESS);
             console2.log("SwapFacility M Balance after transfer:", swapFacilityMBalance);
             

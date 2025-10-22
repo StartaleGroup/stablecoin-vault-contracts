@@ -82,7 +82,8 @@ contract UnitUSDSC is Test {
     console2.log('currentEarnerRate', currentEarnerRate);
 
     vm.startPrank(bob);
-    mToken.transfer(address(swapFacility), 10000 ether);
+    bool success = mToken.transfer(address(swapFacility), 10000 ether);
+    require(success, "Transfer failed");
     vm.stopPrank();
 
     // Below will take M from swapFacility and transfer to USDSC contract and mint USDSC

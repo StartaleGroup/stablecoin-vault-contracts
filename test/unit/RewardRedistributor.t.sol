@@ -45,11 +45,13 @@ contract RewardRedistributorTest is Test {
         // Seed supply: mint 10M to some holder to represent circulating base (wallets/Lps)
         usdsc.mint(address(this), 10_000_000e6);
         // move 1M to earn vault (principal + reserve)
-        usdsc.transfer(address(earnV), 1_000_000e6);
+        bool success1 = usdsc.transfer(address(earnV), 1_000_000e6);
+        require(success1, "Transfer failed");
         earnV.setPrincipal(1_000_000e6);
         earnV.setClaimReserve(1_000_000e6);
         // move 1M to sVault (counts toward totalAssets)
-        usdsc.transfer(address(sVault), 1_000_000e6);
+        bool success2 = usdsc.transfer(address(sVault), 1_000_000e6);
+        require(success2, "Transfer failed");
     }
 
     function testConservationAndSplit() public {
@@ -63,7 +65,7 @@ contract RewardRedistributorTest is Test {
             ,
             ,
             ,
-            uint256 S_base,
+            uint256 sBase,
             uint256 Tearn,
             uint256 T4626
         ) = rr.previewDistribute();
@@ -71,7 +73,7 @@ contract RewardRedistributorTest is Test {
         assertEq(minted, 100_000e6);
         assertEq(Tearn, 1_000_000e6);
         assertEq(T4626,  1_000_000e6);
-        assertEq(S_base, usdsc.totalSupply() /* currently 10M */);
+        assertEq(sBase, usdsc.totalSupply() /* currently 10M */);
 
         // Keeper Distributes
         vm.prank(operator);
@@ -85,7 +87,7 @@ contract RewardRedistributorTest is Test {
         uint256 gotearnV   = usdsc.balanceOf(address(earnV)) - 1_000_000e6; // extra over reserve
         uint256 gotSVault   = usdsc.balanceOf(address(sVault)) - 1_000_000e6;
 
-        // The preview and actual may differ due to timing of when S_base is calculated
+        // The preview and actual may differ due to timing of when sBase is calculated
         // Just check that conservation holds: all minted tokens are distributed
         assertEq(gotStartale + gotearnV + gotSVault, minted, "conservation");
         
@@ -206,12 +208,12 @@ contract RewardRedistributorTest is Test {
         // Denominator & proportionality pattern from specification
         (uint minted, uint fee, uint toEarn, uint toYield,,,,) = rr.previewDistribute();
         
-        uint S_base = usdsc.totalSupply() - minted;
+        uint sBase = usdsc.totalSupply() - minted;
         uint T_earn = earnV.totalPrincipal();
         uint T_yield = sVault.totalAssets();
         
-        assertLe(toEarn, (minted - fee) * T_earn / S_base);
-        assertLe(toYield,   (minted - fee) * T_yield   / S_base);
+        assertLe(toEarn, (minted - fee) * T_earn / sBase);
+        assertLe(toYield,   (minted - fee) * T_yield   / sBase);
         
         vm.prank(operator);
         rr.distribute();
@@ -275,22 +277,22 @@ contract RewardRedistributorTest is Test {
         (
             uint256 minted,
             ,,,,
-            uint256 S_base,
+            uint256 sBase,
             ,
         ) = rr.previewDistribute();
 
-        // S_base == ASSET.totalSupply() (for preview functions with preMint = true)
-        assertEq(S_base, totalSupplyBefore, "correct S_base calculation");
+        // sBase == ASSET.totalSupply() (for preview functions with preMint = true)
+        assertEq(sBase, totalSupplyBefore, "correct sBase calculation");
     }
 
     function testInvariant2_PathologicalZeroSBase() public {
         // Test the edge case where eligible TVL approaches total base supply
-        // This tests that the system handles low S_base gracefully
+        // This tests that the system handles low sBase gracefully
         
         // Set up a smaller yield to avoid the underflow edge case
         ext.addPending(1_000e6);
         
-        // Burn most of the circulating supply, but leave enough for S_base > eligible TVL
+        // Burn most of the circulating supply, but leave enough for sBase > eligible TVL
         uint256 testBalance = usdsc.balanceOf(address(this));
         uint256 toBurn = testBalance - 100_000e6; // Leave some circulating supply
         usdsc.burn(address(this), toBurn);
@@ -301,19 +303,19 @@ contract RewardRedistributorTest is Test {
             uint256 toEarn,
             uint256 toYield,
             uint256 toStartaleExtra,
-            uint256 S_base,
-            uint256 T_earn,
-            uint256 T_yield
+            uint256 sBase,
+            uint256 tEarn,
+            uint256 tYield
         ) = rr.previewDistribute();
         
-        // Verify S_base calculation is correct (for preview functions with preMint = true)
-        assertEq(S_base, usdsc.totalSupply(), "S_base calculation correct");
+        // Verify sBase calculation is correct (for preview functions with preMint = true)
+        assertEq(sBase, usdsc.totalSupply(), "sBase calculation correct");
         
-        // When S_base is very small relative to eligible TVL, most should go to Startale
-        uint256 eligibleTVL = T_earn + T_yield;
-        if (S_base <= eligibleTVL) {
+        // When sBase is very small relative to eligible TVL, most should go to Startale
+        uint256 eligibleTvl = tEarn + tYield;
+        if (sBase <= eligibleTvl) {
             // Most of the net yield should go to Startale as extra
-            assertGt(toStartaleExtra, toEarn + toYield, "most goes to startale when S_base is small");
+            assertGt(toStartaleExtra, toEarn + toYield, "most goes to startale when sBase is small");
         }
         
         // Conservation should still hold
@@ -329,16 +331,16 @@ contract RewardRedistributorTest is Test {
             uint256 toEarn,
             uint256 toYield,
             ,
-            uint256 S_base,
-            uint256 T_earn,
-            uint256 T_yield
+            uint256 sBase,
+            uint256 tEarn,
+            uint256 tYield
         ) = rr.previewDistribute();
 
         uint256 net = minted - feeToStartale;
         
         // Check proportional allocation (allowing for rounding)
-        uint256 expectedToEarn = (net * T_earn) / S_base;
-        uint256 expectedToOn = (net * T_yield) / S_base;
+        uint256 expectedToEarn = (net * tEarn) / sBase;
+        uint256 expectedToOn = (net * tYield) / sBase;
         
         // Allow small rounding differences
         assertApproxEqRel(toEarn, expectedToEarn, 0.01e18, "proportional toEarn"); // 1% tolerance
@@ -348,7 +350,7 @@ contract RewardRedistributorTest is Test {
     function testInvariant4_LongRunFairness() public {
         // Track balances to measure actual distributions
         uint256 initialEarn = usdsc.balanceOf(address(earnV));
-        uint256 initialSUSDSC = usdsc.balanceOf(address(sVault));
+        uint256 initialSusdsc = usdsc.balanceOf(address(sVault));
 
         uint256 totalActualToEarn = 0;
         uint256 totalActualToYield = 0;
@@ -361,13 +363,13 @@ contract RewardRedistributorTest is Test {
             ext.addPending(yieldAmount);
 
             // Get preview with carry
-            (uint256 minted, uint256 feeToStartale, uint256 toEarn, uint256 toYield, , uint256 S_base, uint256 T_earn, uint256 T_yield) = rr.previewSplitCurrent();
+            (uint256 minted, uint256 feeToStartale, uint256 toEarn, uint256 toYield, , uint256 sBase, uint256 tEarn, uint256 tYield) = rr.previewSplitCurrent();
 
             uint256 net = minted - feeToStartale;
             totalActualToEarn += toEarn;
             totalActualToYield += toYield;
-            totalTheoreticalEarn += (net * T_earn) / S_base;
-            totalTheoreticalYield += (net * T_yield) / S_base;
+            totalTheoreticalEarn += (net * tEarn) / sBase;
+            totalTheoreticalYield += (net * tYield) / sBase;
 
             vm.prank(operator);
             rr.distribute();
@@ -375,11 +377,11 @@ contract RewardRedistributorTest is Test {
 
         // Verify actual distributions
         uint256 actualEarnDistributed = usdsc.balanceOf(address(earnV)) - initialEarn;
-        uint256 actualSUSDSCDistributed = usdsc.balanceOf(address(sVault)) - initialSUSDSC;
+        uint256 actualSusdscDistributed = usdsc.balanceOf(address(sVault)) - initialSusdsc;
 
         // Allow small differences due to timing of carry calculations
         assertApproxEqAbs(actualEarnDistributed, totalActualToEarn, 100, "earn tracking approximately matches");
-        assertApproxEqAbs(actualSUSDSCDistributed, totalActualToYield, 100, "sUSDSC tracking approximately matches");
+        assertApproxEqAbs(actualSusdscDistributed, totalActualToYield, 100, "sUSDSC tracking approximately matches");
 
         // Carry fairness: cumulative error should be bounded
         uint256 earnError = totalActualToEarn > totalTheoreticalEarn ?
@@ -387,7 +389,7 @@ contract RewardRedistributorTest is Test {
         uint256 onError = totalActualToYield > totalTheoreticalYield ?
             totalActualToYield - totalTheoreticalYield : totalTheoreticalYield - totalActualToYield;
 
-        // Error should be bounded by S_base and very small relative to total
+        // Error should be bounded by sBase and very small relative to total
         uint256 currentSBase = usdsc.totalSupply();
         assertLt(earnError, currentSBase, "earn carry error bounded");
         assertLt(onError, currentSBase, "on carry error bounded");
@@ -491,11 +493,11 @@ contract RewardRedistributorTest is Test {
             uint256 toYield,
             ,
             ,
-            uint256 T_earn,
-            uint256 T_yield
+            uint256 tEarn,
+            uint256 tYield
         ) = rr.previewDistribute();
         
-        assertEq(T_earn, 0, "T_earn is 0");
+        assertEq(tEarn, 0, "T_earn is 0");
         assertEq(toEarn, 0, "toEarn is 0 when T_earn is 0");
         assertGt(toYield, 0, "toOn gets the allocation");
         
@@ -510,11 +512,11 @@ contract RewardRedistributorTest is Test {
             toYield,
             ,
             ,
-            T_earn,
-            T_yield
+            tEarn,
+            tYield
         ) = rr.previewDistribute();
         
-        assertEq(T_yield, 0, "T_yield is 0");
+        assertEq(tYield, 0, "T_yield is 0");
         assertEq(toYield, 0, "toYield is 0 when T_yield is 0");
         assertGt(toEarn, 0, "toEarn gets the allocation");
     }
@@ -529,7 +531,7 @@ contract RewardRedistributorTest is Test {
             uint256 expectedTYield
         ) = rr.previewDistribute();
         
-        // We can't exactly match preview vs actual due to timing of S_base calculation
+        // We can't exactly match preview vs actual due to timing of sBase calculation
         // But we can verify the event contains reasonable values
         vm.recordLogs();
         
@@ -546,15 +548,15 @@ contract RewardRedistributorTest is Test {
                 
                 // Decode the event data
                 (uint256 minted, uint256 feeToStartale, uint256 toEarn, uint256 toYield, 
-                 uint256 toStartaleExtra, uint256 S_base, uint256 T_earn, uint256 T_yield) = 
+                 uint256 toStartaleExtra, uint256 sBase, uint256 tEarn, uint256 tYield) = 
                     abi.decode(logs[i].data, (uint256, uint256, uint256, uint256, uint256, uint256, uint256, uint256));
                 
                 // Verify event fields are self-consistent
                 assertEq(minted, expectedMinted, "minted matches");
-                assertEq(T_earn, expectedTEarn, "T_earn matches on-chain read");
-                assertEq(T_yield, expectedTYield, "T_yield matches on-chain read");
+                assertEq(tEarn, expectedTEarn, "T_earn matches on-chain read");
+                assertEq(tYield, expectedTYield, "T_yield matches on-chain read");
                 assertEq(minted, feeToStartale + toEarn + toYield + toStartaleExtra, "conservation in event");
-                assertGt(S_base, 0, "S_base is positive");
+                assertGt(sBase, 0, "sBase is positive");
                 
                 break;
             }
@@ -642,8 +644,8 @@ contract RewardRedistributorTest is Test {
         assertEq(finalTotalSupply, newTotalSupply, "Total supply should not change during distribution");
         
         // Invariant 4: No dust retention
-        uint256 finalRRBalance = usdsc.balanceOf(address(rr));
-        assertEq(finalRRBalance, 0, "RewardRedistributor should have no remaining balance");
+        uint256 finalRrBalance = usdsc.balanceOf(address(rr));
+        assertEq(finalRrBalance, 0, "RewardRedistributor should have no remaining balance");
         
         // Invariant 5: All yield distributed to recipients
         uint256 finalTreasuryBalance = usdsc.balanceOf(startale);
@@ -679,8 +681,8 @@ contract RewardRedistributorTest is Test {
         rr.distribute();
         
         // Verify that the actual distribution used the existing balance
-        uint256 finalRRBalance = usdsc.balanceOf(address(rr));
-        assertEq(finalRRBalance, 0, "All yield should be distributed");
+        uint256 finalRrBalance = usdsc.balanceOf(address(rr));
+        assertEq(finalRrBalance, 0, "All yield should be distributed");
         
         // The key insight: previewDistribute() shows 0 because there's no pending yield,
         // but distribute() handles the existing balance correctly
@@ -711,8 +713,8 @@ contract RewardRedistributorTest is Test {
         rr.distribute();
         
         // Verify all yield was distributed
-        uint256 finalRRBalance = usdsc.balanceOf(address(rr));
-        assertEq(finalRRBalance, 0, "All yield should be distributed");
+        uint256 finalRrBalance = usdsc.balanceOf(address(rr));
+        assertEq(finalRrBalance, 0, "All yield should be distributed");
         
         // Verify conservation
         uint256 totalSupplyIncrease = usdsc.totalSupply() - (10_000_000e6); // Subtract initial supply
@@ -720,7 +722,7 @@ contract RewardRedistributorTest is Test {
     }
 
     function testPreviewDistributeSBaseCalculationInvariants() public {
-        // Test that previewDistribute() S_base calculation is consistent with actual distribution
+        // Test that previewDistribute() sBase calculation is consistent with actual distribution
         
         // Add pending yield
         ext.addPending(40_000e6);
@@ -734,8 +736,8 @@ contract RewardRedistributorTest is Test {
         // Invariant 1: minted should equal pending yield
         assertEq(minted, 40_000e6, "Preview minted should equal pending yield");
         
-        // Invariant 2: S_base should equal current total supply (preMint = true)
-        assertEq(sBase, initialTotalSupply, "Preview S_base should equal current total supply");
+        // Invariant 2: sBase should equal current total supply (preMint = true)
+        assertEq(sBase, initialTotalSupply, "Preview sBase should equal current total supply");
         
         // Invariant 3: Conservation in preview
         uint256 total = fee + toEarn + toOn + extra;
@@ -745,15 +747,15 @@ contract RewardRedistributorTest is Test {
         vm.prank(operator);
         rr.distribute();
         
-        // Invariant 4: S_base in actual distribution should equal total supply before mint
+        // Invariant 4: sBase in actual distribution should equal total supply before mint
         uint256 finalTotalSupply = usdsc.totalSupply();
         
-        // We can't directly check S_base from distribute(), but we can verify the total supply increase
+        // We can't directly check sBase from distribute(), but we can verify the total supply increase
         assertEq(finalTotalSupply, initialTotalSupply + minted, "Total supply should increase by minted amount");
         
         // Invariant 5: No dust retention after actual distribution
-        uint256 finalRRBalance = usdsc.balanceOf(address(rr));
-        assertEq(finalRRBalance, 0, "No dust should remain in RewardRedistributor");
+        uint256 finalRrBalance = usdsc.balanceOf(address(rr));
+        assertEq(finalRrBalance, 0, "No dust should remain in RewardRedistributor");
     }
 
     function testPreviewDistributeConsistencyAcrossMultipleCalls() public {
@@ -772,7 +774,7 @@ contract RewardRedistributorTest is Test {
         assertEq(minted1, minted2, "Preview minted should be consistent");
         assertEq(toEarn1, toEarn2, "Preview toEarn should be consistent");
         assertEq(toOn1, toOn2, "Preview toOn should be consistent");
-        assertEq(sBase1, sBase2, "Preview S_base should be consistent");
+        assertEq(sBase1, sBase2, "Preview sBase should be consistent");
         assertEq(tYield1, tYield2, "Preview T_yield should be consistent");
     }
 
@@ -795,8 +797,8 @@ contract RewardRedistributorTest is Test {
         rr.distribute();
         
         // Verify that distribution completed successfully
-        uint256 finalRRBalance = usdsc.balanceOf(address(rr));
-        assertEq(finalRRBalance, 0, "All yield should be distributed");
+        uint256 finalRrBalance = usdsc.balanceOf(address(rr));
+        assertEq(finalRrBalance, 0, "All yield should be distributed");
         
         // Verify conservation
         uint256 finalTotalSupply = usdsc.totalSupply();
@@ -815,7 +817,7 @@ contract RewardRedistributorTest is Test {
         assertEq(toEarn, 0, "Preview toEarn should be 0 when no pending yield");
         assertEq(toOn, 0, "Preview toOn should be 0 when no pending yield");
         assertEq(extra, 0, "Preview extra should be 0 when no pending yield");
-        assertEq(sBase, usdsc.totalSupply(), "Preview S_base should equal current supply");
+        assertEq(sBase, usdsc.totalSupply(), "Preview sBase should equal current supply");
         
         // Test 2: Very small pending yield
         ext.addPending(1e6); // 1 USDSC
@@ -823,7 +825,7 @@ contract RewardRedistributorTest is Test {
         (minted, fee, toEarn, toOn, extra, sBase, tEarn, tYield) = rr.previewDistribute();
         
         assertEq(minted, 1e6, "Preview minted should equal small pending yield");
-        assertEq(sBase, usdsc.totalSupply(), "Preview S_base should equal current supply");
+        assertEq(sBase, usdsc.totalSupply(), "Preview sBase should equal current supply");
         
         // Conservation should still hold
         uint256 total = fee + toEarn + toOn + extra;

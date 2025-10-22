@@ -9,6 +9,9 @@ solc_version = "0.8.26"
 libs = ['node_modules', 'lib']
 verbosity = 3
 
+[lint]
+exclude_lints = ["mixed-case-variable", "unaliased-plain-import"]
+
 [profile.default.fuzz]
 runs = 5_000  # Reduced from 1,000 for faster CI
 
