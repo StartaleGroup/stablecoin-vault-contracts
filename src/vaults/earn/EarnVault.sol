@@ -260,12 +260,15 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     // Get USDSC claimable yield
     usdscClaimable = this.claimable(user);
 
+    // Cache array length for gas optimization
+    uint256 boostTokensLength = activeBoostTokens.length;
+
     // Get all active boost tokens
-    boostTokens = new address[](activeBoostTokens.length);
-    boostAmounts = new uint256[](activeBoostTokens.length);
+    boostTokens = new address[](boostTokensLength);
+    boostAmounts = new uint256[](boostTokensLength);
 
     // Calculate claimable amounts for each boost token
-    for (uint256 i = 0; i < activeBoostTokens.length; i++) {
+    for (uint256 i = 0; i < boostTokensLength; i++) {
       address token = activeBoostTokens[i];
       boostTokens[i] = token;
       boostAmounts[i] = BoostRewardsLib.getClaimableBoostReward(
@@ -568,7 +571,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
   /// @dev Allows recovery of ETH sent via selfdestruct or other means
   /// @param to Address to send ETH to
   /// @param amount Amount of ETH to sweep
-  function sweepNative(address payable to, uint256 amount) external onlyOwner {
+  function sweepNative(address payable to, uint256 amount) external onlyOwner nonReentrant {
     if (to == address(0)) revert CanNotBeZeroAddress();
 
     (bool success,) = to.call{value: amount}('');
