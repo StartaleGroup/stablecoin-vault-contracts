@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.26;
 
-import {Test} from 'forge-std/Test.sol';
 import {USDSC} from '../../src/coin/mock/USDSC.sol';
 import {ProxyAdmin} from '@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol';
 import {TransparentUpgradeableProxy} from '@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol';
+import {Test} from 'forge-std/Test.sol';
+import {console2} from 'forge-std/console2.sol';
 import {MockSwapFacility} from 'm-extensions-test/utils/Mocks.sol';
 import {MockM} from 'm-extensions-test/utils/Mocks.sol';
-import {console2} from 'forge-std/console2.sol';
 
 contract UnitUSDSC is Test {
   USDSC internal usdsc;
@@ -40,9 +40,9 @@ contract UnitUSDSC is Test {
 
     usdsc = USDSC(address(proxy));
 
-    vm.deal(bob, 10000 ether);
+    vm.deal(bob, 10_000 ether);
     // deal some m token to bob
-    deal(address(mToken), bob, 10000 ether);
+    deal(address(mToken), bob, 10_000 ether);
 
     // If needed,transfer some m tokens to usdsc contract address
     // vm.startPrank(bob);
@@ -72,7 +72,6 @@ contract UnitUSDSC is Test {
   }
 
   function test_claimYield() external {
-
     // Test yield claiming functionality
     uint128 currentIndex = mToken.currentIndex();
     console2.log('currentIndex', currentIndex);
@@ -81,8 +80,8 @@ contract UnitUSDSC is Test {
     console2.log('currentEarnerRate', currentEarnerRate);
 
     vm.startPrank(bob);
-    bool success = mToken.transfer(address(swapFacility), 10000 ether);
-    require(success, "Transfer failed");
+    bool success = mToken.transfer(address(swapFacility), 10_000 ether);
+    require(success, 'Transfer failed');
     vm.stopPrank();
 
     // Below will take M from swapFacility and transfer to USDSC contract and mint USDSC
@@ -95,11 +94,11 @@ contract UnitUSDSC is Test {
 
     // check charlie has 5000 ether usdsc tokens
     // totalsupply of usdsc should be 5000 ether now
-     assertEq(usdsc.balanceOf(charlie), 5000 ether);
+    assertEq(usdsc.balanceOf(charlie), 5000 ether);
 
     // Mock the yield accrual
-    mToken.setCurrentIndex(1056091682480);
-    assertEq(mToken.currentIndex(), 1056091682480);
+    mToken.setCurrentIndex(1_056_091_682_480);
+    assertEq(mToken.currentIndex(), 1_056_091_682_480);
 
     mToken.setEarnerRate(425);
     assertEq(mToken.earnerRate(), 425);
