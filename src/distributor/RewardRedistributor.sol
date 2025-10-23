@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.26;
+pragma solidity ^0.8.30;
 
 import {IEarnVault} from '../interfaces/vaults/earn/IEarnVault.sol';
 import {AccessControl} from 'lib/openzeppelin-contracts/contracts/access/AccessControl.sol';

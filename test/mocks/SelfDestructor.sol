@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.26;
+pragma solidity ^0.8.30;
 
 /// @title SelfDestructor
 /// @notice Helper contract to simulate selfdestruct sending ETH to vault

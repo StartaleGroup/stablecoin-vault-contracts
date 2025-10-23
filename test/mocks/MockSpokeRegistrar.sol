@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: UNLICENSED
 
-pragma solidity 0.8.26;
+pragma solidity 0.8.30;
 
 contract MockSpokeRegistrar {
   mapping(bytes32 key => bytes32 value) public get;

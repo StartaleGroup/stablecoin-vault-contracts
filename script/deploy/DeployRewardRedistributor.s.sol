@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0
-pragma solidity ^0.8.26;
+pragma solidity ^0.8.30;
 
 import {RewardRedistributor} from '../../src/distributor/RewardRedistributor.sol';
 import {IEarnVault} from '../../src/interfaces/vaults/earn/IEarnVault.sol';

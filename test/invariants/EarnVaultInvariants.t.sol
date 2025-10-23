@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.26;
+pragma solidity ^0.8.30;
 
 import {EarnVault} from '../../src/vaults/earn/EarnVault.sol';
 import {MockERC20} from '../mocks/MockERC20.sol';
