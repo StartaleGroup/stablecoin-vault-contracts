@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.26;
 
-import {Script, console} from "forge-std/Script.sol";
-import {EarnVaultUpgradeable} from "../../src/vaults/earn/EarnVaultUpgradeable.sol";
-import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
-import {DeployHelpers} from "./DeployHelpers.sol";
+import {EarnVaultUpgradeable} from '../../src/vaults/earn/EarnVaultUpgradeable.sol';
+import {DeployHelpers} from './DeployHelpers.sol';
+import {TransparentUpgradeableProxy} from '@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol';
+import {Script, console} from 'forge-std/Script.sol';
 
 /**
  * @title DeployEarnVaultUpgradeable
@@ -17,182 +17,174 @@ import {DeployHelpers} from "./DeployHelpers.sol";
  *          -vvvv
  */
 contract DeployEarnVaultUpgradeable is Script, DeployHelpers {
-    // Environment variables
-    address usdscAddress;
-    address ownerAddress;
-    address yieldRedistributorAddress;
-    address treasuryAddress;
-    address pauserAddress;
-    address proxyAdminOwner;
+  // Environment variables
+  address usdscAddress;
+  address ownerAddress;
+  address yieldRedistributorAddress;
+  address treasuryAddress;
+  address pauserAddress;
+  address proxyAdminOwner;
 
-    // Deployment artifacts
-    EarnVaultUpgradeable public implementation;
-    TransparentUpgradeableProxy public proxy;
-    EarnVaultUpgradeable public earnVault;
+  // Deployment artifacts
+  EarnVaultUpgradeable public implementation;
+  TransparentUpgradeableProxy public proxy;
+  EarnVaultUpgradeable public earnVault;
 
-    // Salt for CREATE3 deployment
-    string public constant IMPLEMENTATION_NAME = "EarnVaultUpgradeable_Implementation";
-    string public constant PROXY_NAME = "EarnVaultUpgradeable_Proxy";
+  // Salt for CREATE3 deployment
+  string public constant IMPLEMENTATION_NAME = 'EarnVaultUpgradeable_Implementation';
+  string public constant PROXY_NAME = 'EarnVaultUpgradeable_Proxy';
 
-    function setUp() public {
-        // Load environment variables
-        usdscAddress = vm.envAddress("USDSC_ADDRESS");
-        ownerAddress = vm.envAddress("OWNER_ADDRESS");
-        yieldRedistributorAddress = vm.envAddress("YIELD_REDISTRIBUTOR_ADDRESS");
-        treasuryAddress = vm.envAddress("TREASURY_ADDRESS");
-        pauserAddress = vm.envAddress("PAUSER_ADDRESS");
-        
-        // ProxyAdmin owner - defaults to owner if not set
-        proxyAdminOwner = vm.envOr("PROXY_ADMIN_OWNER", ownerAddress);
+  function setUp() public {
+    // Load environment variables
+    usdscAddress = vm.envAddress('USDSC_ADDRESS');
+    ownerAddress = vm.envAddress('OWNER_ADDRESS');
+    yieldRedistributorAddress = vm.envAddress('YIELD_REDISTRIBUTOR_ADDRESS');
+    treasuryAddress = vm.envAddress('TREASURY_ADDRESS');
+    pauserAddress = vm.envAddress('PAUSER_ADDRESS');
 
-        // Validate addresses
-        require(usdscAddress != address(0), "USDSC_ADDRESS not set");
-        require(ownerAddress != address(0), "OWNER_ADDRESS not set");
-        require(yieldRedistributorAddress != address(0), "YIELD_REDISTRIBUTOR_ADDRESS not set");
-        require(treasuryAddress != address(0), "TREASURY_ADDRESS not set");
-        require(pauserAddress != address(0), "PAUSER_ADDRESS not set");
-        require(proxyAdminOwner != address(0), "PROXY_ADMIN_OWNER not set");
+    // ProxyAdmin owner - defaults to owner if not set
+    proxyAdminOwner = vm.envOr('PROXY_ADMIN_OWNER', ownerAddress);
 
-        console.log("=== Deployment Configuration ===");
-        console.log("USDSC Address:", usdscAddress);
-        console.log("Owner Address:", ownerAddress);
-        console.log("Yield Redistributor Address:", yieldRedistributorAddress);
-        console.log("Treasury Address:", treasuryAddress);
-        console.log("Pauser Address:", pauserAddress);
-        console.log("ProxyAdmin Owner:", proxyAdminOwner);
-        console.log("Deployer:", msg.sender);
-    }
+    // Validate addresses
+    require(usdscAddress != address(0), 'USDSC_ADDRESS not set');
+    require(ownerAddress != address(0), 'OWNER_ADDRESS not set');
+    require(yieldRedistributorAddress != address(0), 'YIELD_REDISTRIBUTOR_ADDRESS not set');
+    require(treasuryAddress != address(0), 'TREASURY_ADDRESS not set');
+    require(pauserAddress != address(0), 'PAUSER_ADDRESS not set');
+    require(proxyAdminOwner != address(0), 'PROXY_ADMIN_OWNER not set');
 
-    function run() public {
-        uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
-        address deployer = vm.addr(deployerPrivateKey);
+    console.log('=== Deployment Configuration ===');
+    console.log('USDSC Address:', usdscAddress);
+    console.log('Owner Address:', ownerAddress);
+    console.log('Yield Redistributor Address:', yieldRedistributorAddress);
+    console.log('Treasury Address:', treasuryAddress);
+    console.log('Pauser Address:', pauserAddress);
+    console.log('ProxyAdmin Owner:', proxyAdminOwner);
+    console.log('Deployer:', msg.sender);
+  }
 
-        console.log("\n=== Starting Deployment ===");
-        console.log("Deployer address:", deployer);
+  function run() public {
+    uint256 deployerPrivateKey = vm.envUint('DEPLOYER_PRIVATE_KEY');
+    address deployer = vm.addr(deployerPrivateKey);
 
-        // Compute salts for CREATE3
-        bytes32 implSalt = _computeSalt(deployer, IMPLEMENTATION_NAME);
-        bytes32 proxySalt = _computeSalt(deployer, PROXY_NAME);
-        
-        console.log("Implementation salt:");
-        console.logBytes32(implSalt);
-        console.log("Proxy salt:");
-        console.logBytes32(proxySalt);
+    console.log('\n=== Starting Deployment ===');
+    console.log('Deployer address:', deployer);
 
-        // Predict deployment addresses
-        address predictedImplAddress = _getCreate3Address(deployer, implSalt);
-        address predictedProxyAddress = _getCreate3Address(deployer, proxySalt);
-        
-        console.log("Predicted implementation address:", predictedImplAddress);
-        console.log("Predicted proxy address:", predictedProxyAddress);
+    // Compute salts for CREATE3
+    bytes32 implSalt = _computeSalt(deployer, IMPLEMENTATION_NAME);
+    bytes32 proxySalt = _computeSalt(deployer, PROXY_NAME);
 
-        vm.startBroadcast(deployerPrivateKey);
+    console.log('Implementation salt:');
+    console.logBytes32(implSalt);
+    console.log('Proxy salt:');
+    console.logBytes32(proxySalt);
 
-        // Step 1: Deploy implementation using CREATE3
-        console.log("\n=== Deploying Implementation ===");
-        bytes memory implCreationCode = type(EarnVaultUpgradeable).creationCode;
-        address deployedImplAddress = _deployCreate3(implCreationCode, implSalt);
-        implementation = EarnVaultUpgradeable(payable(deployedImplAddress));
-        
-        console.log("Implementation deployed at:", address(implementation));
-        require(deployedImplAddress == predictedImplAddress, "Implementation address mismatch");
+    // Predict deployment addresses
+    address predictedImplAddress = _getCreate3Address(deployer, implSalt);
+    address predictedProxyAddress = _getCreate3Address(deployer, proxySalt);
 
-        // Step 2: Prepare initialization data
-        bytes memory initData = abi.encodeWithSelector(
-            EarnVaultUpgradeable.initialize.selector,
-            usdscAddress,
-            ownerAddress,
-            yieldRedistributorAddress,
-            treasuryAddress,
-            pauserAddress
-        );
+    console.log('Predicted implementation address:', predictedImplAddress);
+    console.log('Predicted proxy address:', predictedProxyAddress);
 
-        // Step 3: Deploy proxy using CREATE3
-        console.log("\n=== Deploying Proxy ===");
-        bytes memory proxyCreationCode = abi.encodePacked(
-            type(TransparentUpgradeableProxy).creationCode,
-            abi.encode(
-                address(implementation),
-                proxyAdminOwner,
-                initData
-            )
-        );
-        
-        address deployedProxyAddress = _deployCreate3(proxyCreationCode, proxySalt);
-        proxy = TransparentUpgradeableProxy(payable(deployedProxyAddress));
-        earnVault = EarnVaultUpgradeable(payable(deployedProxyAddress));
+    vm.startBroadcast(deployerPrivateKey);
 
-        console.log("Proxy deployed at:", address(proxy));
-        require(deployedProxyAddress == predictedProxyAddress, "Proxy address mismatch");
+    // Step 1: Deploy implementation using CREATE3
+    console.log('\n=== Deploying Implementation ===');
+    bytes memory implCreationCode = type(EarnVaultUpgradeable).creationCode;
+    address deployedImplAddress = _deployCreate3(implCreationCode, implSalt);
+    implementation = EarnVaultUpgradeable(payable(deployedImplAddress));
 
-        console.log("\n=== Deployment Successful ===");
-        console.log("Implementation:", address(implementation));
-        console.log("Proxy (EarnVault):", address(earnVault));
-        console.log("Address verification: PASSED");
+    console.log('Implementation deployed at:', address(implementation));
+    require(deployedImplAddress == predictedImplAddress, 'Implementation address mismatch');
 
-        vm.stopBroadcast();
+    // Step 2: Prepare initialization data
+    bytes memory initData = abi.encodeWithSelector(
+      EarnVaultUpgradeable.initialize.selector,
+      usdscAddress,
+      ownerAddress,
+      yieldRedistributorAddress,
+      treasuryAddress,
+      pauserAddress
+    );
 
-        // Post-deployment verification
-        console.log("\n=== Post-Deployment Verification ===");
-        console.log("Total Principal:", earnVault.totalPrincipal());
-        console.log("Global Index:", earnVault.globalIndex());
-        console.log("Claim Reserve:", earnVault.claimReserve());
-        console.log("Owner:", earnVault.owner());
-    }
+    // Step 3: Deploy proxy using CREATE3
+    console.log('\n=== Deploying Proxy ===');
+    bytes memory proxyCreationCode = abi.encodePacked(
+      type(TransparentUpgradeableProxy).creationCode, abi.encode(address(implementation), proxyAdminOwner, initData)
+    );
 
-    /**
-     * @notice Simulates a deployment without broadcasting
-     * @dev Useful for testing and gas estimation
-     */
-    function simulateDeploy() public {
-        setUp();
-        
-        address deployer = msg.sender;
-        bytes32 implSalt = _computeSalt(deployer, IMPLEMENTATION_NAME);
-        bytes32 proxySalt = _computeSalt(deployer, PROXY_NAME);
-        
-        address predictedImplAddress = _getCreate3Address(deployer, implSalt);
-        address predictedProxyAddress = _getCreate3Address(deployer, proxySalt);
+    address deployedProxyAddress = _deployCreate3(proxyCreationCode, proxySalt);
+    proxy = TransparentUpgradeableProxy(payable(deployedProxyAddress));
+    earnVault = EarnVaultUpgradeable(payable(deployedProxyAddress));
 
-        console.log("\n=== Deployment Simulation ===");
-        console.log("Predicted implementation address:", predictedImplAddress);
-        console.log("Predicted proxy address:", predictedProxyAddress);
-        console.log("Implementation salt:");
-        console.logBytes32(implSalt);
-        console.log("Proxy salt:");
-        console.logBytes32(proxySalt);
-        
-        // Simulate implementation deployment
-        EarnVaultUpgradeable simulatedImpl = new EarnVaultUpgradeable();
-        console.log("\nSimulated implementation deployed at:", address(simulatedImpl));
+    console.log('Proxy deployed at:', address(proxy));
+    require(deployedProxyAddress == predictedProxyAddress, 'Proxy address mismatch');
 
-        // Prepare initialization data
-        bytes memory initData = abi.encodeWithSelector(
-            EarnVaultUpgradeable.initialize.selector,
-            usdscAddress,
-            ownerAddress,
-            yieldRedistributorAddress,
-            treasuryAddress,
-            pauserAddress
-        );
+    console.log('\n=== Deployment Successful ===');
+    console.log('Implementation:', address(implementation));
+    console.log('Proxy (EarnVault):', address(earnVault));
+    console.log('Address verification: PASSED');
 
-        // Simulate proxy deployment
-        TransparentUpgradeableProxy simulatedProxy = new TransparentUpgradeableProxy(
-            address(simulatedImpl),
-            proxyAdminOwner,
-            initData
-        );
-        
-        EarnVaultUpgradeable simulatedVault = EarnVaultUpgradeable(payable(address(simulatedProxy)));
+    vm.stopBroadcast();
 
-        console.log("Simulated proxy deployed at:", address(simulatedProxy));
-        console.log("Simulation successful!");
-        
-        // Display initial state
-        console.log("\n=== Simulated Initial State ===");
-        console.log("Total Principal:", simulatedVault.totalPrincipal());
-        console.log("Global Index:", simulatedVault.globalIndex());
-        console.log("Claim Reserve:", simulatedVault.claimReserve());
-        console.log("Owner:", simulatedVault.owner());
-    }
+    // Post-deployment verification
+    console.log('\n=== Post-Deployment Verification ===');
+    console.log('Total Principal:', earnVault.totalPrincipal());
+    console.log('Global Index:', earnVault.globalIndex());
+    console.log('Claim Reserve:', earnVault.claimReserve());
+    console.log('Owner:', earnVault.owner());
+  }
+
+  /**
+   * @notice Simulates a deployment without broadcasting
+   * @dev Useful for testing and gas estimation
+   */
+  function simulateDeploy() public {
+    setUp();
+
+    address deployer = msg.sender;
+    bytes32 implSalt = _computeSalt(deployer, IMPLEMENTATION_NAME);
+    bytes32 proxySalt = _computeSalt(deployer, PROXY_NAME);
+
+    address predictedImplAddress = _getCreate3Address(deployer, implSalt);
+    address predictedProxyAddress = _getCreate3Address(deployer, proxySalt);
+
+    console.log('\n=== Deployment Simulation ===');
+    console.log('Predicted implementation address:', predictedImplAddress);
+    console.log('Predicted proxy address:', predictedProxyAddress);
+    console.log('Implementation salt:');
+    console.logBytes32(implSalt);
+    console.log('Proxy salt:');
+    console.logBytes32(proxySalt);
+
+    // Simulate implementation deployment
+    EarnVaultUpgradeable simulatedImpl = new EarnVaultUpgradeable();
+    console.log('\nSimulated implementation deployed at:', address(simulatedImpl));
+
+    // Prepare initialization data
+    bytes memory initData = abi.encodeWithSelector(
+      EarnVaultUpgradeable.initialize.selector,
+      usdscAddress,
+      ownerAddress,
+      yieldRedistributorAddress,
+      treasuryAddress,
+      pauserAddress
+    );
+
+    // Simulate proxy deployment
+    TransparentUpgradeableProxy simulatedProxy =
+      new TransparentUpgradeableProxy(address(simulatedImpl), proxyAdminOwner, initData);
+
+    EarnVaultUpgradeable simulatedVault = EarnVaultUpgradeable(payable(address(simulatedProxy)));
+
+    console.log('Simulated proxy deployed at:', address(simulatedProxy));
+    console.log('Simulation successful!');
+
+    // Display initial state
+    console.log('\n=== Simulated Initial State ===');
+    console.log('Total Principal:', simulatedVault.totalPrincipal());
+    console.log('Global Index:', simulatedVault.globalIndex());
+    console.log('Claim Reserve:', simulatedVault.claimReserve());
+    console.log('Owner:', simulatedVault.owner());
+  }
 }

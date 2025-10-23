@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.26;
 
+import {ISUSDSCVaultEventsAndErrors} from '../../interfaces/vaults/4626/ISUSDSCVaultEventsAndErrors.sol';
 import {AccessControl} from '@openzeppelin/contracts/access/AccessControl.sol';
 import {ERC20} from '@openzeppelin/contracts/token/ERC20/ERC20.sol';
 import {IERC20} from '@openzeppelin/contracts/token/ERC20/IERC20.sol';
-import {SafeTransferLib} from 'solady/utils/SafeTransferLib.sol';
 import {ERC4626} from '@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol';
 import {Pausable} from '@openzeppelin/contracts/utils/Pausable.sol';
 import {ReentrancyGuard} from '@openzeppelin/contracts/utils/ReentrancyGuard.sol';
-import {ISUSDSCVaultEventsAndErrors} from '../../interfaces/vaults/4626/ISUSDSCVaultEventsAndErrors.sol';
+import {SafeTransferLib} from 'solady/utils/SafeTransferLib.sol';
 
 // Note: non-upgradeable version
 // Note: We could have some admin actions
@@ -65,9 +65,9 @@ contract SUSDSCVault is ERC20, ERC4626, AccessControl, Pausable, ReentrancyGuard
   }
 
   // Recover non-asset ERC20 tokens
-  // This is used to recover tokens that are sent to the vault by mistake  
+  // This is used to recover tokens that are sent to the vault by mistake
   function recoverNonAssetERC20(address token, address to, uint256 amount) external onlyRole(DEFAULT_ADMIN_ROLE) {
-    if(token == asset()) revert TokenCannotBeUSDSC();
+    if (token == asset()) revert TokenCannotBeUSDSC();
     if (token == address(0)) revert TokenCannotBeZeroAddress();
     if (to == address(0)) revert ToCannotBeZeroAddress();
     if (amount == 0) revert AmountCannotBeZero();
@@ -76,14 +76,14 @@ contract SUSDSCVault is ERC20, ERC4626, AccessControl, Pausable, ReentrancyGuard
 
   /**
    * @dev Override to provide enhanced protection against inflation attacks.
-   * 
+   *
    * With USDSC having 6 decimals, setting _decimalsOffset to 6 creates 10^6 = 1,000,000 virtual shares.
    * This makes inflation attacks prohibitively expensive as an attacker would need to donate
    * approximately 1 million USDSC to manipulate a 1 USDSC deposit, making the attack economically infeasible.
-   * 
+   *
    * The offset increases the vault decimals to 12 (6 + 6) but doesn't affect user experience
    * as all conversions are handled internally by the ERC4626 implementation.
-   * 
+   *
    * OR
    * we could keep this to zero and put Initial seed deposit upon deployment (say 1000 USDSC)
    */

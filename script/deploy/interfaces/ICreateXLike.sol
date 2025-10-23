@@ -8,52 +8,52 @@ pragma solidity >=0.8.20 <0.9.0;
  * @custom:coauthor Matt Solomon (https://web.archive.org/web/20230921103335/https://mattsolomon.dev/)
  */
 interface ICreateXLike {
-    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-    /*                            TYPES                           */
-    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                            TYPES                           */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-    struct Values {
-        uint256 constructorAmount;
-        uint256 initCallAmount;
-    }
+  struct Values {
+    uint256 constructorAmount;
+    uint256 initCallAmount;
+  }
 
-    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-    /*                           CREATE3                          */
-    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                           CREATE3                          */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-    function deployCreate3(bytes32 salt, bytes memory initCode) external payable returns (address newContract);
+  function deployCreate3(bytes32 salt, bytes memory initCode) external payable returns (address newContract);
 
-    function deployCreate3(bytes memory initCode) external payable returns (address newContract);
+  function deployCreate3(bytes memory initCode) external payable returns (address newContract);
 
-    function deployCreate3AndInit(
-        bytes32 salt,
-        bytes memory initCode,
-        bytes memory data,
-        Values memory values,
-        address refundAddress
-    ) external payable returns (address newContract);
+  function deployCreate3AndInit(
+    bytes32 salt,
+    bytes memory initCode,
+    bytes memory data,
+    Values memory values,
+    address refundAddress
+  ) external payable returns (address newContract);
 
-    function deployCreate3AndInit(
-        bytes32 salt,
-        bytes memory initCode,
-        bytes memory data,
-        Values memory values
-    ) external payable returns (address newContract);
+  function deployCreate3AndInit(
+    bytes32 salt,
+    bytes memory initCode,
+    bytes memory data,
+    Values memory values
+  ) external payable returns (address newContract);
 
-    function deployCreate3AndInit(
-        bytes memory initCode,
-        bytes memory data,
-        Values memory values,
-        address refundAddress
-    ) external payable returns (address newContract);
+  function deployCreate3AndInit(
+    bytes memory initCode,
+    bytes memory data,
+    Values memory values,
+    address refundAddress
+  ) external payable returns (address newContract);
 
-    function deployCreate3AndInit(
-        bytes memory initCode,
-        bytes memory data,
-        Values memory values
-    ) external payable returns (address newContract);
+  function deployCreate3AndInit(
+    bytes memory initCode,
+    bytes memory data,
+    Values memory values
+  ) external payable returns (address newContract);
 
-    function computeCreate3Address(bytes32 salt, address deployer) external pure returns (address computedAddress);
+  function computeCreate3Address(bytes32 salt, address deployer) external pure returns (address computedAddress);
 
-    function computeCreate3Address(bytes32 salt) external view returns (address computedAddress);
+  function computeCreate3Address(bytes32 salt) external view returns (address computedAddress);
 }

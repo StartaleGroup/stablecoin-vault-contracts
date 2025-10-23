@@ -28,7 +28,7 @@ contract Greeter is IGreeter {
     _;
   }
 
-  function _onlyOwner() internal view{
+  function _onlyOwner() internal view {
     if (msg.sender != OWNER) {
       revert Greeter_OnlyOwner();
     }
