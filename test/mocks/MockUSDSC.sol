@@ -1,12 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.26;
 
-import {Test} from "forge-std/Test.sol";
-
 contract MockUSDSC {
-    string public constant name = "Mock USDSC";
-    string public constant symbol = "USDSC";
-    uint8  public constant decimals = 6;
+    string public constant NAME = "Mock USDSC";
+    string public constant SYMBOL = "USDSC";
+    uint8  public constant DECIMALS = 6;
 
     mapping(address => uint256) public balanceOf;
     mapping(address => mapping(address => uint256)) public allowance;

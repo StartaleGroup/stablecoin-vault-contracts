@@ -3,7 +3,6 @@ pragma solidity ^0.8.26;
 
 import {Test} from 'forge-std/Test.sol';
 import {USDSC} from '../../src/coin/mock/USDSC.sol';
-import {MockMToken} from '../mocks/MockMToken.sol';
 import {ProxyAdmin} from '@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol';
 import {TransparentUpgradeableProxy} from '@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol';
 import {MockSwapFacility} from 'm-extensions-test/utils/Mocks.sol';
@@ -98,14 +97,14 @@ contract UnitUSDSC is Test {
     // totalsupply of usdsc should be 5000 ether now
      assertEq(usdsc.balanceOf(charlie), 5000 ether);
 
-    // Mock the yield accrual 
+    // Mock the yield accrual
     mToken.setCurrentIndex(1056091682480);
     assertEq(mToken.currentIndex(), 1056091682480);
 
     mToken.setEarnerRate(425);
     assertEq(mToken.earnerRate(), 425);
 
-    // make our usdsc contract earning 
+    // make our usdsc contract earning
     // (Normally we'd call enableEarning() on USDSC which will call startEarning on M if it's approved by TTG )
     mToken.setIsEarning(address(usdsc), true);
     assertEq(mToken.isEarning(address(usdsc)), true);
@@ -120,18 +119,18 @@ contract UnitUSDSC is Test {
     // Note: I wouldn't need to do this and just update index and add set earning if MockM was more like real M.
     mToken.setBalanceOf(address(usdsc), 5000 ether + 1 ether);
     assertEq(mToken.balanceOf(address(usdsc)), 5000 ether + 1 ether);
-    
-    // check yield recipient M and USDSC balance 
+
+    // check yield recipient M and USDSC balance
     assertEq(usdsc.balanceOf(yieldRecipient), 0);
 
     // Call claimYield()
-    // Note: anyone can call and that would go to set yieldRecipient 
+    // Note: anyone can call and that would go to set yieldRecipient
     usdsc.claimYield();
     // it sends balance - totalsupply worth of tokens.
 
     console2.log('usdsc.balanceOf(yieldRecipient)', usdsc.balanceOf(yieldRecipient));
 
-    // check yield recipient M and USDSC balance 
+    // check yield recipient M and USDSC balance
     assertEq(usdsc.balanceOf(yieldRecipient), 1 ether);
   }
 }

@@ -5,10 +5,11 @@ pragma solidity ^0.8.26;
 /// @notice Helper contract to simulate selfdestruct sending ETH to vault
 contract SelfDestructor {
     constructor() payable {}
-    
+
     function selfDestruct(address payable target) external {
-        // Use assembly to avoid deprecation warning
+
         assembly {
+            // solhint-disable-next-line no-inline-assembly
             selfdestruct(target)
         }
     }

@@ -5,13 +5,13 @@ import "./MockUSDSC.sol";
 import "lib/openzeppelin-contracts/contracts/interfaces/IERC4626.sol";
 
 contract MockERC4626Vault is IERC4626 {
-    MockUSDSC public immutable usdsc;
+    MockUSDSC public immutable USDSC;
 
-    constructor(MockUSDSC _usdsc) { usdsc = _usdsc; }
+    constructor(MockUSDSC _usdsc) { USDSC = _usdsc; }
 
     // We implement only what's needed by the redistributor: totalAssets()
     function totalAssets() public view returns (uint256) {
-        return usdsc.balanceOf(address(this));
+        return USDSC.balanceOf(address(this));
     }
 
     // ---- ERC20 Metadata functions ----
@@ -20,7 +20,7 @@ contract MockERC4626Vault is IERC4626 {
     function decimals() external pure returns (uint8) { return 6; }
 
     // ---- Unused IERC4626 funcs (stubs to satisfy interface) ----
-    function asset() external view returns (address) { return address(usdsc); }
+    function asset() external view returns (address) { return address(USDSC); }
     function totalSupply() external pure returns (uint256) { return 0; }
     function balanceOf(address) external pure returns (uint256) { return 0; }
     function convertToShares(uint256) external pure returns (uint256) { return 0; }

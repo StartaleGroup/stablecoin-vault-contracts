@@ -13,11 +13,17 @@ contract MockWrappedMToken is MockERC20 {
   }
 
   function wrap(address recipient_, uint256 amount_) external returns (uint240 wrapped_) {
-    uint256 startingBalance_ = IERC20(mToken).balanceOf(address(this));
-    bool success = IERC20(mToken).transferFrom(msg.sender, address(this), amount_);
-    require(success, "Transfer failed");  
-    wrapped_ = uint240(IERC20(mToken).balanceOf(address(this)) - startingBalance_);
-    _mint(recipient_, wrapped_);
+      uint256 startingBalance_ = IERC20(mToken).balanceOf(address(this));
+      bool success = IERC20(mToken).transferFrom(msg.sender, address(this), amount_);
+      require(success, "Transfer failed");
+
+      uint256 balanceDiff = IERC20(mToken).balanceOf(address(this)) - startingBalance_;
+      require(balanceDiff <= type(uint240).max, "Amount exceeds uint240 max");
+      // casting to 'uint240' is safe because we check balanceDiff <= type(uint240).max above
+      // forge-lint: disable-next-line(unsafe-typecast)
+      wrapped_ = uint240(balanceDiff);
+
+      _mint(recipient_, wrapped_);
   }
 
   function unwrap(address recipient_, uint256 amount_) external returns (uint240 unwrapped_) {
@@ -25,6 +31,11 @@ contract MockWrappedMToken is MockERC20 {
     uint256 startingBalance_ = IERC20(mToken).balanceOf(address(this));
     bool success = IERC20(mToken).transfer(recipient_, amount_);
     require(success, "Transfer failed");
-    return uint240(startingBalance_ - IERC20(mToken).balanceOf(address(this)));
+
+    uint256 balanceDiff = startingBalance_ - IERC20(mToken).balanceOf(address(this));
+    require(balanceDiff <= type(uint240).max, "Amount exceeds uint240 max");
+    // casting to 'uint240' is safe because we check balanceDiff <= type(uint240).max above
+    // forge-lint: disable-next-line(unsafe-typecast)
+    return uint240(balanceDiff);
   }
 }

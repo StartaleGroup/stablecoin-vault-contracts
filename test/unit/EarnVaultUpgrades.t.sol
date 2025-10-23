@@ -23,7 +23,7 @@ contract EarnVaultUpgradesTest is Test {
     EarnVaultUpgradeableHarness internal v1Implementation;
     EarnVaultV2 internal v2Implementation;
     EarnVaultV3 internal v3Implementation;
-    
+
     address public admin = makeAddr('admin'); // ProxyAdmin owner (for upgrades)
     address public owner = makeAddr("owner"); // vault owner
     address public yieldRedistributor = makeAddr("yieldRedistributor");
@@ -35,7 +35,7 @@ contract EarnVaultUpgradesTest is Test {
 
     uint256 public constant RAY = 1e27;
     uint256 public constant INITIAL_SUPPLY = 1_000_000e6;
-    
+
     // =========================
     // Events
     // =========================
@@ -106,43 +106,43 @@ contract EarnVaultUpgradesTest is Test {
         // Set up V1 state
         vm.prank(alice);
         vault.deposit(1000e6);
-        
+
         vm.prank(yieldRedistributor);
         bool success = usdsc.transfer(address(vault), 100e6);
         require(success, "Transfer failed");
         vm.prank(yieldRedistributor);
         vault.onYield(100e6);
-        
+
         // Capture V1 state
         uint256 totalPrincipalBefore = vault.totalPrincipal();
         uint256 globalIndexBefore = vault.globalIndex();
         uint256 alicePrincipalBefore = vault.principal(alice);
         uint256 aliceClaimableBefore = vault.claimable(alice);
-        
+
         // Upgrade to V2 and initialize
         vm.prank(admin);
         proxyAdmin.upgradeAndCall(
-            ITransparentUpgradeableProxy(address(proxy)), 
-            address(v2Implementation), 
+            ITransparentUpgradeableProxy(address(proxy)),
+            address(v2Implementation),
             abi.encodeWithSelector(EarnVaultV2.initializeV2.selector)
         );
-        
+
         EarnVaultV2 vaultV2 = EarnVaultV2(payable(address(proxy)));
-        
+
         // Verify implementation updated
         assertEq(_getImplementation(), address(v2Implementation));
         assertEq(vaultV2.getVersion(), "EarnVaultV2");
-        
+
         // Verify V1 state preserved
         assertEq(vaultV2.totalPrincipal(), totalPrincipalBefore);
         assertEq(vaultV2.globalIndex(), globalIndexBefore);
         assertEq(vaultV2.principal(alice), alicePrincipalBefore);
         assertEq(vaultV2.claimable(alice), aliceClaimableBefore);
-        
+
         // Verify V2 initialization
         assertEq(vaultV2.getEmergencyYieldMultiplier(), 10000);
         assertFalse(vaultV2.isEmergencyModeActive());
-        
+
         // Test V2 functionality
         vm.prank(owner);
         vaultV2.setEmergencyYieldMultiplier(15000);
@@ -153,23 +153,23 @@ contract EarnVaultUpgradesTest is Test {
         // Set up complex V1 state
         vm.prank(alice);
         vault.deposit(1000e6);
-        
+
         vm.prank(bob);
         vault.deposit(2000e6);
-        
+
         // Multiple yield distributions
         vm.prank(yieldRedistributor);
         bool success = usdsc.transfer(address(vault), 100e6);
         require(success, "Transfer failed");
         vm.prank(yieldRedistributor);
         vault.onYield(100e6);
-        
+
         vm.prank(yieldRedistributor);
         success = usdsc.transfer(address(vault), 200e6);
         require(success, "Transfer failed");
         vm.prank(yieldRedistributor);
         vault.onYield(200e6);
-        
+
         // Capture all state
         uint256 totalPrincipalBefore = vault.totalPrincipal();
         uint256 globalIndexBefore = vault.globalIndex();
@@ -178,17 +178,17 @@ contract EarnVaultUpgradesTest is Test {
         uint256 aliceClaimableBefore = vault.claimable(alice);
         uint256 bobPrincipalBefore = vault.principal(bob);
         uint256 bobClaimableBefore = vault.claimable(bob);
-        
+
         // Upgrade to V2 and initialize
         vm.prank(admin);
         proxyAdmin.upgradeAndCall(
-            ITransparentUpgradeableProxy(address(proxy)), 
-            address(v2Implementation), 
+            ITransparentUpgradeableProxy(address(proxy)),
+            address(v2Implementation),
             abi.encodeWithSelector(EarnVaultV2.initializeV2.selector)
         );
-        
+
         EarnVaultV2 vaultV2 = EarnVaultV2(payable(address(proxy)));
-        
+
         // Verify all state preserved
         assertEq(vaultV2.totalPrincipal(), totalPrincipalBefore);
         assertEq(vaultV2.globalIndex(), globalIndexBefore);
@@ -197,7 +197,7 @@ contract EarnVaultUpgradesTest is Test {
         assertEq(vaultV2.claimable(alice), aliceClaimableBefore);
         assertEq(vaultV2.principal(bob), bobPrincipalBefore);
         assertEq(vaultV2.claimable(bob), bobClaimableBefore);
-        
+
         // Test functionality still works
         vm.prank(alice);
         vaultV2.withdraw(500e6);
@@ -212,59 +212,57 @@ contract EarnVaultUpgradesTest is Test {
         // Upgrade to V2 and initialize
         vm.prank(admin);
         proxyAdmin.upgradeAndCall(
-            ITransparentUpgradeableProxy(address(proxy)), 
-            address(v2Implementation), 
+            ITransparentUpgradeableProxy(address(proxy)),
+            address(v2Implementation),
             abi.encodeWithSelector(EarnVaultV2.initializeV2.selector)
         );
-        
+
         EarnVaultV2 vaultV2 = EarnVaultV2(payable(address(proxy)));
-        
+
         // Set up V2 state
         vm.prank(alice);
         vaultV2.deposit(1000e6);
-        
+
         vm.prank(yieldRedistributor);
         bool success = usdsc.transfer(address(vaultV2), 100e6);
         require(success, "Transfer failed");
         vm.prank(yieldRedistributor);
         vaultV2.onYield(100e6);
-        
+
         // Set V2 features
         vm.prank(owner);
         vaultV2.setEmergencyYieldMultiplier(12000);
         vm.prank(owner);
         vaultV2.setEmergencyMode(true);
-        
+
         // Capture V2 state
         uint256 totalPrincipalBefore = vaultV2.totalPrincipal();
         uint256 globalIndexBefore = vaultV2.globalIndex();
         uint256 alicePrincipalBefore = vaultV2.principal(alice);
         uint256 aliceClaimableBefore = vaultV2.claimable(alice);
-        uint256 emergencyMultiplierBefore = vaultV2.getEmergencyYieldMultiplier();
-        bool emergencyModeBefore = vaultV2.isEmergencyModeActive();
-        
+
         // Upgrade to V3 and initialize
         vm.prank(admin);
         proxyAdmin.upgradeAndCall(
-            ITransparentUpgradeableProxy(address(proxy)), 
-            address(v3Implementation), 
+            ITransparentUpgradeableProxy(address(proxy)),
+            address(v3Implementation),
             abi.encodeWithSelector(EarnVaultV3.initializeV3.selector)
         );
-        
+
         EarnVaultV3 vaultV3 = EarnVaultV3(payable(address(proxy)));
-        
+
         // Verify implementation updated
         assertEq(_getImplementation(), address(v3Implementation));
         assertEq(vaultV3.getVersion(), "EarnVaultV3");
-        
+
         // Verify V2 state preserved
         assertEq(vaultV3.totalPrincipal(), totalPrincipalBefore);
         assertEq(vaultV3.globalIndex(), globalIndexBefore);
         assertEq(vaultV3.principal(alice), alicePrincipalBefore);
         assertEq(vaultV3.claimable(alice), aliceClaimableBefore);
-        
+
         // Note: V3 doesn't inherit V2 emergency features, so we skip those assertions
-        
+
         // Verify V3 initialization
         assertEq(vaultV3.getPerformanceFeeRate(), 200); // 2%
         assertEq(vaultV3.getManagementFeeRate(), 50);   // 0.5%
@@ -278,41 +276,41 @@ contract EarnVaultUpgradesTest is Test {
         // Upgrade to V2 and initialize
         vm.prank(admin);
         proxyAdmin.upgradeAndCall(
-            ITransparentUpgradeableProxy(address(proxy)), 
-            address(v2Implementation), 
+            ITransparentUpgradeableProxy(address(proxy)),
+            address(v2Implementation),
             abi.encodeWithSelector(EarnVaultV2.initializeV2.selector)
         );
-        
+
         EarnVaultV2 vaultV2 = EarnVaultV2(payable(address(proxy)));
-        
+
         // Set up complex V2 state
         vm.prank(alice);
         vaultV2.deposit(1000e6);
-        
+
         vm.prank(bob);
         vaultV2.deposit(2000e6);
-        
+
         vm.prank(charlie);
         vaultV2.deposit(1500e6);
-        
+
         // Multiple yield distributions
         vm.prank(yieldRedistributor);
         bool success = usdsc.transfer(address(vaultV2), 200e6);
         require(success, "Transfer failed");
         vm.prank(yieldRedistributor);
         vaultV2.onYield(200e6);
-        
+
         vm.prank(yieldRedistributor);
         success = usdsc.transfer(address(vaultV2), 300e6);
         vm.prank(yieldRedistributor);
         vaultV2.onYield(300e6);
-        
+
         // Set V2 features
         vm.prank(owner);
         vaultV2.setEmergencyYieldMultiplier(15000);
         vm.prank(owner);
         vaultV2.setEmergencyMode(false);
-        
+
         // Capture all state
         uint256 totalPrincipalBefore = vaultV2.totalPrincipal();
         uint256 globalIndexBefore = vaultV2.globalIndex();
@@ -323,17 +321,17 @@ contract EarnVaultUpgradesTest is Test {
         uint256 bobClaimableBefore = vaultV2.claimable(bob);
         uint256 charliePrincipalBefore = vaultV2.principal(charlie);
         uint256 charlieClaimableBefore = vaultV2.claimable(charlie);
-        
+
         // Upgrade to V3 and initialize
         vm.prank(admin);
         proxyAdmin.upgradeAndCall(
-            ITransparentUpgradeableProxy(address(proxy)), 
-            address(v3Implementation), 
+            ITransparentUpgradeableProxy(address(proxy)),
+            address(v3Implementation),
             abi.encodeWithSelector(EarnVaultV3.initializeV3.selector)
         );
-        
+
         EarnVaultV3 vaultV3 = EarnVaultV3(payable(address(proxy)));
-        
+
         // Verify all state preserved
         assertEq(vaultV3.totalPrincipal(), totalPrincipalBefore);
         assertEq(vaultV3.globalIndex(), globalIndexBefore);
@@ -344,12 +342,12 @@ contract EarnVaultUpgradesTest is Test {
         assertEq(vaultV3.claimable(bob), bobClaimableBefore);
         assertEq(vaultV3.principal(charlie), charliePrincipalBefore);
         assertEq(vaultV3.claimable(charlie), charlieClaimableBefore);
-        
+
         // Test V3 functionality
         vm.prank(owner);
         vaultV3.setPerformanceFeeRate(300); // 3%
         assertEq(vaultV3.getPerformanceFeeRate(), 300);
-        
+
         vm.prank(owner);
         vaultV3.setAutoCompoundEnabled(true);
         assertTrue(vaultV3.isAutoCompoundEnabled());
@@ -363,46 +361,46 @@ contract EarnVaultUpgradesTest is Test {
         // Set up V1 state
         vm.prank(alice);
         vault.deposit(1000e6);
-        
+
         vm.prank(yieldRedistributor);
         bool success = usdsc.transfer(address(vault), 100e6);
         require(success, "Transfer failed");
         vm.prank(yieldRedistributor);
         vault.onYield(100e6);
-        
+
         uint256 v1TotalPrincipal = vault.totalPrincipal();
         uint256 v1GlobalIndex = vault.globalIndex();
         uint256 v1AliceClaimable = vault.claimable(alice);
-        
+
         // V1 -> V2 Upgrade
         vm.prank(admin);
         proxyAdmin.upgradeAndCall(ITransparentUpgradeableProxy(address(proxy)), address(v2Implementation), "");
-        
+
         EarnVaultV2 vaultV2 = EarnVaultV2(payable(address(proxy)));
         vaultV2.initializeV2();
-        
+
         // Set V2 features
         vm.prank(owner);
         vaultV2.setEmergencyYieldMultiplier(12000);
-        
+
         // V2 -> V3 Upgrade
         vm.prank(admin);
         proxyAdmin.upgradeAndCall(ITransparentUpgradeableProxy(address(proxy)), address(v3Implementation), "");
-        
+
         EarnVaultV3 vaultV3 = EarnVaultV3(payable(address(proxy)));
         vaultV3.initializeV3();
-        
+
         // Verify final state
         assertEq(_getImplementation(), address(v3Implementation));
         assertEq(vaultV3.getVersion(), "EarnVaultV3");
-        
+
         // Verify V1 state preserved through chain
         assertEq(vaultV3.totalPrincipal(), v1TotalPrincipal);
         assertEq(vaultV3.globalIndex(), v1GlobalIndex);
         assertEq(vaultV3.claimable(alice), v1AliceClaimable);
-        
+
         // Note: V3 doesn't inherit V2 emergency features
-        
+
         // Verify V3 features initialized
         assertEq(vaultV3.getPerformanceFeeRate(), 200);
         assertEq(vaultV3.getManagementFeeRate(), 50);
@@ -417,34 +415,34 @@ contract EarnVaultUpgradesTest is Test {
         // Upgrade to V3 and initialize
         vm.prank(admin);
         proxyAdmin.upgradeAndCall(
-            ITransparentUpgradeableProxy(address(proxy)), 
-            address(v3Implementation), 
+            ITransparentUpgradeableProxy(address(proxy)),
+            address(v3Implementation),
             abi.encodeWithSelector(EarnVaultV3.initializeV3.selector)
         );
-        
+
         EarnVaultV3 vaultV3 = EarnVaultV3(payable(address(proxy)));
-        
+
         // Set up deposits
         vm.prank(alice);
         vaultV3.deposit(1000e6);
-        
+
         vm.prank(bob);
         vaultV3.deposit(2000e6);
-        
+
         // Distribute yield (should collect fees)
         vm.prank(yieldRedistributor);
         bool success = usdsc.transfer(address(vaultV3), 1000e6);
         require(success, "Transfer failed");
 
         uint256 treasuryBalanceBefore = usdsc.balanceOf(treasury);
-        
+
         vm.prank(yieldRedistributor);
         vaultV3.onYield(1000e6);
-        
+
         // Verify fees collected
         uint256 expectedFee = (1000e6 * 200) / 10000; // 2% of 1000e6 = 20e6
         assertEq(vaultV3.getTotalFeesCollected(), expectedFee);
-        
+
         // Verify treasury received fees
         assertEq(usdsc.balanceOf(treasury), treasuryBalanceBefore + expectedFee);
     }
@@ -453,36 +451,36 @@ contract EarnVaultUpgradesTest is Test {
         // Upgrade to V3 and initialize
         vm.prank(admin);
         proxyAdmin.upgradeAndCall(
-            ITransparentUpgradeableProxy(address(proxy)), 
-            address(v3Implementation), 
+            ITransparentUpgradeableProxy(address(proxy)),
+            address(v3Implementation),
             abi.encodeWithSelector(EarnVaultV3.initializeV3.selector)
         );
-        
+
         EarnVaultV3 vaultV3 = EarnVaultV3(payable(address(proxy)));
-        
+
         // Enable auto-compound
         vm.prank(owner);
         vaultV3.setAutoCompoundEnabled(true);
         vm.prank(owner);
         vaultV3.setCompoundThreshold(50e6);
-        
+
         // Set up deposit and yield
         vm.prank(alice);
         vaultV3.deposit(1000e6);
-        
+
         vm.prank(yieldRedistributor);
         bool success = usdsc.transfer(address(vaultV3), 100e6);
         require(success, "Transfer failed");
         vm.prank(yieldRedistributor);
         vaultV3.onYield(100e6);
-        
+
         uint256 alicePrincipalBefore = vaultV3.principal(alice);
         uint256 aliceClaimableBefore = vaultV3.claimable(alice);
-        
+
         // Execute auto-compound
         vm.prank(alice);
         vaultV3.executeAutoCompound(alice);
-        
+
         // Verify auto-compound worked
         assertEq(vaultV3.principal(alice), alicePrincipalBefore + aliceClaimableBefore);
         assertEq(vaultV3.accrued(alice), 0);
@@ -494,36 +492,36 @@ contract EarnVaultUpgradesTest is Test {
         // Upgrade to V3 and initialize
         vm.prank(admin);
         proxyAdmin.upgradeAndCall(
-            ITransparentUpgradeableProxy(address(proxy)), 
-            address(v3Implementation), 
+            ITransparentUpgradeableProxy(address(proxy)),
+            address(v3Implementation),
             abi.encodeWithSelector(EarnVaultV3.initializeV3.selector)
         );
-        
+
         EarnVaultV3 vaultV3 = EarnVaultV3(payable(address(proxy)));
-        
+
         // Enable auto-compound
         vm.prank(owner);
         vaultV3.setAutoCompoundEnabled(true);
         vm.prank(owner);
         vaultV3.setCompoundThreshold(50e6);
-        
+
         // Set up deposit and yield
         vm.prank(alice);
         vaultV3.deposit(1000e6);
-        
+
         vm.prank(yieldRedistributor);
         bool success = usdsc.transfer(address(vaultV3), 100e6);
         require(success, "Transfer failed");
         vm.prank(yieldRedistributor);
         vaultV3.onYield(100e6);
-        
+
         uint256 alicePrincipalBefore = vaultV3.principal(alice);
         uint256 aliceClaimableBefore = vaultV3.claimable(alice);
-        
+
         // Deposit more (should trigger auto-compound)
         vm.prank(alice);
         vaultV3.deposit(100e6);
-        
+
         // Verify auto-compound was triggered
         assertEq(vaultV3.principal(alice), alicePrincipalBefore + aliceClaimableBefore + 100e6);
         assertEq(vaultV3.accrued(alice), 0);
@@ -538,16 +536,16 @@ contract EarnVaultUpgradesTest is Test {
         // Set up initial state
         vm.prank(alice);
         vault.deposit(1000e6);
-        
+
         vm.prank(bob);
         vault.deposit(2000e6);
-        
+
         vm.prank(yieldRedistributor);
         bool success = usdsc.transfer(address(vault), 300e6);
         require(success, "Transfer failed");
         vm.prank(yieldRedistributor);
         vault.onYield(300e6);
-        
+
         // Capture V1 state
         uint256 v1TotalPrincipal = vault.totalPrincipal();
         uint256 v1GlobalIndex = vault.globalIndex();
@@ -556,14 +554,14 @@ contract EarnVaultUpgradesTest is Test {
         uint256 v1AliceClaimable = vault.claimable(alice);
         uint256 v1BobPrincipal = vault.principal(bob);
         uint256 v1BobClaimable = vault.claimable(bob);
-        
+
         // V1 -> V2
         vm.prank(admin);
         proxyAdmin.upgradeAndCall(ITransparentUpgradeableProxy(address(proxy)), address(v2Implementation), "");
-        
+
         EarnVaultV2 vaultV2 = EarnVaultV2(payable(address(proxy)));
         vaultV2.initializeV2();
-        
+
         // Verify V1 state preserved in V2
         assertEq(vaultV2.totalPrincipal(), v1TotalPrincipal);
         assertEq(vaultV2.globalIndex(), v1GlobalIndex);
@@ -572,14 +570,14 @@ contract EarnVaultUpgradesTest is Test {
         assertEq(vaultV2.claimable(alice), v1AliceClaimable);
         assertEq(vaultV2.principal(bob), v1BobPrincipal);
         assertEq(vaultV2.claimable(bob), v1BobClaimable);
-        
+
         // V2 -> V3
         vm.prank(admin);
         proxyAdmin.upgradeAndCall(ITransparentUpgradeableProxy(address(proxy)), address(v3Implementation), "");
-        
+
         EarnVaultV3 vaultV3 = EarnVaultV3(payable(address(proxy)));
         vaultV3.initializeV3();
-        
+
         // Verify V1 state still preserved in V3
         assertEq(vaultV3.totalPrincipal(), v1TotalPrincipal);
         assertEq(vaultV3.globalIndex(), v1GlobalIndex);
@@ -597,30 +595,30 @@ contract EarnVaultUpgradesTest is Test {
     function test_ImplementationUpdatesCorrectly() public {
         // Verify V1 implementation
         assertEq(_getImplementation(), address(v1Implementation));
-        
+
         // V1 -> V2
         vm.prank(admin);
         proxyAdmin.upgradeAndCall(
-            ITransparentUpgradeableProxy(address(proxy)), 
-            address(v2Implementation), 
+            ITransparentUpgradeableProxy(address(proxy)),
+            address(v2Implementation),
             abi.encodeWithSelector(EarnVaultV2.initializeV2.selector)
         );
-        
+
         EarnVaultV2 vaultV2 = EarnVaultV2(payable(address(proxy)));
-        
+
         assertEq(_getImplementation(), address(v2Implementation));
         assertEq(vaultV2.getVersion(), "EarnVaultV2");
-        
+
         // V2 -> V3
         vm.prank(admin);
         proxyAdmin.upgradeAndCall(
-            ITransparentUpgradeableProxy(address(proxy)), 
-            address(v3Implementation), 
+            ITransparentUpgradeableProxy(address(proxy)),
+            address(v3Implementation),
             abi.encodeWithSelector(EarnVaultV3.initializeV3.selector)
         );
-        
+
         EarnVaultV3 vaultV3 = EarnVaultV3(payable(address(proxy)));
-        
+
         assertEq(_getImplementation(), address(v3Implementation));
         assertEq(vaultV3.getVersion(), "EarnVaultV3");
     }
@@ -629,13 +627,13 @@ contract EarnVaultUpgradesTest is Test {
         // Upgrade to V2 and initialize
         vm.prank(admin);
         proxyAdmin.upgradeAndCall(
-            ITransparentUpgradeableProxy(address(proxy)), 
-            address(v2Implementation), 
+            ITransparentUpgradeableProxy(address(proxy)),
+            address(v2Implementation),
             abi.encodeWithSelector(EarnVaultV2.initializeV2.selector)
         );
-        
+
         EarnVaultV2 vaultV2 = EarnVaultV2(payable(address(proxy)));
-        
+
         // Try to re-initialize V2 - should fail with OpenZeppelin's InvalidInitialization
         vm.expectRevert();
         vaultV2.initializeV2();
@@ -645,13 +643,13 @@ contract EarnVaultUpgradesTest is Test {
         // Upgrade to V3 and initialize
         vm.prank(admin);
         proxyAdmin.upgradeAndCall(
-            ITransparentUpgradeableProxy(address(proxy)), 
-            address(v3Implementation), 
+            ITransparentUpgradeableProxy(address(proxy)),
+            address(v3Implementation),
             abi.encodeWithSelector(EarnVaultV3.initializeV3.selector)
         );
-        
+
         EarnVaultV3 vaultV3 = EarnVaultV3(payable(address(proxy)));
-        
+
         // Try to re-initialize V3 - should fail with OpenZeppelin's InvalidInitialization
         vm.expectRevert();
         vaultV3.initializeV3();
@@ -672,13 +670,13 @@ contract EarnVaultUpgradesTest is Test {
         // Upgrade to V2 and initialize
         vm.prank(admin);
         proxyAdmin.upgradeAndCall(
-            ITransparentUpgradeableProxy(address(proxy)), 
-            address(v2Implementation), 
+            ITransparentUpgradeableProxy(address(proxy)),
+            address(v2Implementation),
             abi.encodeWithSelector(EarnVaultV2.initializeV2.selector)
         );
-        
+
         EarnVaultV2 vaultV2 = EarnVaultV2(payable(address(proxy)));
-        
+
         // Try to send ETH to V2 vault - should fail
         vm.expectRevert(abi.encodeWithSelector(IEarnVaultEventsAndErrors.EthNotAccepted.selector));
         (bool success,) = address(vaultV2).call{value: 1 ether}("");
@@ -689,13 +687,13 @@ contract EarnVaultUpgradesTest is Test {
         // Upgrade to V3 and initialize
         vm.prank(admin);
         proxyAdmin.upgradeAndCall(
-            ITransparentUpgradeableProxy(address(proxy)), 
-            address(v3Implementation), 
+            ITransparentUpgradeableProxy(address(proxy)),
+            address(v3Implementation),
             abi.encodeWithSelector(EarnVaultV3.initializeV3.selector)
         );
-        
+
         EarnVaultV3 vaultV3 = EarnVaultV3(payable(address(proxy)));
-        
+
         // Try to send ETH to V3 vault - should fail
         vm.expectRevert(abi.encodeWithSelector(IEarnVaultEventsAndErrors.EthNotAccepted.selector));
         (bool success,) = address(vaultV3).call{value: 1 ether}("");
@@ -706,42 +704,42 @@ contract EarnVaultUpgradesTest is Test {
         // Set up some state in V1
         vm.prank(alice);
         vault.deposit(1000e6);
-        
+
         // Test ETH rejection in V1
         vm.expectRevert(abi.encodeWithSelector(IEarnVaultEventsAndErrors.EthNotAccepted.selector));
         (bool success,) = address(vault).call{value: 1 ether}("");
         success;
-        
+
         // Upgrade to V2
         vm.prank(admin);
         proxyAdmin.upgradeAndCall(
-            ITransparentUpgradeableProxy(address(proxy)), 
-            address(v2Implementation), 
+            ITransparentUpgradeableProxy(address(proxy)),
+            address(v2Implementation),
             abi.encodeWithSelector(EarnVaultV2.initializeV2.selector)
         );
-        
+
         EarnVaultV2 vaultV2 = EarnVaultV2(payable(address(proxy)));
-        
+
         // Test ETH rejection in V2
         vm.expectRevert(abi.encodeWithSelector(IEarnVaultEventsAndErrors.EthNotAccepted.selector));
         (bool success2,) = address(vaultV2).call{value: 1 ether}("");
         success2;
-        
+
         // Upgrade to V3
         vm.prank(admin);
         proxyAdmin.upgradeAndCall(
-            ITransparentUpgradeableProxy(address(proxy)), 
-            address(v3Implementation), 
+            ITransparentUpgradeableProxy(address(proxy)),
+            address(v3Implementation),
             abi.encodeWithSelector(EarnVaultV3.initializeV3.selector)
         );
-        
+
         EarnVaultV3 vaultV3 = EarnVaultV3(payable(address(proxy)));
-        
+
         // Test ETH rejection in V3
         vm.expectRevert(abi.encodeWithSelector(IEarnVaultEventsAndErrors.EthNotAccepted.selector));
         (bool success3,) = address(vaultV3).call{value: 1 ether}("");
         success3;
-        
+
         // Verify vault functionality still works through all upgrades
         assertEq(vaultV3.principal(alice), 1000e6);
         assertEq(vaultV3.totalPrincipal(), 1000e6);
@@ -752,7 +750,7 @@ contract EarnVaultUpgradesTest is Test {
         vm.expectRevert(abi.encodeWithSelector(IEarnVaultEventsAndErrors.EthNotAccepted.selector));
         (bool success1,) = address(vault).call{value: 1 ether}("");
         success1;
-        
+
         // Test fallback() function with invalid data
         vm.expectRevert(abi.encodeWithSelector(IEarnVaultEventsAndErrors.EthNotAccepted.selector));
         (bool success2,) = address(vault).call{value: 1 ether}("invalidFunction()");

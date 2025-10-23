@@ -27,7 +27,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
 
     // -------- Constants --------
     uint256 public constant RAY = 1e27;  // High precision for yield calculations (MakerDAO standard)
-    
+
     // -------- Access Control --------
     address public yieldRedistributor;    // Address authorized to call onYield() and onBoostReward()
     address public pauser;               // Address authorized to pause/unpause the contract
@@ -63,24 +63,32 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     // All events and errors are inherited from IEarnVaultEventsAndErrors interface
 
     // -------- Modifiers --------
-    
+
     /// @dev Modifier to check if caller is the yield redistributor
     modifier onlyYieldRedistributor() {
-        if (msg.sender != yieldRedistributor) revert IEarnVaultEventsAndErrors.NotYieldRedistributor();
+        _onlyYieldRedistributor();
         _;
     }
-    
+
+    function _onlyYieldRedistributor() internal view {
+           if (msg.sender != yieldRedistributor) revert IEarnVaultEventsAndErrors.NotYieldRedistributor();
+    }
+
     /// @dev Modifier to check if caller is the pauser
     modifier onlyPauser() {
-        if (msg.sender != pauser) revert IEarnVaultEventsAndErrors.NotAuthorizedToPause();
+        _onlyPauser();
         _;
+    }
+
+    function _onlyPauser() internal view {
+        if (msg.sender != pauser) revert IEarnVaultEventsAndErrors.NotAuthorizedToPause();
     }
 
     constructor(address usdsc, address owner, address yieldRedistributorAddr, address treasuryAddr, address pauserAddr) Ownable(owner) {
         if (usdsc == address(0) || owner == address(0)) revert CanNotBeZeroAddress();
         if (yieldRedistributorAddr == address(0) || treasuryAddr == address(0)) revert CanNotBeZeroAddress();
         if (pauserAddr == address(0)) revert CanNotBeZeroAddress();
-        
+
         USDSC = IERC20(usdsc);
         treasury = treasuryAddr;
         yieldRedistributor = yieldRedistributorAddr;
@@ -100,7 +108,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
         emit YieldRedistributorChanged(msg.sender, oldRedistributor, who);
     }
 
-    /// @notice Set the treasury address  
+    /// @notice Set the treasury address
     /// @param who New treasury address
     function setTreasury(address who) external onlyOwner {
         if (who == address(0)) revert CanNotBeZeroAddress();
@@ -113,10 +121,10 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     /// @param who New pauser address
     function setPauser(address who) external onlyOwner {
         if (who == address(0)) revert CanNotBeZeroAddress();
-        
+
         address oldPauser = pauser;
         pauser = who;
-        
+
         emit PauserChanged(msg.sender, oldPauser, who);
     }
 
@@ -135,7 +143,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     function pause() external onlyPauser {
         _pause();
     }
-    
+
     /// @notice Unpause the contract
     /// @dev Can be called by designated pauser only
     function unpause() external onlyPauser {
@@ -153,7 +161,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     function claimable(address user) external view returns (uint256) {
         uint256 p = principal[user];
         if (p == 0) return accrued[user];
-        
+
         uint256 ui = userIndex[user];
         uint256 gi = globalIndex;
         if (gi > ui) {
@@ -167,7 +175,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     function totalValue(address user) external view returns (uint256) {
         uint256 p = principal[user];
         if (p == 0) return accrued[user];
-        
+
         uint256 ui = userIndex[user];
         uint256 gi = globalIndex;
         if (gi > ui) {
@@ -180,18 +188,18 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     /// @notice Get user's complete account info in one call
     function getUserInfo(address user) external view returns (
         uint256 userPrincipal,
-        uint256 userClaimable, 
+        uint256 userClaimable,
         uint256 userTotal,
         uint256 userLastIndex
     ) {
         userPrincipal = principal[user];
         userLastIndex = userIndex[user];
-        
+
         // Inline claimable logic to avoid expensive external call
         uint256 p = userPrincipal;
         uint256 ui = userLastIndex;
         uint256 gi = globalIndex;
-        
+
         if (p == 0) {
             userClaimable = accrued[user];
         } else if (gi > ui) {
@@ -200,7 +208,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
         } else {
             userClaimable = accrued[user];
         }
-        
+
         userTotal = userPrincipal + userClaimable;
     }
 
@@ -245,14 +253,14 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
         uint256[] memory boostAmounts
     ) {
         _checkNotBlacklisted(user);
-        
+
         // Get USDSC claimable yield
         usdscClaimable = this.claimable(user);
-        
+
         // Get all active boost tokens
         boostTokens = new address[](activeBoostTokens.length);
         boostAmounts = new uint256[](activeBoostTokens.length);
-        
+
         // Calculate claimable amounts for each boost token
         for (uint256 i = 0; i < activeBoostTokens.length; i++) {
             address token = activeBoostTokens[i];
@@ -280,7 +288,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
         if (amount == 0) revert ZeroAmount();
 
         _settle(msg.sender);
-        
+
         USDSC.safeTransferFrom(msg.sender, address(this), amount);
         principal[msg.sender] += amount;
         totalPrincipal += amount;
@@ -295,7 +303,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     /// @param amount Amount of USDSC tokens to deposit
     /// @param deadline Permit deadline timestamp
     /// @param v Permit signature parameter v
-    /// @param r Permit signature parameter r  
+    /// @param r Permit signature parameter r
     /// @param s Permit signature parameter s
     function depositWithPermit(
         uint256 amount,
@@ -313,7 +321,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
         }
 
         _settle(msg.sender);
-        
+
         USDSC.safeTransferFrom(msg.sender, address(this), amount);
         principal[msg.sender] += amount;
         totalPrincipal += amount;
@@ -331,7 +339,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
         if (amount == 0) revert ZeroAmount();
 
         _settle(msg.sender);
-        
+
         uint256 p = principal[msg.sender];
         if (amount > p) revert InsufficientPrincipal();
 
@@ -354,10 +362,10 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
         principal[msg.sender] = p - amount;
         totalPrincipal -= amount;
         claimReserve -= amount; // Reduce claim reserve by withdrawn principal
-        
+
         // Transfer principal
         USDSC.safeTransfer(msg.sender, amount);
-        
+
         // Automatically claim ALL USDSC yield
         uint256 usdscYield = accrued[msg.sender];
         if (usdscYield > 0) {
@@ -367,7 +375,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
             USDSC.safeTransfer(msg.sender, usdscYield);
             emit InterestClaimed(msg.sender, usdscYield);
         }
-        
+
         // Emit events
         emit Withdraw(msg.sender, amount);
     }
@@ -378,11 +386,11 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     function claim() external whenNotPaused nonReentrant {
         _checkNotBlacklisted(msg.sender);
         _settle(msg.sender);
-        
+
         uint256 usdscAmt = accrued[msg.sender];
         bool hasUSDSCClaim = usdscAmt > 0;
         bool hasBoostClaim = false;
-        
+
         // Claim USDSC interest
         if (hasUSDSCClaim) {
             if (claimReserve < usdscAmt) revert InsufficientFunding();
@@ -391,7 +399,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
             USDSC.safeTransfer(msg.sender, usdscAmt);
             emit InterestClaimed(msg.sender, usdscAmt);
         }
-        
+
         // Settle and claim all boost rewards in single loop
         for (uint256 i = 0; i < activeBoostTokens.length; i++) {
             address token = activeBoostTokens[i];
@@ -409,7 +417,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
                 hasBoostClaim = true;
             }
         }
-        
+
         if (!hasUSDSCClaim && !hasBoostClaim) revert NothingToClaim();
     }
 
@@ -424,10 +432,10 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     /// @param amount Amount of USDSC yield to distribute
     function onYield(uint256 amount) external onlyYieldRedistributor nonReentrant {
         if (amount == 0) return;
-        
+
         // Verify actual balance before updating accounting
         uint256 bal = USDSC.balanceOf(address(this));
-        
+
         if (totalPrincipal == 0) {
             // No deposits: just need enough for treasury transfer
             if (bal < amount) revert InsufficientFunding();
@@ -435,10 +443,10 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
             emit YieldTransferredToTreasury(amount);
             return;
         }
-        
+
         // Deposits exist: need enough for claimReserve + new yield
         if (bal < claimReserve + amount) revert InsufficientFunding();
-        
+
         // Exact, immediate index update with Ray remainder carry
         // delta = floor( (amount*RAY + _carryRay) / totalPrincipal )
         // _carryRay = (amount*RAY + _carryRay) % totalPrincipal
@@ -448,7 +456,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
             _carryRay = num % totalPrincipal;
             globalIndex += delta;
         }
-        
+
         claimReserve += amount;
         emit YieldIndexed(amount, globalIndex, claimReserve);
     }
@@ -481,11 +489,11 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     /// @param user Address to settle
     function _settle(address user) internal {
         uint256 p = principal[user];
-        if (p == 0) { 
-            userIndex[user] = globalIndex; 
-            return; 
+        if (p == 0) {
+            userIndex[user] = globalIndex;
+            return;
         }
-        
+
         uint256 ui = userIndex[user];
         uint256 gi = globalIndex;
         if (gi > ui) {
@@ -542,7 +550,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
             // For non-USDSC tokens, check actual balance and boost reserves
             uint256 tokenBalance = IERC20(token).balanceOf(address(this));
             if (amount > tokenBalance) revert ExceedsSurplus();
-            
+
             // For boost tokens, ensure we don't recover reserved amounts
             if (boostClaimReserve[token] > 0) {
                 uint256 availableAmount = tokenBalance - boostClaimReserve[token];
@@ -558,9 +566,9 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     function sweepSurplusToTreasury() external onlyOwner {
         uint256 bal = USDSC.balanceOf(address(this));
         uint256 minRequired = claimReserve;
-        
+
         if (bal <= minRequired) return; // No surplus to sweep
-        
+
         uint256 surplus = bal - minRequired;
         USDSC.safeTransfer(treasury, surplus);
         emit SurplusSweptToTreasury(surplus);
@@ -576,10 +584,10 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     /// @param amount Amount of ETH to sweep
     function sweepNative(address payable to, uint256 amount) external onlyOwner {
         if (to == address(0)) revert CanNotBeZeroAddress();
-        
+
         (bool success,) = to.call{value: amount}("");
         if (!success) revert SweepFailed();
-        
+
         emit NativeSwept(to, amount);
     }
 

@@ -2,9 +2,6 @@
 pragma solidity ^0.8.26;
 
 import {EarnVaultUpgradeable} from "../../src/vaults/earn/EarnVaultUpgradeable.sol";
-import {EarnVaultStorageBase} from "../../src/vaults/earn/EarnVaultStorageBase.sol";
-import {Initializable} from "lib/openzeppelin-contracts-upgradeable/contracts/proxy/utils/Initializable.sol";
-import {IEarnVaultEventsAndErrors} from "../../src/interfaces/vaults/earn/IEarnVaultEventsAndErrors.sol";
 import {SafeERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 
@@ -12,7 +9,7 @@ import {IERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.so
 /// @notice Adds advanced features: yield compounding, fee management, and enhanced analytics
 contract EarnVaultV3 is EarnVaultUpgradeable {
     using SafeERC20 for IERC20;
-    
+
     /// @custom:storage-location erc7201:startale.storage.EarnVaultV3
     struct EarnVaultV3Storage {
         uint256 performanceFeeRate;     // Performance fee rate (in basis points)
@@ -98,23 +95,23 @@ contract EarnVaultV3 is EarnVaultUpgradeable {
     function executeAutoCompound(address user) external {
         EarnVaultV3Storage storage $ = _getEarnVaultV3Storage();
         if (!$.autoCompoundEnabled) revert AutoCompoundNotEnabled();
-        
+
         uint256 claimableAmount = this.claimable(user);
         if (claimableAmount < $.compoundThreshold) revert InsufficientAmountForCompound();
-        
+
         // Auto-compound by adding claimable to principal
         _settle(user);
         EarnVaultStorage storage baseStorage = _getStorage();
         uint256 p = baseStorage.principal[user];
         uint256 accrued = baseStorage.accrued[user];
-        
+
         if (accrued > 0) {
             baseStorage.principal[user] = p + accrued;
             baseStorage.totalPrincipal += accrued;
             baseStorage.accrued[user] = 0;
             $.userLastCompoundTime[user] = block.timestamp;
             $.totalCompounds++;
-            
+
             emit AutoCompoundExecuted(user, accrued);
         }
     }
@@ -123,17 +120,17 @@ contract EarnVaultV3 is EarnVaultUpgradeable {
     function deposit(uint256 amount) external override whenNotPaused nonReentrant {
         EarnVaultStorage storage $ = _getStorage();
         EarnVaultV3Storage storage $v3 = _getEarnVaultV3Storage();
-        
+
         _checkNotBlacklisted(msg.sender);
         if (amount == 0) revert ZeroAmount();
 
         _settle(msg.sender);
-        
+
         // Check for auto-compound before deposit
         if ($v3.autoCompoundEnabled && this.claimable(msg.sender) >= $v3.compoundThreshold) {
             this.executeAutoCompound(msg.sender);
         }
-        
+
         $.USDSC.safeTransferFrom(msg.sender, address(this), amount);
         $.principal[msg.sender] += amount;
         $.totalPrincipal += amount;
@@ -146,31 +143,31 @@ contract EarnVaultV3 is EarnVaultUpgradeable {
     function onYield(uint256 amount) external override onlyYieldRedistributor nonReentrant {
         EarnVaultStorage storage $ = _getStorage();
         EarnVaultV3Storage storage $v3 = _getEarnVaultV3Storage();
-        
+
         if (amount == 0) return;
-        
+
         uint256 bal = $.USDSC.balanceOf(address(this));
-        
+
         if ($.totalPrincipal == 0) {
             if (bal < amount) revert InsufficientFunding();
             $.USDSC.safeTransfer($.treasury, amount);
             emit YieldTransferredToTreasury(amount);
             return;
         }
-        
+
         if (bal < $.claimReserve + amount) revert InsufficientFunding();
-        
+
         // Calculate and collect performance fee
         uint256 performanceFee = (amount * $v3.performanceFeeRate) / 10000;
         uint256 netYield = amount - performanceFee;
-        
+
         if (performanceFee > 0) {
             $v3.totalFeesCollected += performanceFee;
             // Transfer fee to treasury
             $.USDSC.safeTransfer($.treasury, performanceFee);
             emit FeeCollected(performanceFee, $v3.totalFeesCollected);
         }
-        
+
         // Update index with net yield
         unchecked {
             uint256 num = netYield * $.RAY + $._carryRay;
@@ -178,7 +175,7 @@ contract EarnVaultV3 is EarnVaultUpgradeable {
             $._carryRay = num % $.totalPrincipal;
             $.globalIndex += delta;
         }
-        
+
         $.claimReserve += netYield;
         emit YieldIndexed(netYield, $.globalIndex, $.claimReserve);
     }
