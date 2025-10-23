@@ -24,10 +24,14 @@ contract Greeter is IGreeter {
    * @notice Reverts in case the function was not called by the owner of the contract
    */
   modifier onlyOwner() {
+    _onlyOwner();
+    _;
+  }
+
+  function _onlyOwner() internal view {
     if (msg.sender != OWNER) {
       revert Greeter_OnlyOwner();
     }
-    _;
   }
 
   /**
