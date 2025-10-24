@@ -1,5 +1,5 @@
 [profile.default]
-evm_version = "cancun"
+evm_version = "prague"
 gas_reports = ["*"]
 gas_reports_ignore = []
 ignored_error_codes = []
@@ -46,7 +46,7 @@ depth = 25            # The number of times to run the invariant tests
 fail_on_revert = true # Fail the test if the contract reverts
 
 [profile.ci]
-evm_version = "cancun"
+evm_version = "prague"
 gas_reports = ["*"]
 gas_reports_ignore = []
 ignored_error_codes = []
