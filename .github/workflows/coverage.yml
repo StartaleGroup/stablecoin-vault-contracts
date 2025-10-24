@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - dev
+      - feat/increase-coverage
   pull_request:
 
 permissions: write-all

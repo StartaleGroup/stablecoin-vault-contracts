@@ -835,4 +835,88 @@ contract RewardRedistributorTest is Test {
     uint256 total = fee + toEarn + toOn + extra;
     assertEq(total, minted, 'Preview should conserve total yield even for small amounts');
   }
+
+  function test_DistributeWithZeroSBase() public {
+    // Test the edge case where S_base == 0 in distribute()
+    // This happens when supply before mint would be zero or negative
+
+    // Burn all circulating supply to create zero base scenario
+    uint256 thisBalance = usdsc.balanceOf(address(this));
+    usdsc.burn(address(this), thisBalance);
+
+    // Burn vault balances too
+    uint256 earnBalance = usdsc.balanceOf(address(earnV));
+    usdsc.burn(address(earnV), earnBalance);
+    earnV.setPrincipal(0);
+    earnV.setClaimReserve(0);
+
+    uint256 sVaultBalance = usdsc.balanceOf(address(sVault));
+    usdsc.burn(address(sVault), sVaultBalance);
+
+    // Verify total supply is now zero
+    assertEq(usdsc.totalSupply(), 0, 'Total supply should be zero');
+
+    // Add pending yield
+    ext.addPending(100_000e6);
+
+    // Record treasury balance before
+    uint256 treasuryBefore = usdsc.balanceOf(startale);
+
+    // Record logs to verify event
+    vm.recordLogs();
+
+    // Distribute should handle S_base == 0 case
+    vm.prank(operator);
+    rr.distribute();
+
+    // When S_base == 0, all yield should go to treasury (fee + extra)
+    uint256 treasuryAfter = usdsc.balanceOf(startale);
+    uint256 treasuryReceived = treasuryAfter - treasuryBefore;
+
+    // All yield (100_000e6) should go to treasury since S_base == 0
+    assertEq(treasuryReceived, 100_000e6, 'All yield should go to treasury when S_base == 0');
+
+    // No yield should go to vaults
+    assertEq(usdsc.balanceOf(address(earnV)), 0, 'EarnVault should receive nothing');
+    assertEq(usdsc.balanceOf(address(sVault)), 0, 'sUSDSC vault should receive nothing');
+
+    // No dust in redistributor
+    assertEq(usdsc.balanceOf(address(rr)), 0, 'No dust should remain in redistributor');
+
+    // Verify event was emitted with correct values
+    Vm.Log[] memory logs = vm.getRecordedLogs();
+    bool foundEvent = false;
+
+    for (uint256 i = 0; i < logs.length; i++) {
+      if (logs[i].topics[0] == RewardRedistributor.Distributed.selector) {
+        // Decode event parameters
+        (
+          uint256 minted,
+          uint256 feeToStartale,
+          uint256 toEarnVault,
+          uint256 toSUSDSCVault,
+          uint256 toStartaleExtra,
+          uint256 sBase,
+          uint256 tEarn,
+          uint256 tYield
+        ) = abi.decode(logs[i].data, (uint256, uint256, uint256, uint256, uint256, uint256, uint256, uint256));
+
+        // Verify event values for S_base == 0 case
+        assertEq(minted, 100_000e6, 'Event: minted should be 100_000e6');
+        assertEq(sBase, 0, 'Event: S_base should be 0');
+        assertEq(toEarnVault, 0, 'Event: toEarnVault should be 0');
+        assertEq(toSUSDSCVault, 0, 'Event: toSUSDSCVault should be 0');
+        assertEq(tEarn, 0, 'Event: T_earn should be 0');
+        assertEq(tYield, 0, 'Event: T_yield should be 0');
+        
+        // Fee + extra should equal minted
+        assertEq(feeToStartale + toStartaleExtra, minted, 'Event: fee + extra should equal minted');
+        
+        foundEvent = true;
+        break;
+      }
+    }
+
+    assertTrue(foundEvent, 'Distributed event should be emitted for S_base == 0 case');
+  }
 }
