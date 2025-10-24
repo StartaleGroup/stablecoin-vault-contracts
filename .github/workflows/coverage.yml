@@ -5,7 +5,6 @@ on:
     branches:
       - main
       - dev
-      - feat/increase-coverage
   pull_request:
 
 permissions: write-all
@@ -38,47 +37,98 @@ jobs:
           echo "=== Generated files ==="
           ls -lh lcov*.info
           echo ""
-          echo "=== lcov-filtered.info source files ==="
-          grep "^SF:" lcov-filtered.info | sort | uniq
+          echo "=== Source files in lcov.info ==="  
+          grep "^SF:" lcov.info | head -20
           echo ""
-          echo "=== lcov.info source files ==="  
-          grep "^SF:" lcov.info | sort | uniq
-          echo ""
-          echo "=== File count ==="
-          echo "lcov-filtered.info: $(grep -c "^SF:" lcov-filtered.info) files"
-          echo "lcov.info: $(grep -c "^SF:" lcov.info) files"
+          echo "=== Check for duplicates ==="
+          grep "^SF:" lcov.info | sort | uniq -c | sort -rn | head -10
+
+      - name: Generate HTML coverage report
+        run: |
+          genhtml lcov.info --output-directory coverage-html --rc branch_coverage=1 --ignore-errors inconsistent --quiet
+          echo "HTML report generated in coverage-html/"
 
       - name: Print coverage summary
         run: |
+          # Use lcov --summary for reliable overall stats
           echo "## 📊 Coverage Summary (src/vaults & src/distributor)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Filtered coverage focusing on production code in \`src/vaults/\` and \`src/distributor/\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "<details><summary>📈 Detailed Coverage by File</summary>" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Get summary stats (more reliable than --list), suppress warnings
+          SUMMARY=$(lcov --summary lcov.info --rc branch_coverage=1 --ignore-errors inconsistent 2>/dev/null | grep -E "lines\.\.\.\.\.\.|functions\.\.|branches\.\.\.")
+          
+          echo "### Overall Coverage" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          lcov --list lcov.info --rc branch_coverage=1 --ignore-errors inconsistent 2>/dev/null >> $GITHUB_STEP_SUMMARY || echo "No coverage data" >> $GITHUB_STEP_SUMMARY
+          echo "$SUMMARY" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          echo "</details>" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
-          # Extract and display overall coverage
-          TOTAL_LINE=$(lcov --list lcov.info --rc branch_coverage=1 --ignore-errors inconsistent 2>/dev/null | grep "Total:" | tail -1)
-          if [ -n "$TOTAL_LINE" ]; then
-            LINE_COV=$(echo "$TOTAL_LINE" | awk '{print $2}')
-            FUNC_COV=$(echo "$TOTAL_LINE" | awk '{print $4}')
-            BRANCH_COV=$(echo "$TOTAL_LINE" | awk '{print $6}')
-            echo "### Overall Coverage" >> $GITHUB_STEP_SUMMARY
-            echo "- **Lines:** $LINE_COV" >> $GITHUB_STEP_SUMMARY
-            echo "- **Functions:** $FUNC_COV" >> $GITHUB_STEP_SUMMARY
-            echo "- **Branches:** $BRANCH_COV" >> $GITHUB_STEP_SUMMARY
-          fi
+          # Parse and display as bullets (use awk for more reliable parsing)
+          LINE_COV=$(echo "$SUMMARY" | grep "lines" | awk -F'[(:% ]' '{for(i=1;i<=NF;i++) if($i ~ /^[0-9]+\.[0-9]+$/) {print $i"%"; exit}}')
+          FUNC_COV=$(echo "$SUMMARY" | grep "functions" | awk -F'[(:% ]' '{for(i=1;i<=NF;i++) if($i ~ /^[0-9]+\.[0-9]+$/) {print $i"%"; exit}}')
+          BRANCH_COV=$(echo "$SUMMARY" | grep "branches" | awk -F'[(:% ]' '{for(i=1;i<=NF;i++) if($i ~ /^[0-9]+\.[0-9]+$/) {print $i"%"; exit}}')
+          
+          echo "- **Lines:** ${LINE_COV:-N/A}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Functions:** ${FUNC_COV:-N/A}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Branches:** ${BRANCH_COV:-N/A}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "_Full HTML report available in workflow artifacts_" >> $GITHUB_STEP_SUMMARY
 
-      - name: Report code coverage
-        uses: zgosalvez/github-actions-report-lcov@v4
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
         with:
-          coverage-files: lcov.info
-          artifact-name: code-coverage-report
-          minimum-coverage: 10
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          update-comment: true
+          name: coverage-html-report
+          path: coverage-html/
+
+      - name: Comment PR with coverage
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { execSync } = require('child_process');
+            
+            // Get clean summary (suppress warnings)
+            const summary = execSync(
+              'lcov --summary lcov.info --rc branch_coverage=1 --ignore-errors inconsistent 2>/dev/null | grep -E "lines\\.\\.\\.\\.\\.\\.\\.|functions\\.\\.|branches\\.\\.\\."',
+              { encoding: 'utf-8' }
+            ).trim();
+            
+            const body = `## 📊 Coverage Report
+
+Filtered coverage for \`src/vaults/\` and \`src/distributor/\`
+
+\`\`\`
+${summary}
+\`\`\`
+
+📄 [View detailed HTML report in workflow artifacts](https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})
+`;
+            
+            // Find existing comment
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+            });
+            
+            const botComment = comments.find(comment => 
+              comment.user.type === 'Bot' && comment.body.includes('📊 Coverage Report')
+            );
+            
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.pull_request.number,
+                body: body
+              });
+            }
