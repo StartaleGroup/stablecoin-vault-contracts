@@ -33,6 +33,21 @@ jobs:
           timeout 30m make coverage-filtered profile=ci
         id: coverage
 
+      - name: Debug lcov files
+        run: |
+          echo "=== Generated files ==="
+          ls -lh lcov*.info
+          echo ""
+          echo "=== lcov-filtered.info source files ==="
+          grep "^SF:" lcov-filtered.info | sort | uniq
+          echo ""
+          echo "=== lcov.info source files ==="  
+          grep "^SF:" lcov.info | sort | uniq
+          echo ""
+          echo "=== File count ==="
+          echo "lcov-filtered.info: $(grep -c "^SF:" lcov-filtered.info) files"
+          echo "lcov.info: $(grep -c "^SF:" lcov.info) files"
+
       - name: Print coverage summary
         run: |
           echo "## 📊 Coverage Summary (src/vaults & src/distributor)" >> $GITHUB_STEP_SUMMARY
@@ -42,13 +57,13 @@ jobs:
           echo "<details><summary>📈 Detailed Coverage by File</summary>" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          lcov --list lcov.info --rc lcov_branch_coverage=1 --ignore-errors inconsistent 2>/dev/null >> $GITHUB_STEP_SUMMARY || echo "No coverage data" >> $GITHUB_STEP_SUMMARY
+          lcov --list lcov.info --rc branch_coverage=1 --ignore-errors inconsistent 2>/dev/null >> $GITHUB_STEP_SUMMARY || echo "No coverage data" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
           echo "</details>" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
           # Extract and display overall coverage
-          TOTAL_LINE=$(lcov --list lcov.info --rc lcov_branch_coverage=1 --ignore-errors inconsistent 2>/dev/null | grep "Total:" | tail -1)
+          TOTAL_LINE=$(lcov --list lcov.info --rc branch_coverage=1 --ignore-errors inconsistent 2>/dev/null | grep "Total:" | tail -1)
           if [ -n "$TOTAL_LINE" ]; then
             LINE_COV=$(echo "$TOTAL_LINE" | awk '{print $2}')
             FUNC_COV=$(echo "$TOTAL_LINE" | awk '{print $4}')
