@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.26;
+pragma solidity ^0.8.30;
 
 // Note: is also IMYieldToOne
 // we can use anything IMTokenLike or IMExtension etc

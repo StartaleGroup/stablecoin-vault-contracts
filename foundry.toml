@@ -1,11 +1,11 @@
 [profile.default]
-evm_version = "cancun"
+evm_version = "prague"
 gas_reports = ["*"]
 gas_reports_ignore = []
 ignored_error_codes = []
 optimizer = true
 optimizer_runs = 999999
-solc_version = "0.8.26"
+solc_version = "0.8.30"
 libs = ['node_modules', 'lib']
 verbosity = 3
 
@@ -46,13 +46,13 @@ depth = 25            # The number of times to run the invariant tests
 fail_on_revert = true # Fail the test if the contract reverts
 
 [profile.ci]
-evm_version = "cancun"
+evm_version = "prague"
 gas_reports = ["*"]
 gas_reports_ignore = []
 ignored_error_codes = []
 optimizer = true
 optimizer_runs = 999999
-solc_version = "0.8.26"
+solc_version = "0.8.30"
 libs = ['node_modules', 'lib']
 verbosity = 3
 
