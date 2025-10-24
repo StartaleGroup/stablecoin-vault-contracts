@@ -33,6 +33,14 @@ invariant:
 coverage:
 	FOUNDRY_PROFILE=$(profile) forge coverage --report lcov
 
+coverage-filtered:
+	@echo "📊 Generating full coverage report..."
+	@FOUNDRY_PROFILE=$(profile) forge coverage --report lcov --report-file lcov-full.info
+	@echo "🔍 Filtering to src/vaults and src/distributor only..."
+	@lcov --extract lcov-full.info 'src/vaults/*' 'src/distributor/*' --output-file lcov.info --rc lcov_branch_coverage=1 2>/dev/null || true
+	@echo "📈 Filtered Coverage Summary:"
+	@lcov --list lcov.info 2>/dev/null || echo "lcov not installed"
+
 gas-report:
 	FOUNDRY_PROFILE=$(profile) forge test --gas-report > gasreport.ansi
 

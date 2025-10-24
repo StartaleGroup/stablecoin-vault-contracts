@@ -10,6 +10,8 @@ out/
 # Coverage files
 coverage/
 lcov.info
+lcov-full.info
+lcov-filtered.info
 
 # Docs
 docs/
