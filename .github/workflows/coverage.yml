@@ -42,19 +42,21 @@ jobs:
           echo "<details><summary>📈 Detailed Coverage by File</summary>" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          lcov --list lcov.info 2>/dev/null >> $GITHUB_STEP_SUMMARY || echo "No coverage data" >> $GITHUB_STEP_SUMMARY
+          lcov --list lcov.info --rc lcov_branch_coverage=1 --ignore-errors inconsistent 2>/dev/null >> $GITHUB_STEP_SUMMARY || echo "No coverage data" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
           echo "</details>" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
           # Extract and display overall coverage
-          TOTAL_LINE=$(lcov --list lcov.info 2>/dev/null | grep "Total:" | tail -1)
+          TOTAL_LINE=$(lcov --list lcov.info --rc lcov_branch_coverage=1 --ignore-errors inconsistent 2>/dev/null | grep "Total:" | tail -1)
           if [ -n "$TOTAL_LINE" ]; then
             LINE_COV=$(echo "$TOTAL_LINE" | awk '{print $2}')
             FUNC_COV=$(echo "$TOTAL_LINE" | awk '{print $4}')
+            BRANCH_COV=$(echo "$TOTAL_LINE" | awk '{print $6}')
             echo "### Overall Coverage" >> $GITHUB_STEP_SUMMARY
             echo "- **Lines:** $LINE_COV" >> $GITHUB_STEP_SUMMARY
             echo "- **Functions:** $FUNC_COV" >> $GITHUB_STEP_SUMMARY
+            echo "- **Branches:** $BRANCH_COV" >> $GITHUB_STEP_SUMMARY
           fi
 
       - name: Report code coverage

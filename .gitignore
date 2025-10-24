@@ -12,6 +12,7 @@ coverage/
 lcov.info
 lcov-full.info
 lcov-filtered.info
+coverage-html
 
 # Docs
 docs/

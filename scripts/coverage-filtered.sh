@@ -9,12 +9,12 @@ echo "📊 Generating full coverage report..."
 forge coverage --report lcov --report-file lcov-full.info
 
 echo "🔍 Filtering to src/vaults and src/distributor only..."
-lcov --extract lcov-full.info 'src/vaults/*' 'src/distributor/*' --output-file lcov.info --rc lcov_branch_coverage=1 2>/dev/null
+lcov --extract lcov-full.info 'src/vaults/*' 'src/distributor/*' --output-file lcov.info --rc lcov_branch_coverage=1 --ignore-errors inconsistent 2>/dev/null
 
 echo ""
 echo "📈 Filtered Coverage Summary:"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-lcov --list lcov.info 2>/dev/null
+lcov --list lcov.info --rc lcov_branch_coverage=1 --ignore-errors inconsistent 2>/dev/null
 
 echo ""
 echo "✓ Filtered coverage report saved to lcov.info"
