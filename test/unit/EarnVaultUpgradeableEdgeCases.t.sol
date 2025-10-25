@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import {Test} from 'forge-std/Test.sol';
+import {IEarnVaultEventsAndErrors} from '../../src/interfaces/vaults/earn/IEarnVaultEventsAndErrors.sol';
 import {EarnVaultUpgradeable} from '../../src/vaults/earn/EarnVaultUpgradeable.sol';
 import {MockUSDSC} from '../mocks/MockUSDSC.sol';
-import {IEarnVaultEventsAndErrors} from '../../src/interfaces/vaults/earn/IEarnVaultEventsAndErrors.sol';
 import {ERC1967Proxy} from '@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol';
+import {Test} from 'forge-std/Test.sol';
 
 /// @title EarnVaultUpgradeable Edge Cases Tests
 /// @notice Tests for zero address validations and access control
@@ -190,10 +190,10 @@ contract EarnVaultUpgradeableEdgeCasesTest is Test {
 
   function test_SweepSurplusToTreasury() public {
     // Setup: deposit some principal
-    usdsc.mint(user, 10000e6);
+    usdsc.mint(user, 10_000e6);
     vm.startPrank(user);
-    usdsc.approve(address(vault), 10000e6);
-    vault.deposit(10000e6);
+    usdsc.approve(address(vault), 10_000e6);
+    vault.deposit(10_000e6);
     vm.stopPrank();
 
     // Add yield to create surplus
@@ -219,10 +219,10 @@ contract EarnVaultUpgradeableEdgeCasesTest is Test {
 
   function test_SweepSurplusToTreasury_NoSurplus() public {
     // Setup: deposit some principal
-    usdsc.mint(user, 10000e6);
+    usdsc.mint(user, 10_000e6);
     vm.startPrank(user);
-    usdsc.approve(address(vault), 10000e6);
-    vault.deposit(10000e6);
+    usdsc.approve(address(vault), 10_000e6);
+    vault.deposit(10_000e6);
     vm.stopPrank();
 
     uint256 treasuryBefore = usdsc.balanceOf(treasury);
@@ -291,7 +291,7 @@ contract EarnVaultUpgradeableEdgeCasesTest is Test {
     MockUSDSC otherToken = new MockUSDSC();
 
     // Send some tokens to vault by mistake
-    uint256 amount = 10000e6;
+    uint256 amount = 10_000e6;
     otherToken.mint(address(vault), amount);
 
     uint256 treasuryBefore = otherToken.balanceOf(treasury);
@@ -308,10 +308,10 @@ contract EarnVaultUpgradeableEdgeCasesTest is Test {
     MockUSDSC boostToken = new MockUSDSC();
 
     // Setup: user deposits principal
-    usdsc.mint(user, 10000e6);
+    usdsc.mint(user, 10_000e6);
     vm.startPrank(user);
-    usdsc.approve(address(vault), 10000e6);
-    vault.deposit(10000e6);
+    usdsc.approve(address(vault), 10_000e6);
+    vault.deposit(10_000e6);
     vm.stopPrank();
 
     // Distribute boost rewards to create boostClaimReserve
@@ -339,10 +339,10 @@ contract EarnVaultUpgradeableEdgeCasesTest is Test {
     MockUSDSC boostToken = new MockUSDSC();
 
     // Setup: user deposits principal
-    usdsc.mint(user, 10000e6);
+    usdsc.mint(user, 10_000e6);
     vm.startPrank(user);
-    usdsc.approve(address(vault), 10000e6);
-    vault.deposit(10000e6);
+    usdsc.approve(address(vault), 10_000e6);
+    vault.deposit(10_000e6);
     vm.stopPrank();
 
     // Distribute boost rewards to create boostClaimReserve
@@ -413,7 +413,7 @@ contract EarnVaultUpgradeableEdgeCasesTest is Test {
     // =========================
     uint256 initialDeposit = 5000e6;
     usdsc.mint(user, initialDeposit);
-    
+
     vm.startPrank(user);
     usdsc.approve(address(vault), initialDeposit);
     vault.deposit(initialDeposit);
@@ -439,7 +439,7 @@ contract EarnVaultUpgradeableEdgeCasesTest is Test {
     // The permit will fail, so we use regular deposit to simulate the scenario
     uint256 secondDeposit = 3000e6;
     usdsc.mint(user, secondDeposit);
-    
+
     // Record state before second deposit
     uint256 claimableBeforeSecondDeposit = vault.claimable(user);
     assertGt(claimableBeforeSecondDeposit, 0, 'User should have claimable yield before second deposit');
@@ -480,9 +480,9 @@ contract EarnVaultUpgradeableEdgeCasesTest is Test {
     // =========================
     // Setup: User deposits principal
     // =========================
-    uint256 depositAmount = 10000e6;
+    uint256 depositAmount = 10_000e6;
     usdsc.mint(user, depositAmount);
-    
+
     vm.startPrank(user);
     usdsc.approve(address(vault), depositAmount);
     vault.deposit(depositAmount);
@@ -516,9 +516,9 @@ contract EarnVaultUpgradeableEdgeCasesTest is Test {
     // =========================
     // Setup: User deposits and claims to sync indices
     // =========================
-    uint256 depositAmount = 10000e6;
+    uint256 depositAmount = 10_000e6;
     usdsc.mint(user, depositAmount);
-    
+
     vm.startPrank(user);
     usdsc.approve(address(vault), depositAmount);
     vault.deposit(depositAmount);
@@ -554,9 +554,9 @@ contract EarnVaultUpgradeableEdgeCasesTest is Test {
     // =========================
     // Setup: User deposits principal
     // =========================
-    uint256 depositAmount = 10000e6;
+    uint256 depositAmount = 10_000e6;
     usdsc.mint(user, depositAmount);
-    
+
     vm.startPrank(user);
     usdsc.approve(address(vault), depositAmount);
     vault.deposit(depositAmount);
@@ -588,7 +588,7 @@ contract EarnVaultUpgradeableEdgeCasesTest is Test {
 
     // totalValue should equal principal + all accumulated yields
     assertEq(totalVal, depositAmount + totalYield, 'totalValue should accumulate all yields');
-    
+
     // Verify consistency with getUserInfo
     (uint256 userPrincipal, uint256 userClaimable, uint256 userTotal,) = vault.getUserInfo(user);
     assertEq(totalVal, userTotal, 'totalValue should match getUserInfo.userTotal');
@@ -599,10 +599,10 @@ contract EarnVaultUpgradeableEdgeCasesTest is Test {
 
   function test_GetAllClaimables_WithUSDSCOnly() public {
     // Setup: user deposits
-    usdsc.mint(user, 10000e6);
+    usdsc.mint(user, 10_000e6);
     vm.startPrank(user);
-    usdsc.approve(address(vault), 10000e6);
-    vault.deposit(10000e6);
+    usdsc.approve(address(vault), 10_000e6);
+    vault.deposit(10_000e6);
     vm.stopPrank();
 
     // Add USDSC yield
@@ -612,8 +612,7 @@ contract EarnVaultUpgradeableEdgeCasesTest is Test {
     vault.onYield(yieldAmount);
 
     // Get all claimables
-    (uint256 usdscClaimable, address[] memory boostTokens, uint256[] memory boostAmounts) =
-      vault.getAllClaimables(user);
+    (uint256 usdscClaimable, address[] memory boostTokens, uint256[] memory boostAmounts) = vault.getAllClaimables(user);
 
     // Should have USDSC claimable but no boost rewards
     assertEq(usdscClaimable, yieldAmount);
@@ -623,10 +622,10 @@ contract EarnVaultUpgradeableEdgeCasesTest is Test {
 
   function test_GetAllClaimables_WithBoostRewards() public {
     // Setup: user deposits
-    usdsc.mint(user, 10000e6);
+    usdsc.mint(user, 10_000e6);
     vm.startPrank(user);
-    usdsc.approve(address(vault), 10000e6);
-    vault.deposit(10000e6);
+    usdsc.approve(address(vault), 10_000e6);
+    vault.deposit(10_000e6);
     vm.stopPrank();
 
     // Add USDSC yield
@@ -651,8 +650,7 @@ contract EarnVaultUpgradeableEdgeCasesTest is Test {
     vault.onBoostReward(address(dotToken), dotAmount);
 
     // Get all claimables
-    (uint256 usdscClaimable, address[] memory boostTokens, uint256[] memory boostAmounts) =
-      vault.getAllClaimables(user);
+    (uint256 usdscClaimable, address[] memory boostTokens, uint256[] memory boostAmounts) = vault.getAllClaimables(user);
 
     // Verify USDSC yield
     assertEq(usdscClaimable, yieldAmount);
@@ -673,8 +671,7 @@ contract EarnVaultUpgradeableEdgeCasesTest is Test {
 
   function test_GetAllClaimables_NoPrincipal() public view {
     // User with no deposit should have zero claimables
-    (uint256 usdscClaimable, address[] memory boostTokens, uint256[] memory boostAmounts) =
-      vault.getAllClaimables(user);
+    (uint256 usdscClaimable, address[] memory boostTokens, uint256[] memory boostAmounts) = vault.getAllClaimables(user);
 
     assertEq(usdscClaimable, 0);
     assertEq(boostTokens.length, 0);

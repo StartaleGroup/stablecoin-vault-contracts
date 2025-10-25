@@ -329,7 +329,7 @@ contract EarnVaultBoostTest is Test {
     // =========================
     // In real scenario: user could have accrued rewards settled during deposit/withdraw
     // but not yet claimed. Here we verify the getClaimableBoostReward handles principal==0
-    
+
     uint256 claimable = earnVault.getClaimableBoostReward(user1, address(astr));
     // With zero principal, function should return userBoostAccrued[user][token]
     // Since we withdrew (which auto-claimed), this should be 0
@@ -380,7 +380,7 @@ contract EarnVaultBoostTest is Test {
     // Action: User claims all accumulated rewards
     // =========================
     uint256 initialASTR = astr.balanceOf(user1);
-    
+
     vm.prank(user1);
     earnVault.claim();
 
@@ -389,9 +389,7 @@ contract EarnVaultBoostTest is Test {
     // =========================
     uint256 finalASTR = astr.balanceOf(user1);
     assertEq(
-      finalASTR - initialASTR,
-      ASTR_REWARD * 2,
-      'User should claim both accumulated distributions (gi > ui path)'
+      finalASTR - initialASTR, ASTR_REWARD * 2, 'User should claim both accumulated distributions (gi > ui path)'
     );
   }
 

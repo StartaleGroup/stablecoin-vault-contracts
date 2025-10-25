@@ -1476,7 +1476,7 @@ contract EarnVaultTest is Test {
     // =========================
     // Setup: Alice deposits principal
     // =========================
-    uint256 depositAmount = 10000e6;
+    uint256 depositAmount = 10_000e6;
     vm.prank(alice);
     vault.deposit(depositAmount);
 
@@ -1510,7 +1510,7 @@ contract EarnVaultTest is Test {
     // =========================
     // Setup: Alice deposits and claims to sync indices
     // =========================
-    uint256 depositAmount = 10000e6;
+    uint256 depositAmount = 10_000e6;
     vm.prank(alice);
     vault.deposit(depositAmount);
 
@@ -1546,7 +1546,7 @@ contract EarnVaultTest is Test {
     // =========================
     // Setup: Alice deposits principal
     // =========================
-    uint256 depositAmount = 10000e6;
+    uint256 depositAmount = 10_000e6;
     vm.prank(alice);
     vault.deposit(depositAmount);
 
@@ -1582,7 +1582,7 @@ contract EarnVaultTest is Test {
 
     // totalValue should equal principal + all accumulated yields
     assertEq(totalVal, depositAmount + totalYield, 'totalValue should accumulate all yields');
-    
+
     // Verify consistency with getUserInfo
     (uint256 userPrincipal, uint256 userClaimable, uint256 userTotal,) = vault.getUserInfo(alice);
     assertEq(totalVal, userTotal, 'totalValue should match getUserInfo.userTotal');
@@ -1595,7 +1595,7 @@ contract EarnVaultTest is Test {
     // =========================
     // Setup: Alice deposits and earns yield
     // =========================
-    uint256 depositAmount = 10000e6;
+    uint256 depositAmount = 10_000e6;
     vm.prank(alice);
     vault.deposit(depositAmount);
 

@@ -2,8 +2,8 @@
 pragma solidity ^0.8.30;
 
 import {USDSC} from '../../src/coin/mock/USDSC.sol';
-import {SUSDSCVaultUpgradable} from '../../src/vaults/4626/SUSDSCVaultUpgradable.sol';
 import {ISUSDSCVaultEventsAndErrors} from '../../src/interfaces/vaults/4626/ISUSDSCVaultEventsAndErrors.sol';
+import {SUSDSCVaultUpgradable} from '../../src/vaults/4626/SUSDSCVaultUpgradable.sol';
 import {MockSUSDSCVaultV2} from '../mocks/MockSUSDSCVaultV2.sol';
 import {ProxyAdmin} from '@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol';
 import {TransparentUpgradeableProxy} from '@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol';
