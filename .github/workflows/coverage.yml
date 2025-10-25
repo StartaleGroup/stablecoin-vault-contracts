@@ -50,31 +50,16 @@ jobs:
 
       - name: Print coverage summary
         run: |
-          # Use lcov --summary for reliable overall stats
-          echo "## 📊 Coverage Summary (src/vaults & src/distributor)" >> $GITHUB_STEP_SUMMARY
+          # Use custom script for per-file breakdown with correct percentages
+          echo "## 📊 Coverage Report" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Filtered coverage focusing on production code in \`src/vaults/\` and \`src/distributor/\`" >> $GITHUB_STEP_SUMMARY
+          echo "Filtered coverage for \`src/vaults/\` and \`src/distributor/\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          
-          # Get summary stats (more reliable than --list), suppress warnings
-          SUMMARY=$(lcov --summary lcov.info --rc branch_coverage=1 --ignore-errors inconsistent 2>/dev/null | grep -E "lines\.\.\.\.\.\.|functions\.\.|branches\.\.\.")
-          
-          echo "### Overall Coverage" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          echo "$SUMMARY" >> $GITHUB_STEP_SUMMARY
+          ./scripts/coverage-summary.sh lcov.info >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          
-          # Parse and display as bullets (use awk for more reliable parsing)
-          LINE_COV=$(echo "$SUMMARY" | grep "lines" | awk -F'[(:% ]' '{for(i=1;i<=NF;i++) if($i ~ /^[0-9]+\.[0-9]+$/) {print $i"%"; exit}}')
-          FUNC_COV=$(echo "$SUMMARY" | grep "functions" | awk -F'[(:% ]' '{for(i=1;i<=NF;i++) if($i ~ /^[0-9]+\.[0-9]+$/) {print $i"%"; exit}}')
-          BRANCH_COV=$(echo "$SUMMARY" | grep "branches" | awk -F'[(:% ]' '{for(i=1;i<=NF;i++) if($i ~ /^[0-9]+\.[0-9]+$/) {print $i"%"; exit}}')
-          
-          echo "- **Lines:** ${LINE_COV:-N/A}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Functions:** ${FUNC_COV:-N/A}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Branches:** ${BRANCH_COV:-N/A}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "_Full HTML report available in workflow artifacts_" >> $GITHUB_STEP_SUMMARY
+          echo "📄 View detailed HTML report in workflow artifacts" >> $GITHUB_STEP_SUMMARY
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
@@ -89,7 +74,7 @@ jobs:
           script: |
             const { execSync } = require('child_process');
             const summary = execSync(
-              'lcov --summary lcov.info --rc branch_coverage=1 --ignore-errors inconsistent 2>/dev/null | grep -E "lines|functions|branches"',
+              './scripts/coverage-summary.sh lcov.info',
               { encoding: 'utf-8' }
             ).trim();
             const commitSha = context.sha.substring(0, 7);
