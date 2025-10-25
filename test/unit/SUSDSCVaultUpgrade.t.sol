@@ -819,7 +819,7 @@ contract SUSDSCVaultUpgradeTest is Test {
     uint256 user1BalanceBefore = usdsc.balanceOf(user1);
 
     // Calculate assets needed (should be more due to higher PPS)
-    uint256 assetsNeeded = vault.previewMint(sharesToMint);
+    vault.previewMint(sharesToMint);
 
     // Mint shares
     vm.prank(user1);
