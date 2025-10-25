@@ -43,6 +43,19 @@ coverage-filtered:
 	@echo "📈 Filtered Coverage Summary:"
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@lcov --list lcov.info --rc branch_coverage=1 --ignore-errors inconsistent 2>/dev/null || echo "lcov not installed"
+	@echo ""
+	@echo "✓ Filtered coverage saved to lcov.info (for Coverage Gutters)"
+	@echo "✓ Full coverage saved to lcov-full.info"
+	@echo ""
+	@echo "💡 To generate HTML report: make coverage-html"
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+coverage-html:
+	@echo "🌐 Generating HTML coverage report..."
+	@genhtml lcov.info --output-directory coverage-html --rc branch_coverage=1 --ignore-errors inconsistent --quiet
+	@echo "✅ HTML report generated in coverage-html/"
+	@echo "📂 Open with: open coverage-html/index.html"
+	@open coverage-html/index.html 2>/dev/null || echo "   (Run 'open coverage-html/index.html' to view)"
 
 gas-report:
 	FOUNDRY_PROFILE=$(profile) forge test --gas-report > gasreport.ansi
