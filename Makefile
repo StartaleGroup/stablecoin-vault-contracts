@@ -42,7 +42,7 @@ coverage-filtered:
 	@echo ""
 	@echo "📈 Filtered Coverage Summary:"
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	@lcov --list lcov.info --rc branch_coverage=1 --ignore-errors inconsistent 2>/dev/null || echo "lcov not installed"
+	@./scripts/coverage-summary.sh lcov.info
 	@echo ""
 	@echo "✓ Filtered coverage saved to lcov.info (for Coverage Gutters)"
 	@echo "✓ Full coverage saved to lcov-full.info"
