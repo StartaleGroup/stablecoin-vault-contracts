@@ -10,7 +10,7 @@ import {IERC20} from 'lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.so
 import {IERC20Permit} from 'lib/openzeppelin-contracts/contracts/token/ERC20/extensions/IERC20Permit.sol';
 import {SafeERC20} from 'lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol';
 import {Pausable} from 'lib/openzeppelin-contracts/contracts/utils/Pausable.sol';
-import {ReentrancyGuard} from 'lib/openzeppelin-contracts/contracts/utils/ReentrancyGuard.sol';
+import {ReentrancyGuardTransient} from 'lib/openzeppelin-contracts/contracts/utils/ReentrancyGuardTransient.sol';
 import {Math} from 'lib/openzeppelin-contracts/contracts/utils/math/Math.sol';
 
 /// @title EarnVault (claimable yield)
@@ -22,7 +22,7 @@ import {Math} from 'lib/openzeppelin-contracts/contracts/utils/math/Math.sol';
 ///   - When yield arrives and totalPrincipal>0: globalIndex += amount*RAY/totalPrincipal.
 ///   - If totalPrincipal==0 at yield time: amount is transferred directly to treasury.
 /// Invariant (funding): USDSC balance >= claimReserve.
-contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausable, ReentrancyGuard {
+contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausable, ReentrancyGuardTransient {
   using SafeERC20 for IERC20;
 
   // -------- Constants --------

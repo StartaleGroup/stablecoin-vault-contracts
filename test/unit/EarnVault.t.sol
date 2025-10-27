@@ -2332,7 +2332,7 @@ contract EarnVaultTest is Test {
     assertEq(finalBalance - initialBalance, extraAmount, 'Only expected amount should be recovered');
   }
 
-  /// @notice Test that nonReentrant guard prevents reentrancy in recoverERC20
+  /// @notice Test that reentrancy guard prevents reentrancy in recoverERC20
   function test_RecoverERC20_CannotReenter() public {
     uint256 depositAmount = 1000e6;
     uint256 extraAmount = 100e6;

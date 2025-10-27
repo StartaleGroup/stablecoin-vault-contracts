@@ -11,8 +11,8 @@ import {
 } from 'lib/openzeppelin-contracts-upgradeable/contracts/access/Ownable2StepUpgradeable.sol';
 import {PausableUpgradeable} from 'lib/openzeppelin-contracts-upgradeable/contracts/utils/PausableUpgradeable.sol';
 import {
-  ReentrancyGuardUpgradeable
-} from 'lib/openzeppelin-contracts-upgradeable/contracts/utils/ReentrancyGuardUpgradeable.sol';
+  ReentrancyGuardTransientUpgradeable
+} from 'lib/openzeppelin-contracts-upgradeable/contracts/utils/ReentrancyGuardTransientUpgradeable.sol';
 import {IERC20} from 'lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol';
 import {IERC20Permit} from 'lib/openzeppelin-contracts/contracts/token/ERC20/extensions/IERC20Permit.sol';
 import {SafeERC20} from 'lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol';
@@ -31,7 +31,7 @@ contract EarnVaultUpgradeable is
   Initializable,
   Ownable2StepUpgradeable,
   PausableUpgradeable,
-  ReentrancyGuardUpgradeable,
+  ReentrancyGuardTransientUpgradeable,
   EarnVaultStorageBase,
   IEarnVault
 {
@@ -89,7 +89,7 @@ contract EarnVaultUpgradeable is
     // Initialize upgradeable contracts
     __Ownable2Step_init();
     __Pausable_init();
-    __ReentrancyGuard_init();
+    __ReentrancyGuardTransient_init();
 
     // Set owner
     _transferOwnership(owner);
