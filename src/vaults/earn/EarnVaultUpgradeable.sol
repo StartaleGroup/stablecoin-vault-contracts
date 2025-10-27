@@ -601,7 +601,7 @@ contract EarnVaultUpgradeable is
   /// @param token Token address to recover
   /// @param to Address to send tokens to
   /// @param amount Amount to recover
-  function recoverERC20(address token, address to, uint256 amount) external onlyOwner {
+  function recoverERC20(address token, address to, uint256 amount) external onlyOwner nonReentrant {
     EarnVaultStorage storage $ = _getStorage();
     if (to == address(0)) revert CanNotBeZeroAddress();
 
@@ -630,7 +630,7 @@ contract EarnVaultUpgradeable is
 
   /// @notice Sweep excess USDSC yield to treasury (when vault has surplus above reserves)
   /// @dev Sweeps all surplus above minimum required reserves
-  function sweepSurplusToTreasury() external onlyOwner {
+  function sweepSurplusToTreasury() external onlyOwner nonReentrant {
     EarnVaultStorage storage $ = _getStorage();
     uint256 bal = $.USDSC.balanceOf(address(this));
     uint256 minRequired = $.claimReserve;
