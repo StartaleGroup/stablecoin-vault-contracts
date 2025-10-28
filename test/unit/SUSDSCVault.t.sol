@@ -688,7 +688,7 @@ contract UnitSUSDSCVault is Test {
     // shares = assets * (totalSupply + 10^decimalsOffset) / (totalAssets + 1)
     // shares = 500 * (0 + 1) / (1000 + 1) = 500/1001 ≈ 0.499 (rounds down to 0)
     // This prevents inflation attacks by making early deposits less favorable
-    uint256 expectedShares = depositAmount * 1 / (yieldAmount + 1); // Should be 0 due to rounding
+    uint256 expectedShares = (depositAmount * 1) / (yieldAmount + 1); // Should be 0 due to rounding
     assertEq(shares, expectedShares);
     assertEq(vault.balanceOf(depositorA), shares);
 
@@ -717,7 +717,7 @@ contract UnitSUSDSCVault is Test {
       vm.stopPrank();
 
       // With a larger deposit, shares should be > 0
-      uint256 expectedLargerShares = largerDeposit * 1 / (vault.totalAssets() - largerDeposit + 1);
+      uint256 expectedLargerShares = (largerDeposit * 1) / (vault.totalAssets() - largerDeposit + 1);
       assertEq(largerShares, expectedLargerShares);
       assertGt(largerShares, 0);
     }

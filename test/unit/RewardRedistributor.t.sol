@@ -2,6 +2,7 @@
 pragma solidity ^0.8.30;
 
 import '../../src/distributor/RewardRedistributor.sol';
+import '../../src/interfaces/distributor/IRewardRedistributorEventsAndErrors.sol';
 import '../mocks/MockERC4626Vault.sol';
 import '../mocks/MockEarnVault.sol';
 import '../mocks/MockExtension.sol';
@@ -219,8 +220,8 @@ contract RewardRedistributorTest is Test {
     uint256 T_earn = earnV.totalPrincipal();
     uint256 T_yield = sVault.totalAssets();
 
-    assertLe(toEarn, (minted - fee) * T_earn / sBase);
-    assertLe(toYield, (minted - fee) * T_yield / sBase);
+    assertLe(toEarn, ((minted - fee) * T_earn) / sBase);
+    assertLe(toYield, ((minted - fee) * T_yield) / sBase);
 
     vm.prank(operator);
     rr.distribute();
@@ -360,7 +361,7 @@ contract RewardRedistributorTest is Test {
 
     // Run many small distributions to test carry fairness
     for (uint256 i = 0; i < 30; i++) {
-      uint256 yieldAmount = 1000 + (i * 137) % 5000; // Pseudo-random amounts
+      uint256 yieldAmount = 1000 + ((i * 137) % 5000); // Pseudo-random amounts
       ext.addPending(yieldAmount);
 
       // Get preview with carry
@@ -406,10 +407,10 @@ contract RewardRedistributorTest is Test {
     assertLt(onError, currentSBase, 'on carry error bounded');
 
     if (totalTheoreticalEarn > 0) {
-      assertLt(earnError * 1000 / totalTheoreticalEarn, 1, 'earn fairness < 0.1%');
+      assertLt((earnError * 1000) / totalTheoreticalEarn, 1, 'earn fairness < 0.1%');
     }
     if (totalTheoreticalYield > 0) {
-      assertLt(onError * 1000 / totalTheoreticalYield, 1, 'on fairness < 0.1%');
+      assertLt((onError * 1000) / totalTheoreticalYield, 1, 'on fairness < 0.1%');
     }
   }
 
@@ -531,7 +532,7 @@ contract RewardRedistributorTest is Test {
     bool foundDistributedEvent = false;
 
     for (uint256 i = 0; i < logs.length; i++) {
-      if (logs[i].topics[0] == RewardRedistributor.Distributed.selector) {
+      if (logs[i].topics[0] == IRewardRedistributorEventsAndErrors.Distributed.selector) {
         foundDistributedEvent = true;
 
         // Decode the event data
@@ -888,7 +889,7 @@ contract RewardRedistributorTest is Test {
     bool foundEvent = false;
 
     for (uint256 i = 0; i < logs.length; i++) {
-      if (logs[i].topics[0] == RewardRedistributor.Distributed.selector) {
+      if (logs[i].topics[0] == IRewardRedistributorEventsAndErrors.Distributed.selector) {
         // Decode event parameters
         (
           uint256 minted,

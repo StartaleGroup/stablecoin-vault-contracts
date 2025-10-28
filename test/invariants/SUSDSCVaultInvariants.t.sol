@@ -363,4 +363,3 @@ contract SUSDSCVaultInvariants is StdInvariant, Test {
     assertEq(vaultBalance, totalAssets);
   }
 }
-

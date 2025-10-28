@@ -923,7 +923,7 @@ contract RewardRedistributorIntegrationTest is Test {
 
     for (uint256 i = 0; i < 10; i++) {
       // Random distribution
-      ext.addPending((i * 123 + 456) % 5000e6 + 1000e6);
+      ext.addPending(((i * 123 + 456) % 5000e6) + 1000e6);
       vm.prank(operator);
       rr.distribute();
 
@@ -1281,7 +1281,9 @@ contract RewardRedistributorIntegrationTest is Test {
     rr.setParams(startale, IEarnVault(address(earnVault)), IERC4626(address(0)), 0);
 
     // Test fee too high validation
-    vm.expectRevert(abi.encodeWithSelector(IRewardRedistributorEventsAndErrors.FeeTooHigh.selector, uint16(2001), uint16(2000)));
+    vm.expectRevert(
+      abi.encodeWithSelector(IRewardRedistributorEventsAndErrors.FeeTooHigh.selector, uint16(2001), uint16(2000))
+    );
     rr.setParams(startale, IEarnVault(address(earnVault)), IERC4626(address(susdscVault)), 2001); // > MAX_FEE_BPS
 
     // Test valid parameter update
