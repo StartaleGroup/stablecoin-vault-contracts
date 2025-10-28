@@ -6,8 +6,14 @@ on:
       - main
       - dev
   pull_request:
+    branches:
+      - main
+      - dev
 
-permissions: write-all
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
 
 jobs:
   check:
@@ -21,85 +27,138 @@ jobs:
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
 
-      - name: Install lcov
-        uses: hrishikesh-kadam/setup-lcov@v1
-
       - name: Run coverage
         env:
           MNEMONIC: ${{ secrets.MNEMONIC_FOR_TESTS }}
           MAINNET_RPC_URL: ${{ secrets.MAINNET_RPC_URL }}
         run: |
-          timeout 30m make coverage-filtered profile=ci
+          echo "Running coverage with exclusions..."
+          make coverage-exclude profile=ci | tee coverage-output.txt
+          exit_code=$?
+          echo "Coverage command completed with exit code: $exit_code"
+          if [ $exit_code -ne 0 ]; then
+            echo "❌ Coverage command failed with exit code: $exit_code"
+            echo "Coverage failed with exit code: $exit_code" >> coverage-output.txt
+          fi
+        timeout-minutes: 30
         id: coverage
 
-      - name: Debug lcov files
+      - name: Debug coverage output
         run: |
-          echo "=== Generated files ==="
-          ls -lh lcov*.info
-          echo ""
-          echo "=== Source files in lcov.info ==="  
-          grep "^SF:" lcov.info | head -20
-          echo ""
-          echo "=== Check for duplicates ==="
-          grep "^SF:" lcov.info | sort | uniq -c | sort -rn | head -10
-
-      - name: Generate HTML coverage report
-        run: |
-          genhtml lcov.info --output-directory coverage-html --rc branch_coverage=1 --ignore-errors inconsistent --quiet
-          echo "HTML report generated in coverage-html/"
+          echo "=== Coverage file info ==="
+          ls -la coverage-output.txt || echo "coverage-output.txt not found"
+          echo "=== Coverage file contents ==="
+          cat coverage-output.txt || echo "Could not read coverage-output.txt"
+          echo "=== End of coverage file ==="
 
       - name: Print coverage summary
         run: |
-          # Use custom script for per-file breakdown with correct percentages
           echo "## 📊 Coverage Report" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Filtered coverage for \`src/vaults/\` and \`src/distributor/\`" >> $GITHUB_STEP_SUMMARY
+          echo "Filtered coverage excluding test, mock, script, interfaces, etc." >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          ./scripts/coverage-summary.sh lcov.info >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "📄 View detailed HTML report in workflow artifacts" >> $GITHUB_STEP_SUMMARY
-
-      - name: Upload coverage report
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-html-report
-          path: coverage-html/
+          if [ -f coverage-output.txt ] && [ -s coverage-output.txt ]; then
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            tail -20 coverage-output.txt >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ Coverage output file not found or empty" >> $GITHUB_STEP_SUMMARY
+          fi
 
       - name: Comment PR with coverage
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
           script: |
-            const { execSync } = require('child_process');
-            const summary = execSync(
-              './scripts/coverage-summary.sh lcov.info',
-              { encoding: 'utf-8' }
-            ).trim();
-            const commitSha = context.sha.substring(0, 7);
+            const fs = require('fs');
+            let coverageTable = '';
+            let body = '';
+
+            console.log('Starting PR comment generation...');
+            console.log('PR number:', context.payload.pull_request.number);
+            console.log('Repository:', context.repo.owner + '/' + context.repo.repo);
+
+            try {
+              if (fs.existsSync('coverage-output.txt')) {
+                const coverageOutput = fs.readFileSync('coverage-output.txt', 'utf8');
+                console.log('Coverage output length:', coverageOutput.length);
+
+                // Look for the coverage table (starts with file paths and contains percentages)
+                const lines = coverageOutput.split('\n');
+
+                // Find the start of the coverage table (look for lines with percentages)
+                let tableStart = -1;
+                let tableEnd = -1;
+
+                for (let i = 0; i < lines.length; i++) {
+                  // Look for lines that contain percentage patterns like "96.56% (618/640)"
+                  if (lines[i].includes('% (') && lines[i].includes('/')) {
+                    if (tableStart === -1) tableStart = Math.max(0, i - 2); // Include header
+                    tableEnd = i + 1;
+                  }
+                }
+
+                if (tableStart !== -1 && tableEnd !== -1) {
+                  // Extract the table section
+                  coverageTable = lines.slice(tableStart, tableEnd + 3).join('\n'); // Add a few extra lines
+                  console.log('Found coverage table, lines', tableStart, 'to', tableEnd + 3);
+                } else {
+                  // Fallback: get the last 30 lines which should contain the table
+                  coverageTable = lines.slice(-30).join('\n');
+                  console.log('Using fallback: last 30 lines');
+                }
+
+                if (coverageTable.trim().length === 0) {
+                  coverageTable = 'No coverage data found in output';
+                  console.log('Warning: Coverage table is empty');
+                }
+              } else {
+                coverageTable = 'Coverage output file not found';
+                console.log('Error: coverage-output.txt not found');
+              }
+            } catch (error) {
+              console.error('Error reading coverage file:', error);
+              coverageTable = 'Error reading coverage output: ' + error.message;
+            }
+
             const timestamp = new Date().toISOString();
-            const body = '## 📊 Coverage Report\n\nFiltered coverage for `src/vaults/` and `src/distributor/`\n\n```\n' + summary + '\n```\n\n📄 [View detailed HTML report in workflow artifacts](https://github.com/' + context.repo.owner + '/' + context.repo.repo + '/actions/runs/' + context.runId + ')\n\n_Updated for commit ' + commitSha + ' at ' + timestamp + '_';
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.payload.pull_request.number,
-            });
-            const botComment = comments.find(comment => comment.user.type === 'Bot' && comment.body.includes('📊 Coverage Report'));
-            if (botComment) {
-              console.log('Updating existing coverage comment...');
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: botComment.id,
-                body: body
-              });
-            } else {
-              console.log('Creating new coverage comment...');
-              await github.rest.issues.createComment({
+            const commitSha = context.sha.substring(0, 7);
+            body = '## 📊 Coverage Report\n\nFiltered coverage excluding test, mock, script, interfaces, etc.\n\n```\n' + coverageTable + '\n```\n\n_Updated for commit ' + commitSha + ' at ' + timestamp + '_';
+
+            console.log('Generated comment body length:', body.length);
+
+            try {
+              const { data: comments } = await github.rest.issues.listComments({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: context.payload.pull_request.number,
-                body: body
               });
+
+              console.log('Found', comments.length, 'existing comments');
+
+              const botComment = comments.find(comment => comment.user.type === 'Bot' && comment.body.includes('📊 Coverage Report'));
+
+              if (botComment) {
+                console.log('Updating existing coverage comment with ID:', botComment.id);
+                await github.rest.issues.updateComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: botComment.id,
+                  body: body
+                });
+                console.log('✅ Successfully updated existing comment');
+              } else {
+                console.log('Creating new coverage comment...');
+                const result = await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.payload.pull_request.number,
+                  body: body
+                });
+                console.log('✅ Successfully created new comment with ID:', result.data.id);
+              }
+            } catch (error) {
+              console.error('❌ Error posting comment:', error);
+              console.error('Error details:', error.message);
+              throw error; // Re-throw to make the step fail visibly
             }

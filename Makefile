@@ -2,6 +2,9 @@
 # (-include to ignore error if it does not exist)
 -include .env
 
+# Coverage exclusion pattern for consistent filtering
+COVERAGE_EXCLUDE_PATTERN = 'test|mock|script|interfaces|coin|external|libs|plan|references|types|utils|4626|multi-yield'
+
 # dapp deps
 update:; forge update
 
@@ -33,25 +36,16 @@ invariant:
 coverage:
 	FOUNDRY_PROFILE=$(profile) forge coverage --report lcov
 
-coverage-filtered:
-	@echo "📊 Generating full coverage report..."
-	@FOUNDRY_PROFILE=$(profile) forge coverage --report lcov --report-file lcov-full.info
-	@echo "🔍 Filtering to src/vaults and src/distributor only..."
-	@lcov --extract lcov-full.info 'src/vaults/*' 'src/distributor/*' --output-file lcov-filtered.info --rc branch_coverage=1 --ignore-errors inconsistent 2>/dev/null
-	@cp lcov-filtered.info lcov.info
-	@echo ""
-	@echo "📈 Filtered Coverage Summary:"
-	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	@./scripts/coverage-summary.sh lcov.info
-	@echo ""
-	@echo "✓ Filtered coverage saved to lcov.info (for Coverage Gutters)"
-	@echo "✓ Full coverage saved to lcov-full.info"
-	@echo ""
-	@echo "💡 To generate HTML report: make coverage-html"
-	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+coverage-exclude:
+	@echo "📊 Generating coverage with exclusions..."
+	@FOUNDRY_PROFILE=$(profile) forge coverage --no-match-coverage $(COVERAGE_EXCLUDE_PATTERN) --report summary
+
+coverage-exclude-lcov:
+	@echo "📊 Generating coverage with exclusions (lcov + summary)..."
+	@FOUNDRY_PROFILE=$(profile) forge coverage --no-match-coverage $(COVERAGE_EXCLUDE_PATTERN) --report lcov --report summary
 
 coverage-html:
-	@echo "🌐 Generating HTML coverage report..."
+	@echo "🌐 Generating HTML coverage report from lcov.info..."
 	@genhtml lcov.info --output-directory coverage-html --rc branch_coverage=1 --ignore-errors inconsistent --quiet
 	@echo "✅ HTML report generated in coverage-html/"
 	@echo "📂 Open with: open coverage-html/index.html"
