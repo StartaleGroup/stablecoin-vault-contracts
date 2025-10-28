@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.26;
+pragma solidity ^0.8.30;
 
 contract MockUSDSC layout at 2 ** 255 - 42 {
   string public constant NAME = 'Mock USDSC';
