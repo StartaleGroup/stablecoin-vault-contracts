@@ -2,6 +2,9 @@
 # (-include to ignore error if it does not exist)
 -include .env
 
+# Coverage exclusion pattern for consistent filtering
+COVERAGE_EXCLUDE_PATTERN = 'test|mock|script|interfaces|coin|external|libs|plan|references|types|utils|4626|multi-yield'
+
 # dapp deps
 update:; forge update
 
@@ -35,11 +38,11 @@ coverage:
 
 coverage-exclude:
 	@echo "📊 Generating coverage with exclusions..."
-	@FOUNDRY_PROFILE=$(profile) forge coverage --no-match-coverage 'test|mock|script|interfaces|coin|external|libs|plan|references|types|utils|4626|multi-yield' --report summary
+	@FOUNDRY_PROFILE=$(profile) forge coverage --no-match-coverage $(COVERAGE_EXCLUDE_PATTERN) --report summary
 
 coverage-exclude-lcov:
 	@echo "📊 Generating coverage with exclusions (lcov + summary)..."
-	@FOUNDRY_PROFILE=$(profile) forge coverage --no-match-coverage 'test|mock|script|interfaces|coin|external|libs|plan|references|types|utils|4626|multi-yield' --report lcov --report summary
+	@FOUNDRY_PROFILE=$(profile) forge coverage --no-match-coverage $(COVERAGE_EXCLUDE_PATTERN) --report lcov --report summary
 
 coverage-html:
 	@echo "🌐 Generating HTML coverage report from lcov.info..."

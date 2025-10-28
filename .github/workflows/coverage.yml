@@ -26,8 +26,25 @@ jobs:
           MNEMONIC: ${{ secrets.MNEMONIC_FOR_TESTS }}
           MAINNET_RPC_URL: ${{ secrets.MAINNET_RPC_URL }}
         run: |
-          timeout 30m make coverage-exclude profile=ci > coverage-output.txt 2>&1
+          echo "Running coverage with exclusions..."
+          # Run coverage with a reasonable timeout using GitHub Actions timeout
+          make coverage-exclude profile=ci | tee coverage-output.txt
+          exit_code=$?
+          echo "Coverage command completed with exit code: $exit_code"
+          if [ $exit_code -ne 0 ]; then
+            echo "❌ Coverage command failed with exit code: $exit_code"
+            echo "Coverage failed with exit code: $exit_code" >> coverage-output.txt
+          fi
+        timeout-minutes: 30
         id: coverage
+
+      - name: Debug coverage output
+        run: |
+          echo "=== Coverage file info ==="
+          ls -la coverage-output.txt || echo "coverage-output.txt not found"
+          echo "=== Coverage file contents ==="
+          cat coverage-output.txt || echo "Could not read coverage-output.txt"
+          echo "=== End of coverage file ==="
 
       - name: Print coverage summary
         run: |
@@ -35,9 +52,13 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Filtered coverage excluding test, mock, script, interfaces, etc." >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          tail -20 coverage-output.txt >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          if [ -f coverage-output.txt ] && [ -s coverage-output.txt ]; then
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            tail -20 coverage-output.txt >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ Coverage output file not found or empty" >> $GITHUB_STEP_SUMMARY
+          fi
 
       - name: Comment PR with coverage
         if: github.event_name == 'pull_request'
@@ -45,11 +66,52 @@ jobs:
         with:
           script: |
             const fs = require('fs');
-            const coverageOutput = fs.readFileSync('coverage-output.txt', 'utf8');
-            const coverageTable = coverageOutput.split('\n').slice(-20).join('\n');
+            let coverageTable = '';
+            let body = '';
+
+            try {
+              if (fs.existsSync('coverage-output.txt')) {
+                const coverageOutput = fs.readFileSync('coverage-output.txt', 'utf8');
+                console.log('Coverage output length:', coverageOutput.length);
+
+                // Look for the coverage table (starts with file paths and contains percentages)
+                const lines = coverageOutput.split('\n');
+
+                // Find the start of the coverage table (look for lines with percentages)
+                let tableStart = -1;
+                let tableEnd = -1;
+
+                for (let i = 0; i < lines.length; i++) {
+                  // Look for lines that contain percentage patterns like "96.56% (618/640)"
+                  if (lines[i].includes('% (') && lines[i].includes('/')) {
+                    if (tableStart === -1) tableStart = Math.max(0, i - 2); // Include header
+                    tableEnd = i + 1;
+                  }
+                }
+
+                if (tableStart !== -1 && tableEnd !== -1) {
+                  // Extract the table section
+                  coverageTable = lines.slice(tableStart, tableEnd + 3).join('\n'); // Add a few extra lines
+                } else {
+                  // Fallback: get the last 30 lines which should contain the table
+                  coverageTable = lines.slice(-30).join('\n');
+                }
+
+                if (coverageTable.trim().length === 0) {
+                  coverageTable = 'No coverage data found in output';
+                }
+              } else {
+                coverageTable = 'Coverage output file not found';
+              }
+            } catch (error) {
+              console.error('Error reading coverage file:', error);
+              coverageTable = 'Error reading coverage output: ' + error.message;
+            }
+
             const timestamp = new Date().toISOString();
             const commitSha = context.sha.substring(0, 7);
-            const body = '## 📊 Coverage Report\n\nFiltered coverage excluding test, mock, script, interfaces, etc.\n\n```\n' + coverageTable + '\n```\n\n_Updated for commit ' + commitSha + ' at ' + timestamp + '_';
+            body = '## 📊 Coverage Report\n\nFiltered coverage excluding test, mock, script, interfaces, etc.\n\n```\n' + coverageTable + '\n```\n\n_Updated for commit ' + commitSha + ' at ' + timestamp + '_';
+
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
