@@ -6,6 +6,9 @@ on:
       - main
       - dev
   pull_request:
+    branches:
+      - main
+      - dev
 
 permissions: write-all
 
@@ -27,7 +30,6 @@ jobs:
           MAINNET_RPC_URL: ${{ secrets.MAINNET_RPC_URL }}
         run: |
           echo "Running coverage with exclusions..."
-          # Run coverage with a reasonable timeout using GitHub Actions timeout
           make coverage-exclude profile=ci | tee coverage-output.txt
           exit_code=$?
           echo "Coverage command completed with exit code: $exit_code"
