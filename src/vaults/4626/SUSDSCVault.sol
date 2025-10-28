@@ -7,14 +7,14 @@ import {ERC20} from '@openzeppelin/contracts/token/ERC20/ERC20.sol';
 import {IERC20} from '@openzeppelin/contracts/token/ERC20/IERC20.sol';
 import {ERC4626} from '@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol';
 import {Pausable} from '@openzeppelin/contracts/utils/Pausable.sol';
-import {ReentrancyGuard} from '@openzeppelin/contracts/utils/ReentrancyGuard.sol';
+import {ReentrancyGuardTransient} from '@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol';
 import {SafeTransferLib} from 'solady/utils/SafeTransferLib.sol';
 
 // Note: non-upgradeable version
 // Note: We could have some admin actions
 
 /// @title sUSDSCVault — ERC-4626: deposit USDSC → mint sUSDSC; external asset inflows lift PPS
-contract SUSDSCVault is ERC20, ERC4626, AccessControl, Pausable, ReentrancyGuard, ISUSDSCVaultEventsAndErrors {
+contract SUSDSCVault is ERC20, ERC4626, AccessControl, Pausable, ReentrancyGuardTransient, ISUSDSCVaultEventsAndErrors {
   using SafeTransferLib for IERC20;
 
   bytes32 public constant PAUSER_ROLE = keccak256('PAUSER_ROLE');

@@ -10,7 +10,7 @@ import {IERC20} from 'lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.so
 import {IERC20Permit} from 'lib/openzeppelin-contracts/contracts/token/ERC20/extensions/IERC20Permit.sol';
 import {SafeERC20} from 'lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol';
 import {Pausable} from 'lib/openzeppelin-contracts/contracts/utils/Pausable.sol';
-import {ReentrancyGuard} from 'lib/openzeppelin-contracts/contracts/utils/ReentrancyGuard.sol';
+import {ReentrancyGuardTransient} from 'lib/openzeppelin-contracts/contracts/utils/ReentrancyGuardTransient.sol';
 import {Math} from 'lib/openzeppelin-contracts/contracts/utils/math/Math.sol';
 
 /// @title EarnVault (claimable yield)
@@ -22,7 +22,7 @@ import {Math} from 'lib/openzeppelin-contracts/contracts/utils/math/Math.sol';
 ///   - When yield arrives and totalPrincipal>0: globalIndex += amount*RAY/totalPrincipal.
 ///   - If totalPrincipal==0 at yield time: amount is transferred directly to treasury.
 /// Invariant (funding): USDSC balance >= claimReserve.
-contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausable, ReentrancyGuard {
+contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausable, ReentrancyGuardTransient {
   using SafeERC20 for IERC20;
 
   // -------- Constants --------
@@ -524,7 +524,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
   /// @param token Token address to recover
   /// @param to Address to send tokens to
   /// @param amount Amount to recover
-  function recoverERC20(address token, address to, uint256 amount) external onlyOwner {
+  function recoverERC20(address token, address to, uint256 amount) external onlyOwner nonReentrant {
     if (to == address(0)) revert CanNotBeZeroAddress();
 
     if (token == address(USDSC)) {
@@ -552,7 +552,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
 
   /// @notice Sweep excess USDSC yield to treasury (when vault has surplus above reserves)
   /// @dev Sweeps all surplus above minimum required reserves
-  function sweepSurplusToTreasury() external onlyOwner {
+  function sweepSurplusToTreasury() external onlyOwner nonReentrant {
     uint256 bal = USDSC.balanceOf(address(this));
     uint256 minRequired = claimReserve;
 

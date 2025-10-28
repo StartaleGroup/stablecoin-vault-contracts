@@ -7,7 +7,7 @@ import {Initializable} from '@openzeppelin/contracts-upgradeable/proxy/utils/Ini
 import {ERC20Upgradeable} from '@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol';
 import {ERC4626Upgradeable} from '@openzeppelin/contracts-upgradeable/token/ERC20/extensions/ERC4626Upgradeable.sol';
 import {PausableUpgradeable} from '@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol';
-import {ReentrancyGuardUpgradeable} from '@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol';
+import {ReentrancyGuardTransientUpgradeable} from '@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardTransientUpgradeable.sol';
 import {IERC20} from '@openzeppelin/contracts/token/ERC20/IERC20.sol';
 import {SafeTransferLib} from 'solady/utils/SafeTransferLib.sol';
 
@@ -18,7 +18,7 @@ contract SUSDSCVaultUpgradable is
   ERC4626Upgradeable,
   AccessControlUpgradeable,
   PausableUpgradeable,
-  ReentrancyGuardUpgradeable,
+  ReentrancyGuardTransientUpgradeable,
   ISUSDSCVaultEventsAndErrors
 {
   using SafeTransferLib for IERC20;
@@ -43,7 +43,7 @@ contract SUSDSCVaultUpgradable is
     __ERC4626_init(usdsc);
     __AccessControl_init();
     __Pausable_init();
-    __ReentrancyGuard_init();
+    __ReentrancyGuardTransient_init();
 
     _grantRole(DEFAULT_ADMIN_ROLE, admin);
     _grantRole(PAUSER_ROLE, pauser);

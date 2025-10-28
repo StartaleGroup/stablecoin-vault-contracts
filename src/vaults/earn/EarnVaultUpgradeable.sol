@@ -11,8 +11,8 @@ import {
 } from 'lib/openzeppelin-contracts-upgradeable/contracts/access/Ownable2StepUpgradeable.sol';
 import {PausableUpgradeable} from 'lib/openzeppelin-contracts-upgradeable/contracts/utils/PausableUpgradeable.sol';
 import {
-  ReentrancyGuardUpgradeable
-} from 'lib/openzeppelin-contracts-upgradeable/contracts/utils/ReentrancyGuardUpgradeable.sol';
+  ReentrancyGuardTransientUpgradeable
+} from 'lib/openzeppelin-contracts-upgradeable/contracts/utils/ReentrancyGuardTransientUpgradeable.sol';
 import {IERC20} from 'lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol';
 import {IERC20Permit} from 'lib/openzeppelin-contracts/contracts/token/ERC20/extensions/IERC20Permit.sol';
 import {SafeERC20} from 'lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol';
@@ -31,7 +31,7 @@ contract EarnVaultUpgradeable is
   Initializable,
   Ownable2StepUpgradeable,
   PausableUpgradeable,
-  ReentrancyGuardUpgradeable,
+  ReentrancyGuardTransientUpgradeable,
   EarnVaultStorageBase,
   IEarnVault
 {
@@ -89,7 +89,7 @@ contract EarnVaultUpgradeable is
     // Initialize upgradeable contracts
     __Ownable2Step_init();
     __Pausable_init();
-    __ReentrancyGuard_init();
+    __ReentrancyGuardTransient_init();
 
     // Set owner
     _transferOwnership(owner);
@@ -601,7 +601,7 @@ contract EarnVaultUpgradeable is
   /// @param token Token address to recover
   /// @param to Address to send tokens to
   /// @param amount Amount to recover
-  function recoverERC20(address token, address to, uint256 amount) external onlyOwner {
+  function recoverERC20(address token, address to, uint256 amount) external onlyOwner nonReentrant {
     EarnVaultStorage storage $ = _getStorage();
     if (to == address(0)) revert CanNotBeZeroAddress();
 
@@ -630,7 +630,7 @@ contract EarnVaultUpgradeable is
 
   /// @notice Sweep excess USDSC yield to treasury (when vault has surplus above reserves)
   /// @dev Sweeps all surplus above minimum required reserves
-  function sweepSurplusToTreasury() external onlyOwner {
+  function sweepSurplusToTreasury() external onlyOwner nonReentrant {
     EarnVaultStorage storage $ = _getStorage();
     uint256 bal = $.USDSC.balanceOf(address(this));
     uint256 minRequired = $.claimReserve;
