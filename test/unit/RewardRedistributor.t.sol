@@ -908,10 +908,10 @@ contract RewardRedistributorTest is Test {
         assertEq(toSUSDSCVault, 0, 'Event: toSUSDSCVault should be 0');
         assertEq(tEarn, 0, 'Event: T_earn should be 0');
         assertEq(tYield, 0, 'Event: T_yield should be 0');
-        
+
         // Fee + extra should equal minted
         assertEq(feeToStartale + toStartaleExtra, minted, 'Event: fee + extra should equal minted');
-        
+
         foundEvent = true;
         break;
       }

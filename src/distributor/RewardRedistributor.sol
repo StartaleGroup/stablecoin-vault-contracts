@@ -7,7 +7,7 @@ import {IERC4626} from 'lib/openzeppelin-contracts/contracts/interfaces/IERC4626
 import {IERC20} from 'lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol';
 import {SafeERC20} from 'lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol';
 import {Pausable} from 'lib/openzeppelin-contracts/contracts/utils/Pausable.sol';
-import {ReentrancyGuard} from 'lib/openzeppelin-contracts/contracts/utils/ReentrancyGuard.sol';
+import {ReentrancyGuardTransient} from 'lib/openzeppelin-contracts/contracts/utils/ReentrancyGuardTransient.sol';
 import {IMYieldToOne} from 'm-extensions/projects/yieldToOne/IMYieldToOne.sol';
 
 /// @title RewardRedistributor
@@ -25,7 +25,7 @@ import {IMYieldToOne} from 'm-extensions/projects/yieldToOne/IMYieldToOne.sol';
 ///         - USDSC_ADDRESS: Single USDSC token address that implements both IERC20 and IMYieldToOne interfaces
 ///         - Cast to IERC20 for transfers and supply queries (totalSupply, safeTransfer)
 ///         - Cast to IMYieldToOne for yield operations (claimYield, yield)
-contract RewardRedistributor is AccessControl, Pausable, ReentrancyGuard {
+contract RewardRedistributor is AccessControl, Pausable, ReentrancyGuardTransient {
   using SafeERC20 for IERC20;
 
   // Keeper allowed to call distribute()

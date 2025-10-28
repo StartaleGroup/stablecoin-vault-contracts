@@ -2,6 +2,7 @@
 pragma solidity ^0.8.30;
 
 import {USDSC} from '../../src/coin/mock/USDSC.sol';
+import {ISUSDSCVaultEventsAndErrors} from '../../src/interfaces/vaults/4626/ISUSDSCVaultEventsAndErrors.sol';
 import {SUSDSCVaultUpgradable} from '../../src/vaults/4626/SUSDSCVaultUpgradable.sol';
 import {MockSUSDSCVaultV2} from '../mocks/MockSUSDSCVaultV2.sol';
 import {ProxyAdmin} from '@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol';
@@ -582,5 +583,317 @@ contract SUSDSCVaultUpgradeTest is Test {
   function _getImplementation() internal view returns (address) {
     bytes32 implementationSlot = bytes32(uint256(keccak256('eip1967.proxy.implementation')) - 1);
     return address(uint160(uint256(vm.load(address(proxy), implementationSlot))));
+  }
+
+  /*//////////////////////////////////////////////////////////////
+              RECOVER NON-ASSET ERC20 TESTS
+  //////////////////////////////////////////////////////////////*/
+
+  function test_RecoverNonAssetERC20_Success() public {
+    // Deploy a different ERC20 token (not USDSC)
+    MockM otherToken = new MockM();
+    uint256 amount = 1000e18;
+
+    // Send tokens to vault by mistake
+    deal(address(otherToken), address(vault), amount);
+
+    uint256 recipientBalanceBefore = otherToken.balanceOf(user1);
+
+    // Recover tokens
+    vm.prank(vaultAdmin);
+    vault.recoverNonAssetERC20(address(otherToken), user1, amount);
+
+    // Verify tokens were recovered
+    assertEq(otherToken.balanceOf(user1), recipientBalanceBefore + amount);
+    assertEq(otherToken.balanceOf(address(vault)), 0);
+  }
+
+  function test_Revert_RecoverNonAssetERC20_AssetToken() public {
+    // Try to recover USDSC (the asset)
+    vm.prank(vaultAdmin);
+    vm.expectRevert(ISUSDSCVaultEventsAndErrors.TokenCannotBeUSDSC.selector);
+    vault.recoverNonAssetERC20(address(usdsc), user1, 1000e6);
+  }
+
+  function test_Revert_RecoverNonAssetERC20_ZeroTokenAddress() public {
+    vm.prank(vaultAdmin);
+    vm.expectRevert(ISUSDSCVaultEventsAndErrors.TokenCannotBeZeroAddress.selector);
+    vault.recoverNonAssetERC20(address(0), user1, 1000e6);
+  }
+
+  function test_Revert_RecoverNonAssetERC20_ZeroRecipient() public {
+    MockM otherToken = new MockM();
+
+    vm.prank(vaultAdmin);
+    vm.expectRevert(ISUSDSCVaultEventsAndErrors.ToCannotBeZeroAddress.selector);
+    vault.recoverNonAssetERC20(address(otherToken), address(0), 1000e18);
+  }
+
+  function test_Revert_RecoverNonAssetERC20_ZeroAmount() public {
+    MockM otherToken = new MockM();
+
+    vm.prank(vaultAdmin);
+    vm.expectRevert(ISUSDSCVaultEventsAndErrors.AmountCannotBeZero.selector);
+    vault.recoverNonAssetERC20(address(otherToken), user1, 0);
+  }
+
+  function test_Revert_RecoverNonAssetERC20_NotAdmin() public {
+    MockM otherToken = new MockM();
+    deal(address(otherToken), address(vault), 1000e18);
+
+    // Non-admin tries to recover
+    vm.prank(attacker);
+    vm.expectRevert();
+    vault.recoverNonAssetERC20(address(otherToken), user1, 1000e18);
+  }
+
+  /*//////////////////////////////////////////////////////////////
+                      DECIMALS TESTS
+  //////////////////////////////////////////////////////////////*/
+
+  function test_Decimals_MatchesAsset() public view {
+    // USDSC has 6 decimals, vault should also have 6 decimals (with 0 offset)
+    assertEq(vault.decimals(), 6);
+    assertEq(vault.decimals(), usdsc.decimals());
+  }
+
+  function test_Decimals_ConsistentAfterUpgrade() public {
+    uint8 decimalsBefore = vault.decimals();
+
+    // Upgrade
+    MockSUSDSCVaultV2 newImplementation = new MockSUSDSCVaultV2();
+    vm.prank(admin);
+    proxyAdmin.upgradeAndCall(ITransparentUpgradeableProxy(address(proxy)), address(newImplementation), '');
+
+    // Verify decimals unchanged
+    assertEq(vault.decimals(), decimalsBefore);
+  }
+
+  /*//////////////////////////////////////////////////////////////
+                      WITHDRAW TESTS
+  //////////////////////////////////////////////////////////////*/
+
+  function test_Withdraw_Success() public {
+    // User deposits first
+    vm.prank(user1);
+    vault.deposit(DEPOSIT_AMOUNT, user1);
+
+    uint256 shares = vault.balanceOf(user1);
+    uint256 user1BalanceBefore = usdsc.balanceOf(user1);
+
+    // Withdraw half
+    uint256 withdrawAmount = DEPOSIT_AMOUNT / 2;
+    vm.prank(user1);
+    uint256 sharesRedeemed = vault.withdraw(withdrawAmount, user1, user1);
+
+    // Verify withdrawal
+    assertEq(usdsc.balanceOf(user1), user1BalanceBefore + withdrawAmount);
+    assertEq(vault.balanceOf(user1), shares - sharesRedeemed);
+  }
+
+  function test_Withdraw_WithYield() public {
+    // User deposits
+    vm.prank(user1);
+    vault.deposit(DEPOSIT_AMOUNT, user1);
+
+    // Add yield (50%)
+    uint256 yieldAmount = DEPOSIT_AMOUNT / 2;
+    deal(address(mToken), yieldRecipient, yieldAmount);
+    vm.prank(yieldRecipient);
+    bool success = mToken.transfer(address(swapFacility), yieldAmount);
+    require(success, 'Transfer failed');
+    vm.prank(address(swapFacility));
+    usdsc.wrap(address(vault), yieldAmount);
+
+    uint256 user1BalanceBefore = usdsc.balanceOf(user1);
+    uint256 sharesBefore = vault.balanceOf(user1);
+
+    // Withdraw original deposit amount
+    vm.prank(user1);
+    uint256 sharesRedeemed = vault.withdraw(DEPOSIT_AMOUNT, user1, user1);
+
+    // Should burn fewer shares due to increased PPS (approximately 2/3 of shares)
+    assertLe(sharesRedeemed, sharesBefore); // Should burn less than all shares
+    assertEq(usdsc.balanceOf(user1), user1BalanceBefore + DEPOSIT_AMOUNT);
+
+    // User should still have shares left
+    assertGt(vault.balanceOf(user1), 0);
+  }
+
+  function test_Withdraw_ToReceiver() public {
+    // User1 deposits
+    vm.prank(user1);
+    vault.deposit(DEPOSIT_AMOUNT, user1);
+
+    uint256 user2BalanceBefore = usdsc.balanceOf(user2);
+
+    // Withdraw to user2
+    vm.prank(user1);
+    vault.withdraw(DEPOSIT_AMOUNT, user2, user1);
+
+    // Verify user2 received the assets
+    assertEq(usdsc.balanceOf(user2), user2BalanceBefore + DEPOSIT_AMOUNT);
+    assertEq(vault.balanceOf(user1), 0);
+  }
+
+  function test_Withdraw_WithApproval() public {
+    // User1 deposits
+    vm.prank(user1);
+    vault.deposit(DEPOSIT_AMOUNT, user1);
+
+    // User1 approves user2 to withdraw
+    vm.prank(user1);
+    vault.approve(user2, type(uint256).max);
+
+    uint256 user2BalanceBefore = usdsc.balanceOf(user2);
+
+    // User2 withdraws on behalf of user1
+    vm.prank(user2);
+    vault.withdraw(DEPOSIT_AMOUNT, user2, user1);
+
+    assertEq(usdsc.balanceOf(user2), user2BalanceBefore + DEPOSIT_AMOUNT);
+    assertEq(vault.balanceOf(user1), 0);
+  }
+
+  function test_Revert_Withdraw_WhenPaused() public {
+    // User deposits
+    vm.prank(user1);
+    vault.deposit(DEPOSIT_AMOUNT, user1);
+
+    // Pause vault
+    vm.prank(pauser);
+    vault.pause(true);
+
+    // Try to withdraw
+    vm.prank(user1);
+    vm.expectRevert();
+    vault.withdraw(DEPOSIT_AMOUNT, user1, user1);
+  }
+
+  function test_Revert_Withdraw_InsufficientShares() public {
+    // User1 deposits
+    vm.prank(user1);
+    vault.deposit(DEPOSIT_AMOUNT, user1);
+
+    // Try to withdraw more than deposited
+    vm.prank(user1);
+    vm.expectRevert();
+    vault.withdraw(DEPOSIT_AMOUNT * 2, user1, user1);
+  }
+
+  /*//////////////////////////////////////////////////////////////
+                      MINT TESTS
+  //////////////////////////////////////////////////////////////*/
+
+  function test_Mint_Success() public {
+    uint256 sharesToMint = 1000e6;
+    uint256 user1BalanceBefore = usdsc.balanceOf(user1);
+
+    // Calculate assets needed
+    uint256 assetsNeeded = vault.previewMint(sharesToMint);
+
+    // Mint shares
+    vm.prank(user1);
+    uint256 assetsUsed = vault.mint(sharesToMint, user1);
+
+    // Verify mint
+    assertEq(vault.balanceOf(user1), sharesToMint);
+    assertEq(assetsUsed, assetsNeeded);
+    assertEq(usdsc.balanceOf(user1), user1BalanceBefore - assetsUsed);
+  }
+
+  function test_Mint_WithYield() public {
+    // First deposit to establish vault state
+    vm.prank(user2);
+    vault.deposit(DEPOSIT_AMOUNT, user2);
+
+    // Add yield (100%)
+    deal(address(mToken), yieldRecipient, DEPOSIT_AMOUNT);
+    vm.prank(yieldRecipient);
+    bool success = mToken.transfer(address(swapFacility), DEPOSIT_AMOUNT);
+    require(success, 'Transfer failed');
+    vm.prank(address(swapFacility));
+    usdsc.wrap(address(vault), DEPOSIT_AMOUNT);
+
+    uint256 sharesToMint = 1000e6;
+    uint256 user1BalanceBefore = usdsc.balanceOf(user1);
+
+    // Calculate assets needed (should be more due to higher PPS)
+    vault.previewMint(sharesToMint);
+
+    // Mint shares
+    vm.prank(user1);
+    uint256 assetsUsed = vault.mint(sharesToMint, user1);
+
+    // Verify - should use more assets than shares due to PPS > 1
+    assertGt(assetsUsed, sharesToMint);
+    assertEq(vault.balanceOf(user1), sharesToMint);
+    assertEq(usdsc.balanceOf(user1), user1BalanceBefore - assetsUsed);
+  }
+
+  function test_Mint_ToReceiver() public {
+    uint256 sharesToMint = 1000e6;
+    uint256 user1BalanceBefore = usdsc.balanceOf(user1);
+
+    // User1 mints to user2
+    vm.prank(user1);
+    uint256 assetsUsed = vault.mint(sharesToMint, user2);
+
+    // Verify user2 received shares, user1 paid assets
+    assertEq(vault.balanceOf(user2), sharesToMint);
+    assertEq(vault.balanceOf(user1), 0);
+    assertEq(usdsc.balanceOf(user1), user1BalanceBefore - assetsUsed);
+  }
+
+  function test_Mint_MultipleUsers() public {
+    uint256 sharesToMint = 1000e6;
+
+    // User1 mints
+    vm.prank(user1);
+    vault.mint(sharesToMint, user1);
+
+    // User2 mints same amount
+    vm.prank(user2);
+    vault.mint(sharesToMint, user2);
+
+    // Both should have same shares
+    assertEq(vault.balanceOf(user1), sharesToMint);
+    assertEq(vault.balanceOf(user2), sharesToMint);
+    assertEq(vault.totalSupply(), sharesToMint * 2);
+  }
+
+  function test_Revert_Mint_WhenPaused() public {
+    // Pause vault
+    vm.prank(pauser);
+    vault.pause(true);
+
+    // Try to mint
+    vm.prank(user1);
+    vm.expectRevert();
+    vault.mint(1000e6, user1);
+  }
+
+  function test_Revert_Mint_InsufficientAssets() public {
+    // User with no USDSC tries to mint
+    address poorUser = makeAddr('poorUser');
+
+    vm.prank(poorUser);
+    vm.expectRevert();
+    vault.mint(1000e6, poorUser);
+  }
+
+  function test_Mint_MaxMint() public {
+    // maxMint returns a very large number, so we'll just test a reasonable amount
+    uint256 sharesToMint = 1000e6; // Reasonable amount of shares
+
+    // Verify user has enough assets
+    uint256 assetsNeeded = vault.previewMint(sharesToMint);
+    assertLe(assetsNeeded, usdsc.balanceOf(user1), "User doesn't have enough assets");
+
+    // Mint shares
+    vm.prank(user1);
+    vault.mint(sharesToMint, user1);
+
+    assertEq(vault.balanceOf(user1), sharesToMint);
   }
 }
