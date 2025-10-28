@@ -21,65 +21,35 @@ jobs:
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
 
-      - name: Install lcov
-        uses: hrishikesh-kadam/setup-lcov@v1
-
       - name: Run coverage
         env:
           MNEMONIC: ${{ secrets.MNEMONIC_FOR_TESTS }}
           MAINNET_RPC_URL: ${{ secrets.MAINNET_RPC_URL }}
         run: |
-          timeout 30m make coverage-filtered profile=ci
+          timeout 30m make coverage-exclude profile=ci > coverage-output.txt 2>&1
         id: coverage
-
-      - name: Debug lcov files
-        run: |
-          echo "=== Generated files ==="
-          ls -lh lcov*.info
-          echo ""
-          echo "=== Source files in lcov.info ==="  
-          grep "^SF:" lcov.info | head -20
-          echo ""
-          echo "=== Check for duplicates ==="
-          grep "^SF:" lcov.info | sort | uniq -c | sort -rn | head -10
-
-      - name: Generate HTML coverage report
-        run: |
-          genhtml lcov.info --output-directory coverage-html --rc branch_coverage=1 --ignore-errors inconsistent --quiet
-          echo "HTML report generated in coverage-html/"
 
       - name: Print coverage summary
         run: |
-          # Use custom script for per-file breakdown with correct percentages
           echo "## 📊 Coverage Report" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Filtered coverage for \`src/vaults/\` and \`src/distributor/\`" >> $GITHUB_STEP_SUMMARY
+          echo "Filtered coverage excluding test, mock, script, interfaces, etc." >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          ./scripts/coverage-summary.sh lcov.info >> $GITHUB_STEP_SUMMARY
+          tail -20 coverage-output.txt >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "📄 View detailed HTML report in workflow artifacts" >> $GITHUB_STEP_SUMMARY
-
-      - name: Upload coverage report
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-html-report
-          path: coverage-html/
 
       - name: Comment PR with coverage
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
           script: |
-            const { execSync } = require('child_process');
-            const summary = execSync(
-              './scripts/coverage-summary.sh lcov.info',
-              { encoding: 'utf-8' }
-            ).trim();
-            const commitSha = context.sha.substring(0, 7);
+            const fs = require('fs');
+            const coverageOutput = fs.readFileSync('coverage-output.txt', 'utf8');
+            const coverageTable = coverageOutput.split('\n').slice(-20).join('\n');
             const timestamp = new Date().toISOString();
-            const body = '## 📊 Coverage Report\n\nFiltered coverage for `src/vaults/` and `src/distributor/`\n\n```\n' + summary + '\n```\n\n📄 [View detailed HTML report in workflow artifacts](https://github.com/' + context.repo.owner + '/' + context.repo.repo + '/actions/runs/' + context.runId + ')\n\n_Updated for commit ' + commitSha + ' at ' + timestamp + '_';
+            const commitSha = context.sha.substring(0, 7);
+            const body = '## 📊 Coverage Report\n\nFiltered coverage excluding test, mock, script, interfaces, etc.\n\n```\n' + coverageTable + '\n```\n\n_Updated for commit ' + commitSha + ' at ' + timestamp + '_';
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
