@@ -2,6 +2,7 @@
 pragma solidity ^0.8.30;
 
 import '../../src/distributor/RewardRedistributor.sol';
+import '../../src/interfaces/distributor/IRewardRedistributorEventsAndErrors.sol';
 import '../../src/interfaces/vaults/earn/IEarnVault.sol';
 import '../../src/vaults/4626/SUSDSCVault.sol';
 import '../../src/vaults/earn/EarnVault.sol';
@@ -1270,17 +1271,17 @@ contract RewardRedistributorIntegrationTest is Test {
     vm.startPrank(owner);
 
     // Test zero address validation
-    vm.expectRevert(bytes('zero'));
+    vm.expectRevert(abi.encodeWithSelector(IRewardRedistributorEventsAndErrors.ZeroAddress.selector, 'treasury'));
     rr.setParams(address(0), IEarnVault(address(earnVault)), IERC4626(address(susdscVault)), 0);
 
-    vm.expectRevert(bytes('zero'));
+    vm.expectRevert(abi.encodeWithSelector(IRewardRedistributorEventsAndErrors.ZeroAddress.selector, 'earnVault'));
     rr.setParams(startale, IEarnVault(address(0)), IERC4626(address(susdscVault)), 0);
 
-    vm.expectRevert(bytes('zero'));
+    vm.expectRevert(abi.encodeWithSelector(IRewardRedistributorEventsAndErrors.ZeroAddress.selector, 'susdscVault'));
     rr.setParams(startale, IEarnVault(address(earnVault)), IERC4626(address(0)), 0);
 
     // Test fee too high validation
-    vm.expectRevert(bytes('fee too high'));
+    vm.expectRevert(abi.encodeWithSelector(IRewardRedistributorEventsAndErrors.FeeTooHigh.selector, uint16(2001), uint16(2000)));
     rr.setParams(startale, IEarnVault(address(earnVault)), IERC4626(address(susdscVault)), 2001); // > MAX_FEE_BPS
 
     // Test valid parameter update

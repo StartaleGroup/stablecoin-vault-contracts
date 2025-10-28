@@ -82,9 +82,9 @@ contract EarnVaultUpgradeable is
     address treasuryAddr,
     address pauserAddr
   ) public initializer {
-    if (usdsc == address(0) || owner == address(0)) revert CanNotBeZeroAddress();
-    if (yieldRedistributorAddr == address(0) || treasuryAddr == address(0)) revert CanNotBeZeroAddress();
-    if (pauserAddr == address(0)) revert CanNotBeZeroAddress();
+    if (usdsc == address(0) || owner == address(0)) revert IEarnVaultEventsAndErrors.CanNotBeZeroAddress();
+    if (yieldRedistributorAddr == address(0) || treasuryAddr == address(0)) revert IEarnVaultEventsAndErrors.CanNotBeZeroAddress();
+    if (pauserAddr == address(0)) revert IEarnVaultEventsAndErrors.CanNotBeZeroAddress();
 
     // Initialize upgradeable contracts
     __Ownable2Step_init();
@@ -111,7 +111,7 @@ contract EarnVaultUpgradeable is
   /// @notice Set the yield redistributor address
   /// @param who New yield redistributor address
   function setYieldRedistributor(address who) external onlyOwner {
-    if (who == address(0)) revert CanNotBeZeroAddress();
+    if (who == address(0)) revert IEarnVaultEventsAndErrors.CanNotBeZeroAddress();
     EarnVaultStorage storage $ = _getStorage();
     address oldRedistributor = $.yieldRedistributor;
     $.yieldRedistributor = who;
@@ -121,7 +121,7 @@ contract EarnVaultUpgradeable is
   /// @notice Set the treasury address
   /// @param who New treasury address
   function setTreasury(address who) external onlyOwner {
-    if (who == address(0)) revert CanNotBeZeroAddress();
+    if (who == address(0)) revert IEarnVaultEventsAndErrors.CanNotBeZeroAddress();
     EarnVaultStorage storage $ = _getStorage();
     address oldTreasury = $.treasury;
     $.treasury = who;
@@ -131,7 +131,7 @@ contract EarnVaultUpgradeable is
   /// @notice Set the pauser address
   /// @param who New pauser address
   function setPauser(address who) external onlyOwner {
-    if (who == address(0)) revert CanNotBeZeroAddress();
+    if (who == address(0)) revert IEarnVaultEventsAndErrors.CanNotBeZeroAddress();
 
     EarnVaultStorage storage $ = _getStorage();
     address oldPauser = $.pauser;
@@ -348,7 +348,7 @@ contract EarnVaultUpgradeable is
   function deposit(uint256 amount) external virtual whenNotPaused nonReentrant {
     EarnVaultStorage storage $ = _getStorage();
     _checkNotBlacklisted(msg.sender);
-    if (amount == 0) revert ZeroAmount();
+    if (amount == 0) revert IEarnVaultEventsAndErrors.ZeroAmount();
 
     _settle(msg.sender);
 
@@ -377,14 +377,14 @@ contract EarnVaultUpgradeable is
   ) external whenNotPaused nonReentrant {
     EarnVaultStorage storage $ = _getStorage();
     _checkNotBlacklisted(msg.sender);
-    if (amount == 0) revert ZeroAmount();
+    if (amount == 0) revert IEarnVaultEventsAndErrors.ZeroAmount();
 
     // Safely attempt permit - revert with clear error if not supported
     try IERC20Permit(address($.USDSC)).permit(msg.sender, address(this), amount, deadline, v, r, s) {
     // Permit succeeded, continue with deposit
     }
     catch {
-      revert PermitFailed();
+      revert IEarnVaultEventsAndErrors.PermitFailed();
     }
 
     _settle(msg.sender);
@@ -404,12 +404,12 @@ contract EarnVaultUpgradeable is
   function withdraw(uint256 amount) external virtual whenNotPaused nonReentrant {
     EarnVaultStorage storage $ = _getStorage();
     _checkNotBlacklisted(msg.sender);
-    if (amount == 0) revert ZeroAmount();
+    if (amount == 0) revert IEarnVaultEventsAndErrors.ZeroAmount();
 
     _settle(msg.sender);
 
     uint256 p = $.principal[msg.sender];
-    if (amount > p) revert InsufficientPrincipal();
+    if (amount > p) revert IEarnVaultEventsAndErrors.InsufficientPrincipal();
 
     // Settle and claim ALL boost rewards in single loop
     for (uint256 i = 0; i < $.activeBoostTokens.length; i++) {
@@ -437,7 +437,7 @@ contract EarnVaultUpgradeable is
     // Automatically claim ALL USDSC yield
     uint256 usdscYield = $.accrued[msg.sender];
     if (usdscYield > 0) {
-      if ($.claimReserve < usdscYield) revert InsufficientFunding();
+      if ($.claimReserve < usdscYield) revert IEarnVaultEventsAndErrors.InsufficientFunding();
       $.accrued[msg.sender] = 0;
       $.claimReserve -= usdscYield;
       $.USDSC.safeTransfer(msg.sender, usdscYield);
@@ -461,7 +461,7 @@ contract EarnVaultUpgradeable is
 
     // Claim USDSC interest
     if (hasUSDSCClaim) {
-      if ($.claimReserve < usdscAmt) revert InsufficientFunding();
+      if ($.claimReserve < usdscAmt) revert IEarnVaultEventsAndErrors.InsufficientFunding();
       $.accrued[msg.sender] = 0;
       $.claimReserve -= usdscAmt;
       $.USDSC.safeTransfer(msg.sender, usdscAmt);
@@ -486,7 +486,7 @@ contract EarnVaultUpgradeable is
       }
     }
 
-    if (!hasUSDSCClaim && !hasBoostClaim) revert NothingToClaim();
+    if (!hasUSDSCClaim && !hasBoostClaim) revert IEarnVaultEventsAndErrors.NothingToClaim();
   }
 
   // =========================
@@ -506,14 +506,14 @@ contract EarnVaultUpgradeable is
 
     if ($.totalPrincipal == 0) {
       // No deposits: just need enough for treasury transfer
-      if (bal < amount) revert InsufficientFunding();
+      if (bal < amount) revert IEarnVaultEventsAndErrors.InsufficientFunding();
       $.USDSC.safeTransfer($.treasury, amount);
       emit YieldTransferredToTreasury(amount);
       return;
     }
 
     // Deposits exist: need enough for claimReserve + new yield
-    if (bal < $.claimReserve + amount) revert InsufficientFunding();
+    if (bal < $.claimReserve + amount) revert IEarnVaultEventsAndErrors.InsufficientFunding();
 
     // Exact, immediate index update with Ray remainder carry
     // delta = floor( (amount*RAY + _carryRay) / totalPrincipal )
@@ -589,7 +589,7 @@ contract EarnVaultUpgradeable is
   /// @param user Address to check blacklist status for
   function _checkNotBlacklisted(address user) internal view virtual {
     EarnVaultStorage storage $ = _getStorage();
-    if ($.isBlacklisted[user]) revert AddressBlacklisted();
+    if ($.isBlacklisted[user]) revert IEarnVaultEventsAndErrors.AddressBlacklisted();
   }
 
   // =========================
@@ -603,25 +603,25 @@ contract EarnVaultUpgradeable is
   /// @param amount Amount to recover
   function recoverERC20(address token, address to, uint256 amount) external onlyOwner nonReentrant {
     EarnVaultStorage storage $ = _getStorage();
-    if (to == address(0)) revert CanNotBeZeroAddress();
+    if (to == address(0)) revert IEarnVaultEventsAndErrors.CanNotBeZeroAddress();
 
     if (token == address($.USDSC)) {
-      if (!paused()) revert ContractNotPaused();
+      if (!paused()) revert IEarnVaultEventsAndErrors.ContractNotPaused();
       // allow sweeping only true surplus
       uint256 bal = $.USDSC.balanceOf(address(this));
       uint256 minRequired = $.claimReserve;
-      if (bal <= minRequired) revert InsufficientFunding();
+      if (bal <= minRequired) revert IEarnVaultEventsAndErrors.InsufficientFunding();
       uint256 maxSweep = bal - minRequired;
-      if (amount > maxSweep) revert ExceedsSurplus();
+      if (amount > maxSweep) revert IEarnVaultEventsAndErrors.ExceedsSurplus();
     } else {
       // For non-USDSC tokens, check actual balance and boost reserves
       uint256 tokenBalance = IERC20(token).balanceOf(address(this));
-      if (amount > tokenBalance) revert ExceedsSurplus();
+      if (amount > tokenBalance) revert IEarnVaultEventsAndErrors.ExceedsSurplus();
 
       // For boost tokens, ensure we don't recover reserved amounts
       if ($.boostClaimReserve[token] > 0) {
         uint256 availableAmount = tokenBalance - $.boostClaimReserve[token];
-        if (amount > availableAmount) revert ExceedsSurplus();
+        if (amount > availableAmount) revert IEarnVaultEventsAndErrors.ExceedsSurplus();
       }
     }
     IERC20(token).safeTransfer(to, amount);
@@ -656,21 +656,21 @@ contract EarnVaultUpgradeable is
   /// @param to Address to send ETH to
   /// @param amount Amount of ETH to sweep
   function sweepNative(address payable to, uint256 amount) external onlyOwner nonReentrant {
-    if (to == address(0)) revert CanNotBeZeroAddress();
+    if (to == address(0)) revert IEarnVaultEventsAndErrors.CanNotBeZeroAddress();
 
     (bool success,) = to.call{value: amount}('');
-    if (!success) revert SweepFailed();
+    if (!success) revert IEarnVaultEventsAndErrors.SweepFailed();
 
     emit NativeSwept(to, amount);
   }
 
   /// @dev Reject ETH transfers to prevent accidental loss
   receive() external payable {
-    revert EthNotAccepted();
+    revert IEarnVaultEventsAndErrors.EthNotAccepted();
   }
 
   /// @dev Reject ETH transfers to prevent accidental loss
   fallback() external payable {
-    revert EthNotAccepted();
+    revert IEarnVaultEventsAndErrors.EthNotAccepted();
   }
 }

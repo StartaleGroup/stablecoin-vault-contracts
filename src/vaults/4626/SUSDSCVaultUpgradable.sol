@@ -35,9 +35,9 @@ contract SUSDSCVaultUpgradable is
   /// @param admin The address that will have admin role
   /// @param pauser The address that will have pauser role
   function initialize(IERC20 usdsc, address admin, address pauser) public initializer {
-    if (address(usdsc) == address(0)) revert AdminCannotBeZeroAddress();
-    if (admin == address(0)) revert AdminCannotBeZeroAddress();
-    if (pauser == address(0)) revert PauserCannotBeZeroAddress();
+    if (address(usdsc) == address(0)) revert ISUSDSCVaultEventsAndErrors.AdminCannotBeZeroAddress();
+    if (admin == address(0)) revert ISUSDSCVaultEventsAndErrors.AdminCannotBeZeroAddress();
+    if (pauser == address(0)) revert ISUSDSCVaultEventsAndErrors.PauserCannotBeZeroAddress();
 
     __ERC20_init('Staked USDSC', 'sUSDSC');
     __ERC4626_init(usdsc);
@@ -90,10 +90,10 @@ contract SUSDSCVaultUpgradable is
   // Recover non-asset ERC20 tokens
   // This is used to recover tokens that are sent to the vault by mistake
   function recoverNonAssetERC20(address token, address to, uint256 amount) external onlyRole(DEFAULT_ADMIN_ROLE) {
-    if (token == asset()) revert TokenCannotBeUSDSC();
-    if (token == address(0)) revert TokenCannotBeZeroAddress();
-    if (to == address(0)) revert ToCannotBeZeroAddress();
-    if (amount == 0) revert AmountCannotBeZero();
+    if (token == asset()) revert ISUSDSCVaultEventsAndErrors.TokenCannotBeUSDSC();
+    if (token == address(0)) revert ISUSDSCVaultEventsAndErrors.TokenCannotBeZeroAddress();
+    if (to == address(0)) revert ISUSDSCVaultEventsAndErrors.ToCannotBeZeroAddress();
+    if (amount == 0) revert ISUSDSCVaultEventsAndErrors.AmountCannotBeZero();
     SafeTransferLib.safeTransfer(token, to, amount);
   }
 
