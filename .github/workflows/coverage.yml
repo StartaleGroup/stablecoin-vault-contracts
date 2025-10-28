@@ -10,7 +10,10 @@ on:
       - main
       - dev
 
-permissions: write-all
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
 
 jobs:
   check:
@@ -71,6 +74,10 @@ jobs:
             let coverageTable = '';
             let body = '';
 
+            console.log('Starting PR comment generation...');
+            console.log('PR number:', context.payload.pull_request.number);
+            console.log('Repository:', context.repo.owner + '/' + context.repo.repo);
+
             try {
               if (fs.existsSync('coverage-output.txt')) {
                 const coverageOutput = fs.readFileSync('coverage-output.txt', 'utf8');
@@ -94,16 +101,20 @@ jobs:
                 if (tableStart !== -1 && tableEnd !== -1) {
                   // Extract the table section
                   coverageTable = lines.slice(tableStart, tableEnd + 3).join('\n'); // Add a few extra lines
+                  console.log('Found coverage table, lines', tableStart, 'to', tableEnd + 3);
                 } else {
                   // Fallback: get the last 30 lines which should contain the table
                   coverageTable = lines.slice(-30).join('\n');
+                  console.log('Using fallback: last 30 lines');
                 }
 
                 if (coverageTable.trim().length === 0) {
                   coverageTable = 'No coverage data found in output';
+                  console.log('Warning: Coverage table is empty');
                 }
               } else {
                 coverageTable = 'Coverage output file not found';
+                console.log('Error: coverage-output.txt not found');
               }
             } catch (error) {
               console.error('Error reading coverage file:', error);
@@ -114,26 +125,40 @@ jobs:
             const commitSha = context.sha.substring(0, 7);
             body = '## 📊 Coverage Report\n\nFiltered coverage excluding test, mock, script, interfaces, etc.\n\n```\n' + coverageTable + '\n```\n\n_Updated for commit ' + commitSha + ' at ' + timestamp + '_';
 
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.payload.pull_request.number,
-            });
-            const botComment = comments.find(comment => comment.user.type === 'Bot' && comment.body.includes('📊 Coverage Report'));
-            if (botComment) {
-              console.log('Updating existing coverage comment...');
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: botComment.id,
-                body: body
-              });
-            } else {
-              console.log('Creating new coverage comment...');
-              await github.rest.issues.createComment({
+            console.log('Generated comment body length:', body.length);
+
+            try {
+              const { data: comments } = await github.rest.issues.listComments({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: context.payload.pull_request.number,
-                body: body
               });
+
+              console.log('Found', comments.length, 'existing comments');
+
+              const botComment = comments.find(comment => comment.user.type === 'Bot' && comment.body.includes('📊 Coverage Report'));
+
+              if (botComment) {
+                console.log('Updating existing coverage comment with ID:', botComment.id);
+                await github.rest.issues.updateComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: botComment.id,
+                  body: body
+                });
+                console.log('✅ Successfully updated existing comment');
+              } else {
+                console.log('Creating new coverage comment...');
+                const result = await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.payload.pull_request.number,
+                  body: body
+                });
+                console.log('✅ Successfully created new comment with ID:', result.data.id);
+              }
+            } catch (error) {
+              console.error('❌ Error posting comment:', error);
+              console.error('Error details:', error.message);
+              throw error; // Re-throw to make the step fail visibly
             }
