@@ -46,7 +46,6 @@ contract RewardRedistributor is IRewardRedistributorEventsAndErrors, AccessContr
   IERC4626 public susdscVault; // checkbox ON (ERC-4626)
 
   // Note: fee_on_yield_bps is most likely to be 0 always. as this portion we plan to take on Ethereum.
-  // Review
   // Making configurable with some boundaries.
 
   /// @notice Fee on newly minted yield expressed in basis points (e.g., 1000 = 10%).
@@ -94,7 +93,6 @@ contract RewardRedistributor is IRewardRedistributorEventsAndErrors, AccessContr
   /// @param earnV          EarnVault (checkbox OFF) recipient.
   /// @param sVault         sUSDSC ERC-4626 vault (checkbox ON) recipient.
   /// @param admin          Admin address; receives DEFAULT_ADMIN_ROLE and OPERATOR_ROLE initially.
-  /// @dev Note: could take keeper address and give it OPERATOR_ROLE
   constructor(address usdscAddress, address treasuryAddr, IEarnVault earnV, IERC4626 sVault, address admin) {
     if (usdscAddress == address(0)) revert IRewardRedistributorEventsAndErrors.ZeroAddress('USDSC_ADDRESS');
     if (treasuryAddr == address(0)) revert IRewardRedistributorEventsAndErrors.ZeroAddress('treasury');
@@ -117,7 +115,6 @@ contract RewardRedistributor is IRewardRedistributorEventsAndErrors, AccessContr
   /// @param earnV          New EarnVault (OFF) address.
   /// @param sVault         New sUSDSC ERC-4626 vault (ON) address.
   /// @param newFeeBps      New fee on yield in bps (≤ MAX_FEE_BPS).
-  /// @dev Note: could make this as separeate functions for each parameter.
   function setParams(
     address treasuryAddr,
     IEarnVault earnV,
@@ -244,7 +241,6 @@ contract RewardRedistributor is IRewardRedistributorEventsAndErrors, AccessContr
   ///            - sUSDSC: transfer `toOn` (PPS rises)
   /// @custom:security nonReentrant and Pausable.
   function distribute() external whenNotPaused onlyRole(OPERATOR_ROLE) nonReentrant {
-    // Review: Need to check if only specific role (yield recipient OR yield recipient manager) can call this
     uint256 balanceBefore = IERC20(USDSC_ADDRESS).balanceOf(address(this));
     uint256 minted = IMYieldToOne(USDSC_ADDRESS).claimYield();
     uint256 gross = balanceBefore + minted;

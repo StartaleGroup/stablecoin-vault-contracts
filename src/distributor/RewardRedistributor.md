@@ -336,7 +336,6 @@ The RewardRedistributor has comprehensive test coverage including:
 ## Deployment Considerations
 
 ### Prerequisites
-// Note: Todo: USDSC itself is MYieldToOne extension
 1. Deploy USDSC token contract (implements both IERC20 and IMYieldToOne)
 2. Deploy EarnVault with proper initialization
 3. Deploy sUSDSC ERC-4626 vault

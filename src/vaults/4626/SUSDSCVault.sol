@@ -10,9 +10,6 @@ import {Pausable} from '@openzeppelin/contracts/utils/Pausable.sol';
 import {ReentrancyGuardTransient} from '@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol';
 import {SafeTransferLib} from 'solady/utils/SafeTransferLib.sol';
 
-// Note: non-upgradeable version
-// Note: We could have some admin actions
-
 /// @title sUSDSCVault — ERC-4626: deposit USDSC → mint sUSDSC; external asset inflows lift PPS
 contract SUSDSCVault is ERC20, ERC4626, AccessControl, Pausable, ReentrancyGuardTransient, ISUSDSCVaultEventsAndErrors {
   using SafeTransferLib for IERC20;
