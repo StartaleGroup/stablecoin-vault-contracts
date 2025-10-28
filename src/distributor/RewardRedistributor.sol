@@ -2,6 +2,7 @@
 pragma solidity ^0.8.30;
 
 import {IEarnVault} from '../interfaces/vaults/earn/IEarnVault.sol';
+import {IRewardRedistributorEventsAndErrors} from '../interfaces/distributor/IRewardRedistributorEventsAndErrors.sol';
 import {AccessControl} from 'lib/openzeppelin-contracts/contracts/access/AccessControl.sol';
 import {IERC4626} from 'lib/openzeppelin-contracts/contracts/interfaces/IERC4626.sol';
 import {IERC20} from 'lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol';
@@ -25,7 +26,7 @@ import {IMYieldToOne} from 'm-extensions/projects/yieldToOne/IMYieldToOne.sol';
 ///         - USDSC_ADDRESS: Single USDSC token address that implements both IERC20 and IMYieldToOne interfaces
 ///         - Cast to IERC20 for transfers and supply queries (totalSupply, safeTransfer)
 ///         - Cast to IMYieldToOne for yield operations (claimYield, yield)
-contract RewardRedistributor is AccessControl, Pausable, ReentrancyGuardTransient {
+contract RewardRedistributor is IRewardRedistributorEventsAndErrors, AccessControl, Pausable, ReentrancyGuardTransient {
   using SafeERC20 for IERC20;
 
   // Keeper allowed to call distribute()
@@ -95,11 +96,11 @@ contract RewardRedistributor is AccessControl, Pausable, ReentrancyGuardTransien
   /// @param admin          Admin address; receives DEFAULT_ADMIN_ROLE and OPERATOR_ROLE initially.
   /// @dev Note: could take keeper address and give it OPERATOR_ROLE
   constructor(address usdscAddress, address treasuryAddr, IEarnVault earnV, IERC4626 sVault, address admin) {
-    require(
-      usdscAddress != address(0) && treasuryAddr != address(0) && address(earnV) != address(0)
-        && address(sVault) != address(0) && admin != address(0),
-      'zero'
-    );
+    if (usdscAddress == address(0)) revert IRewardRedistributorEventsAndErrors.ZeroAddress('USDSC_ADDRESS');
+    if (treasuryAddr == address(0)) revert IRewardRedistributorEventsAndErrors.ZeroAddress('treasury');
+    if (address(earnV) == address(0)) revert IRewardRedistributorEventsAndErrors.ZeroAddress('earnVault');
+    if (address(sVault) == address(0)) revert IRewardRedistributorEventsAndErrors.ZeroAddress('susdscVault');
+    if (admin == address(0)) revert IRewardRedistributorEventsAndErrors.ZeroAddress('admin');
 
     USDSC_ADDRESS = usdscAddress;
     treasury = treasuryAddr;
@@ -123,8 +124,10 @@ contract RewardRedistributor is AccessControl, Pausable, ReentrancyGuardTransien
     IERC4626 sVault,
     uint16 newFeeBps
   ) external onlyRole(DEFAULT_ADMIN_ROLE) {
-    require(treasuryAddr != address(0) && address(earnV) != address(0) && address(sVault) != address(0), 'zero');
-    require(newFeeBps <= MAX_FEE_BPS, 'fee too high');
+    if (treasuryAddr == address(0)) revert IRewardRedistributorEventsAndErrors.ZeroAddress('treasury');
+    if (address(earnV) == address(0)) revert IRewardRedistributorEventsAndErrors.ZeroAddress('earnVault');
+    if (address(sVault) == address(0)) revert IRewardRedistributorEventsAndErrors.ZeroAddress('susdscVault');
+    if (newFeeBps > MAX_FEE_BPS) revert IRewardRedistributorEventsAndErrors.FeeTooHigh(newFeeBps, MAX_FEE_BPS);
     treasury = treasuryAddr;
     earnVault = earnV;
     susdscVault = sVault;
