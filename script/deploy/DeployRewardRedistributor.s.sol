@@ -22,7 +22,8 @@ import {Script, console} from 'forge-std/Script.sol';
  * - TREASURY_ADDRESS: Address of the treasury recipient
  * - EARN_VAULT_ADDRESS: Address of the EarnVault contract
  * - SUSDSC_VAULT_ADDRESS: Address of the sUSDSC (ERC4626) vault contract
- * - ADMIN_ADDRESS: Address of the admin (receives DEFAULT_ADMIN_ROLE and OPERATOR_ROLE)
+ * - ADMIN_ADDRESS: Address of the admin (receives DEFAULT_ADMIN_ROLE)
+ * - KEEPER_ADDRESS: Address of the keeper (receives OPERATOR_ROLE, can call distribute())
  * - DEPLOYER_PRIVATE_KEY: Private key for deployment
  */
 contract DeployRewardRedistributor is Script, DeployHelpers {
@@ -32,6 +33,7 @@ contract DeployRewardRedistributor is Script, DeployHelpers {
   address earnVaultAddress;
   address susdscVaultAddress;
   address adminAddress;
+  address keeperAddress;
 
   // Deployment artifacts
   RewardRedistributor public rewardRedistributor;
@@ -46,6 +48,7 @@ contract DeployRewardRedistributor is Script, DeployHelpers {
     earnVaultAddress = vm.envAddress('EARN_VAULT_ADDRESS');
     susdscVaultAddress = vm.envAddress('SUSDSC_VAULT_ADDRESS');
     adminAddress = vm.envAddress('ADMIN_ADDRESS');
+    keeperAddress = vm.envAddress('KEEPER_ADDRESS');
 
     // Validate addresses
     require(usdscAddress != address(0), 'USDSC_ADDRESS not set');
@@ -53,6 +56,7 @@ contract DeployRewardRedistributor is Script, DeployHelpers {
     require(earnVaultAddress != address(0), 'EARN_VAULT_ADDRESS not set');
     require(susdscVaultAddress != address(0), 'SUSDSC_VAULT_ADDRESS not set');
     require(adminAddress != address(0), 'ADMIN_ADDRESS not set');
+    require(keeperAddress != address(0), 'KEEPER_ADDRESS not set');
 
     console.log('=== Deployment Configuration ===');
     console.log('USDSC Address:', usdscAddress);
@@ -60,6 +64,7 @@ contract DeployRewardRedistributor is Script, DeployHelpers {
     console.log('EarnVault Address:', earnVaultAddress);
     console.log('sUSDSC Vault Address:', susdscVaultAddress);
     console.log('Admin Address:', adminAddress);
+    console.log('Keeper Address:', keeperAddress);
     console.log('Deployer:', msg.sender);
   }
 
@@ -85,7 +90,7 @@ contract DeployRewardRedistributor is Script, DeployHelpers {
     bytes memory creationCode = abi.encodePacked(
       type(RewardRedistributor).creationCode,
       abi.encode(
-        usdscAddress, treasuryAddress, IEarnVault(earnVaultAddress), IERC4626(susdscVaultAddress), adminAddress
+        usdscAddress, treasuryAddress, IEarnVault(earnVaultAddress), IERC4626(susdscVaultAddress), adminAddress, keeperAddress
       )
     );
 
@@ -136,10 +141,10 @@ contract DeployRewardRedistributor is Script, DeployHelpers {
     require(rewardRedistributor.hasRole(adminRole, adminAddress), 'Admin missing DEFAULT_ADMIN_ROLE');
     console.log('Admin DEFAULT_ADMIN_ROLE: OK');
 
-    // Verify admin has OPERATOR_ROLE
+    // Verify keeper has OPERATOR_ROLE
     bytes32 operatorRole = rewardRedistributor.OPERATOR_ROLE();
-    require(rewardRedistributor.hasRole(operatorRole, adminAddress), 'Admin missing OPERATOR_ROLE');
-    console.log('Admin OPERATOR_ROLE: OK');
+    require(rewardRedistributor.hasRole(operatorRole, keeperAddress), 'Keeper missing OPERATOR_ROLE');
+    console.log('Keeper OPERATOR_ROLE: OK');
 
     // Verify contract is not paused
     require(!rewardRedistributor.paused(), 'Contract should not be paused');
@@ -157,13 +162,14 @@ contract DeployRewardRedistributor is Script, DeployHelpers {
     console.log('EarnVault:', address(rewardRedistributor.earnVault()));
     console.log('sUSDSC Vault:', address(rewardRedistributor.susdscVault()));
     console.log('Admin:', adminAddress);
+    console.log('Keeper:', keeperAddress);
     console.log('Fee (bps):', rewardRedistributor.fee_on_yield_bps());
     console.log('Max Fee (bps):', rewardRedistributor.MAX_FEE_BPS());
     console.log('\n=== Next Steps ===');
     console.log('1. Verify contract on block explorer');
     console.log('2. Set RewardRedistributor as yieldRecipient in M0 extension');
     console.log('3. Set RewardRedistributor as yieldRedistributor in EarnVault');
-    console.log('4. Grant OPERATOR_ROLE to keeper address if different from admin');
+    console.log('4. Keeper already has OPERATOR_ROLE - ready to call distribute()');
     console.log('5. Test distribute() function with small amounts');
   }
 
@@ -185,7 +191,7 @@ contract DeployRewardRedistributor is Script, DeployHelpers {
 
     // Estimate deployment by creating contract locally
     RewardRedistributor simulated = new RewardRedistributor(
-      usdscAddress, treasuryAddress, IEarnVault(earnVaultAddress), IERC4626(susdscVaultAddress), adminAddress
+      usdscAddress, treasuryAddress, IEarnVault(earnVaultAddress), IERC4626(susdscVaultAddress), adminAddress, keeperAddress
     );
 
     console.log('Simulated deployment at:', address(simulated));

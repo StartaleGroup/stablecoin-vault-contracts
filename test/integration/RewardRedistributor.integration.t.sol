@@ -64,17 +64,16 @@ contract RewardRedistributorIntegrationTest is Test {
       startale,
       IEarnVault(address(earnVault)),
       IERC4626(address(susdscVault)),
-      owner
+      owner,
+      operator // keeper gets OPERATOR_ROLE
     );
 
-    // Set up roles and permissions
-    vm.startPrank(owner);
-    bytes32 operatorRole = rr.OPERATOR_ROLE();
-    rr.grantRole(operatorRole, operator);
-
     // Set RewardRedistributor as yieldRedistributor in EarnVault
+    vm.startPrank(owner);
     earnVault.setYieldRedistributor(address(rr));
     vm.stopPrank();
+
+    // Note: operator already has OPERATOR_ROLE from constructor
 
     // Set RewardRedistributor as yieldRecipient in MockExtension
     ext.setYieldRecipient(address(rr));
@@ -613,13 +612,9 @@ contract RewardRedistributorIntegrationTest is Test {
       startale,
       IEarnVault(address(emptyEarnVault)),
       IERC4626(address(emptySusdscVault)),
-      owner
+      owner,
+      operator // keeper gets OPERATOR_ROLE
     );
-
-    vm.startPrank(owner);
-    bytes32 operatorRole = rrEmpty.OPERATOR_ROLE();
-    rrEmpty.grantRole(operatorRole, operator);
-    vm.stopPrank();
 
     // Set the new redistributor as yieldRecipient for this test
     address originalRecipient = ext.yieldRecipient();
@@ -923,7 +918,7 @@ contract RewardRedistributorIntegrationTest is Test {
 
     for (uint256 i = 0; i < 10; i++) {
       // Random distribution
-      ext.addPending((i * 123 + 456) % 5000e6 + 1000e6);
+      ext.addPending(((i * 123 + 456) % 5000e6) + 1000e6);
       vm.prank(operator);
       rr.distribute();
 
@@ -1093,7 +1088,7 @@ contract RewardRedistributorIntegrationTest is Test {
 
     // Set fee to 10% (1000 bps)
     vm.prank(owner);
-    rr.setParams(startale, IEarnVault(address(earnVault)), IERC4626(address(susdscVault)), 1000);
+    rr.setFeeBps(1000);
 
     uint256 startaleBalanceBefore = usdsc.balanceOf(startale);
     uint256 earnBalanceBefore = usdsc.balanceOf(address(earnVault));
@@ -1118,7 +1113,7 @@ contract RewardRedistributorIntegrationTest is Test {
 
     // Reset fee to 0 for other tests
     vm.prank(owner);
-    rr.setParams(startale, IEarnVault(address(earnVault)), IERC4626(address(susdscVault)), 0);
+    rr.setFeeBps(0);
   }
 
   function testIntegration_RewardRedistributorZeroYield() public {
@@ -1223,7 +1218,7 @@ contract RewardRedistributorIntegrationTest is Test {
     // Test that unauthorized user cannot set params
     vm.startPrank(unauthorizedUser);
     vm.expectRevert();
-    rr.setParams(startale, IEarnVault(address(earnVault)), IERC4626(address(susdscVault)), 0);
+    rr.setFeeBps(0);
     vm.stopPrank();
 
     // Test that unauthorized user cannot pause
@@ -1266,33 +1261,39 @@ contract RewardRedistributorIntegrationTest is Test {
   }
 
   function testIntegration_RewardRedistributorParameterValidation() public {
-    // Test parameter validation in setParams
+    // Test parameter validation in separate setter functions
 
     vm.startPrank(owner);
 
-    // Test zero address validation
+    // Test zero address validation for treasury
     vm.expectRevert(abi.encodeWithSelector(IRewardRedistributorEventsAndErrors.ZeroAddress.selector, 'treasury'));
-    rr.setParams(address(0), IEarnVault(address(earnVault)), IERC4626(address(susdscVault)), 0);
+    rr.setTreasury(address(0));
 
+    // Test zero address validation for earnVault
     vm.expectRevert(abi.encodeWithSelector(IRewardRedistributorEventsAndErrors.ZeroAddress.selector, 'earnVault'));
-    rr.setParams(startale, IEarnVault(address(0)), IERC4626(address(susdscVault)), 0);
+    rr.setEarnVault(IEarnVault(address(0)));
 
+    // Test zero address validation for susdscVault
     vm.expectRevert(abi.encodeWithSelector(IRewardRedistributorEventsAndErrors.ZeroAddress.selector, 'susdscVault'));
-    rr.setParams(startale, IEarnVault(address(earnVault)), IERC4626(address(0)), 0);
+    rr.setSusdscVault(IERC4626(address(0)));
 
     // Test fee too high validation
-    vm.expectRevert(abi.encodeWithSelector(IRewardRedistributorEventsAndErrors.FeeTooHigh.selector, uint16(2001), uint16(2000)));
-    rr.setParams(startale, IEarnVault(address(earnVault)), IERC4626(address(susdscVault)), 2001); // > MAX_FEE_BPS
+    vm.expectRevert(
+      abi.encodeWithSelector(IRewardRedistributorEventsAndErrors.FeeTooHigh.selector, uint16(2001), uint16(2000))
+    );
+    rr.setFeeBps(2001); // > MAX_FEE_BPS
 
-    // Test valid parameter update
+    // Test valid parameter updates
     address newTreasury = makeAddr('newTreasury');
-    rr.setParams(newTreasury, IEarnVault(address(earnVault)), IERC4626(address(susdscVault)), 500);
-
+    rr.setTreasury(newTreasury);
     assertEq(rr.treasury(), newTreasury, 'Treasury updated');
+
+    rr.setFeeBps(500);
     assertEq(rr.fee_on_yield_bps(), 500, 'Fee updated');
 
     // Reset for other tests
-    rr.setParams(startale, IEarnVault(address(earnVault)), IERC4626(address(susdscVault)), 0);
+    rr.setTreasury(startale);
+    rr.setFeeBps(0);
 
     vm.stopPrank();
   }
@@ -1306,10 +1307,13 @@ contract RewardRedistributorIntegrationTest is Test {
     vm.prank(operator);
     rr.distribute();
 
-    // Test parameter update works (ParamsUpdated event emitted)
+    // Test parameter update works (TreasuryUpdated and FeeUpdated events emitted)
     address newTreasury = makeAddr('newTreasury2');
     vm.prank(owner);
-    rr.setParams(newTreasury, IEarnVault(address(earnVault)), IERC4626(address(susdscVault)), 100);
+    rr.setTreasury(newTreasury);
+    
+    vm.prank(owner);
+    rr.setFeeBps(100);
 
     // Verify parameters were updated
     assertEq(rr.treasury(), newTreasury, 'Treasury updated');
@@ -1317,14 +1321,16 @@ contract RewardRedistributorIntegrationTest is Test {
 
     // Reset
     vm.prank(owner);
-    rr.setParams(startale, IEarnVault(address(earnVault)), IERC4626(address(susdscVault)), 0);
+    rr.setTreasury(startale);
+    vm.prank(owner);
+    rr.setFeeBps(0);
   }
 
   function testIntegration_RewardRedistributorMaxFeeScenario() public {
     // Test with maximum allowed fee
 
     vm.prank(owner);
-    rr.setParams(startale, IEarnVault(address(earnVault)), IERC4626(address(susdscVault)), 2000); // 20% fee
+    rr.setFeeBps(2000); // 20% fee
 
     uint256 startaleBalanceBefore = usdsc.balanceOf(startale);
 
@@ -1340,7 +1346,7 @@ contract RewardRedistributorIntegrationTest is Test {
 
     // Reset fee
     vm.prank(owner);
-    rr.setParams(startale, IEarnVault(address(earnVault)), IERC4626(address(susdscVault)), 0);
+    rr.setFeeBps(0);
   }
 
   // ========== EARN VAULT EDGE CASES FOR BRANCH COVERAGE ==========

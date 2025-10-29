@@ -127,4 +127,3 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
     return 'EarnVaultV2';
   }
 }
-

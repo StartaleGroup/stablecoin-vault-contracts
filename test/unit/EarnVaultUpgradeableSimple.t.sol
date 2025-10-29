@@ -1486,7 +1486,6 @@ contract EarnVaultUpgradeableSimpleTest is Test {
     assertEq(finalBalance - initialBalance, extraAmount, 'Only expected amount should be recovered');
   }
 
-
   /// @notice Test that reentrancy guard prevents reentrancy in recoverERC20
   function test_RecoverERC20_CannotReenter() public {
     uint256 depositAmount = 1000e6;
@@ -1509,7 +1508,6 @@ contract EarnVaultUpgradeableSimpleTest is Test {
     // If we got here, the reentrancy protection worked (no revert)
     assertTrue(true, 'Reentrancy protection working');
   }
-
 
   /*//////////////////////////////////////////////////////////////
                       HELPER FUNCTIONS

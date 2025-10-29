@@ -12,30 +12,23 @@ abstract contract EarnVaultStorageBase is IEarnVaultEventsAndErrors {
   struct EarnVaultStorage {
     // -------- Constants --------
     uint256 RAY; // High precision for yield calculations (MakerDAO standard)
-
     // -------- Access Control --------
     address yieldRedistributor; // Address authorized to call onYield() and onBoostReward()
     address pauser; // Address authorized to pause/unpause the contract
-
     // -------- Immutables (stored as regular variables in upgradeable) --------
     IERC20 USDSC; // USDSC token contract
-
     // -------- Roles / endpoints --------
     address treasury; // receives yield when no deposits exist, surplus sweeps
-
     // -------- Optional blacklist --------
     mapping(address => bool) isBlacklisted;
-
     // -------- Vault accounting --------
     uint256 totalPrincipal; // sum of user principals
     uint256 globalIndex; // global index (scaled 1e27 - RAY precision)
     uint256 claimReserve; // assets available to pay claims/withdraws
     uint256 _carryRay; // remainder in "RAY * principal" space for exact precision
-
     mapping(address => uint256) principal;
     mapping(address => uint256) userIndex;
     mapping(address => uint256) accrued;
-
     // -------- Boost rewards accounting (same logic as USDSC yield) --------
     mapping(address => uint256) boostGlobalIndex; // token => global boost index
     mapping(address => uint256) boostClaimReserve; // token => claimable boost reserves

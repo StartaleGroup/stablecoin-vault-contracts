@@ -7,7 +7,9 @@ import {Initializable} from '@openzeppelin/contracts-upgradeable/proxy/utils/Ini
 import {ERC20Upgradeable} from '@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol';
 import {ERC4626Upgradeable} from '@openzeppelin/contracts-upgradeable/token/ERC20/extensions/ERC4626Upgradeable.sol';
 import {PausableUpgradeable} from '@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol';
-import {ReentrancyGuardTransientUpgradeable} from '@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardTransientUpgradeable.sol';
+import {
+  ReentrancyGuardTransientUpgradeable
+} from '@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardTransientUpgradeable.sol';
 import {IERC20} from '@openzeppelin/contracts/token/ERC20/IERC20.sol';
 import {SafeTransferLib} from 'solady/utils/SafeTransferLib.sol';
 
@@ -49,8 +51,6 @@ contract SUSDSCVaultUpgradable is
     _grantRole(PAUSER_ROLE, pauser);
   }
 
-  // OZ’s totalAssets() = asset.balanceOf(this), so simple transfers raise PPS — perfect for yield “donations”.
-
   function deposit(
     uint256 assets,
     address receiver
@@ -82,13 +82,6 @@ contract SUSDSCVaultUpgradable is
     p ? _pause() : _unpause();
   }
 
-  // Override function that exists in multiple base contracts
-  function decimals() public view override(ERC20Upgradeable, ERC4626Upgradeable) returns (uint8) {
-    return super.decimals();
-  }
-
-  // Recover non-asset ERC20 tokens
-  // This is used to recover tokens that are sent to the vault by mistake
   function recoverNonAssetERC20(address token, address to, uint256 amount) external onlyRole(DEFAULT_ADMIN_ROLE) {
     if (token == asset()) revert ISUSDSCVaultEventsAndErrors.TokenCannotBeUSDSC();
     if (token == address(0)) revert ISUSDSCVaultEventsAndErrors.TokenCannotBeZeroAddress();
@@ -97,19 +90,10 @@ contract SUSDSCVaultUpgradable is
     SafeTransferLib.safeTransfer(token, to, amount);
   }
 
-  /**
-   * @dev Override to provide enhanced protection against inflation attacks.
-   *
-   * With USDSC having 6 decimals, setting _decimalsOffset to 6 creates 10^6 = 1,000,000 virtual shares.
-   * This makes inflation attacks prohibitively expensive as an attacker would need to donate
-   * approximately 1 million USDSC to manipulate a 1 USDSC deposit, making the attack economically infeasible.
-   *
-   * The offset increases the vault decimals to 12 (6 + 6) but doesn't affect user experience
-   * as all conversions are handled internally by the ERC4626 implementation.
-   *
-   * OR
-   * we could keep this to zero and put Initial seed deposit upon deployment (say 1000 USDSC)
-   */
+  function decimals() public view override(ERC20Upgradeable, ERC4626Upgradeable) returns (uint8) {
+    return super.decimals();
+  }
+
   function _decimalsOffset() internal pure override returns (uint8) {
     return 0;
   }
