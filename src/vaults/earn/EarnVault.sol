@@ -39,8 +39,11 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
   // STORAGE
   // ================================================================
 
-  /// @dev Address authorized to call onYield() and onBoostReward()
+  /// @dev Address authorized to call onYield() (RewardRedistributor contract)
   address public yieldRedistributor;
+
+  /// @dev Address authorized to call onBoostReward() (keeper/operator address)
+  address public boostRewardKeeper;
 
   /// @dev Address authorized to pause/unpause the contract
   address public pauser;
@@ -100,6 +103,12 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     _;
   }
 
+  /// @dev Modifier to check if caller is the boost reward keeper
+  modifier onlyBoostRewardKeeper() {
+    _onlyBoostRewardKeeper();
+    _;
+  }
+
   /// @dev Modifier to check if caller is the pauser
   modifier onlyPauser() {
     _onlyPauser();
@@ -115,7 +124,8 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     address owner,
     address yieldRedistributorAddr,
     address treasuryAddr,
-    address pauserAddr
+    address pauserAddr,
+    address boostRewardKeeperAddr
   ) Ownable(owner) {
     if (usdsc == address(0) || owner == address(0)) {
       revert IEarnVaultEventsAndErrors.CanNotBeZeroAddress();
@@ -124,10 +134,12 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
       revert IEarnVaultEventsAndErrors.CanNotBeZeroAddress();
     }
     if (pauserAddr == address(0)) revert IEarnVaultEventsAndErrors.CanNotBeZeroAddress();
+    if (boostRewardKeeperAddr == address(0)) revert IEarnVaultEventsAndErrors.CanNotBeZeroAddress();
 
     USDSC = IERC20(usdsc);
     treasury = treasuryAddr;
     yieldRedistributor = yieldRedistributorAddr;
+    boostRewardKeeper = boostRewardKeeperAddr;
     pauser = pauserAddr;
   }
 
@@ -156,6 +168,15 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     address oldRedistributor = yieldRedistributor;
     yieldRedistributor = who;
     emit YieldRedistributorChanged(msg.sender, oldRedistributor, who);
+  }
+
+  /// @notice Set the boost reward keeper address
+  /// @param who New boost reward keeper address
+  function setBoostRewardKeeper(address who) external onlyOwner {
+    if (who == address(0)) revert IEarnVaultEventsAndErrors.CanNotBeZeroAddress();
+    address oldKeeper = boostRewardKeeper;
+    boostRewardKeeper = who;
+    emit IEarnVaultEventsAndErrors.BoostRewardKeeperChanged(msg.sender, oldKeeper, who);
   }
 
   /// @notice Set the treasury address
@@ -379,9 +400,10 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
   /// @notice Distribute boost rewards (ASTR, DOT, etc.) to vault users
   /// @dev MUST be called AFTER transferring `amount` of `token` to this contract
   /// @dev Uses same logic as USDSC yield - distributed proportionally based on principal
+  /// @dev Can be called by boost reward keeper (keeper/operator address)
   /// @param token Token address to distribute as boost rewards
   /// @param amount Amount of boost tokens to distribute
-  function onBoostReward(address token, uint256 amount) external onlyYieldRedistributor nonReentrant {
+  function onBoostReward(address token, uint256 amount) external onlyBoostRewardKeeper nonReentrant {
     BoostRewardsLib.distributeBoostReward(
       token, amount, totalPrincipal, treasury, boostGlobalIndex, boostClaimReserve, activeBoostTokens, boostTokenIndex
     );
@@ -607,6 +629,10 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
 
   function _onlyYieldRedistributor() internal view {
     if (msg.sender != yieldRedistributor) revert IEarnVaultEventsAndErrors.NotYieldRedistributor();
+  }
+
+  function _onlyBoostRewardKeeper() internal view {
+    if (msg.sender != boostRewardKeeper) revert IEarnVaultEventsAndErrors.NotBoostRewardKeeper();
   }
 
   function _onlyPauser() internal view {

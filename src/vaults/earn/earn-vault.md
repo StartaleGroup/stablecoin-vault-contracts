@@ -42,11 +42,14 @@ getAllClaimables(address user) → (uint256 usdscClaimable, address[] boostToken
 ### Admin Functions
 ```solidity
 // Yield distribution (yieldRedistributor only)
-onYield(uint256 amount)                    // Distribute USDSC yield
-onBoostReward(address token, uint256 amount)  // Distribute boost rewards (ASTR, DOT, etc.)
+onYield(uint256 amount)                    // Distribute USDSC yield (called by RewardRedistributor contract)
+
+// Boost rewards distribution (boostRewardKeeper only)
+onBoostReward(address token, uint256 amount)  // Distribute boost rewards (ASTR, DOT, etc.) (called by keeper/operator)
 
 // Access control (owner only)
 setYieldRedistributor(address who)         // Update yield redistributor
+setBoostRewardKeeper(address who)         // Update boost reward keeper
 setTreasury(address who)                   // Update treasury address
 setPauser(address who)                     // Update pauser address
 setBlacklisted(address who, bool status)   // Manage blacklist
@@ -289,7 +292,8 @@ address[] public activeBoostTokens;  // List of tokens that have been distribute
 
 ### Role-Based Security
 - **Owner**: Full administrative control, emergency functions, 2-step ownership transfers
-- **YieldRedistributor**: Can distribute yield and boost rewards to vault users
+- **YieldRedistributor**: Can distribute USDSC yield to vault users (typically RewardRedistributor contract)
+- **BoostRewardKeeper**: Can distribute boost rewards to vault users (keeper/operator address)
 - **Pauser**: Can pause/unpause the contract for emergency response
 - **Treasury**: Receives swept surplus funds
 
@@ -587,12 +591,13 @@ uint256 dotRewards = vault.getClaimableBoostReward(user, address(dot));
 
 ### Access Control Implementation
 - **Ownable2Step**: Uses OpenZeppelin's secure 2-step ownership transfer
-- **Custom Modifiers**: `onlyYieldRedistributor` and `onlyPauser` for specific role access
+- **Custom Modifiers**: `onlyYieldRedistributor`, `onlyBoostRewardKeeper`, and `onlyPauser` for specific role access
 - **Direct Storage**: Simple address variables instead of complex role mappings
 - **Clear Permissions**: Each role has distinct, non-overlapping responsibilities
-- **Owner Functions**: `setYieldRedistributor()`, `setPauser()`, `setTreasury()`, `setBlacklisted()`
+- **Owner Functions**: `setYieldRedistributor()`, `setBoostRewardKeeper()`, `setPauser()`, `setTreasury()`, `setBlacklisted()`
 - **Pauser Functions**: `pause()`, `unpause()` (owner cannot directly pause)
-- **Yield Redistributor Functions**: `onYield()`, `onBoostReward()`
+- **Yield Redistributor Functions**: `onYield()` (typically called by RewardRedistributor contract)
+- **Boost Reward Keeper Functions**: `onBoostReward()` (typically called by keeper/operator address)
 
 ### Library Architecture
 The boost rewards system uses a separate library (`BoostRewardsLib`) for:
@@ -612,8 +617,11 @@ Owner (Full Control via Ownable2Step)
 
 YieldRedistributor (Yield Operations)
 ├── Distribute yield via onYield()
+└── Typically the RewardRedistributor contract
+
+BoostRewardKeeper (Boost Reward Operations)
 ├── Distribute boost rewards via onBoostReward()
-└── Transfer to treasury
+└── Typically a keeper/operator address
 
 Pauser (Emergency Response)
 ├── Pause contract operations
@@ -624,21 +632,24 @@ Treasury (Fund Recipient)
 ```
 
 ### Role Management Features
-- **Direct Storage Variables**: Simple address variables for yieldRedistributor and pauser
-- **Custom Modifiers**: `onlyYieldRedistributor` and `onlyPauser` for access control
+- **Direct Storage Variables**: Simple address variables for yieldRedistributor, boostRewardKeeper, and pauser
+- **Custom Modifiers**: `onlyYieldRedistributor`, `onlyBoostRewardKeeper`, and `onlyPauser` for access control
 - **Ownable2Step**: Secure 2-step ownership transfer process
 - **Clear Separation**: Each role has distinct, non-overlapping responsibilities
 - **Owner Control**: Owner can change all role addresses but cannot directly pause
+- **Separate Boost Rewards**: Boost rewards distribution is separate from yield distribution for better access control
 
 ## Deployment Parameters
 
 ```solidity
 constructor(
-    address usdsc,                    // USDSC token contract
-    address owner,                   // Initial owner (should be multisig)
-    address yieldRedistributorAddr,  // Yield distribution contract
-    address treasuryAddr,            // Treasury for surplus funds
-    address pauserAddr               // Emergency pause authority
+    address usdsc,
+    address owner,
+    address yieldRedistributorAddr,    // Address authorized to call onYield() (RewardRedistributor contract)
+    address treasuryAddr,              // Treasury address
+    address pauserAddr,                // Pauser address
+    address boostRewardKeeperAddr      // Address authorized to call onBoostReward() (keeper/operator)
+)
 )
 ```
 

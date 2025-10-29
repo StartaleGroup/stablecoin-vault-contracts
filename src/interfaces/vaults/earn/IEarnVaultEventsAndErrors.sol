@@ -23,6 +23,12 @@ interface IEarnVaultEventsAndErrors {
   /// @param newTreasury New treasury address
   event TreasuryChanged(address indexed actor, address indexed oldTreasury, address indexed newTreasury);
 
+  /// @notice Emitted when boost reward keeper address is changed
+  /// @param actor Address that initiated the change (msg.sender)
+  /// @param oldKeeper Previous boost reward keeper address
+  /// @param newKeeper New boost reward keeper address
+  event BoostRewardKeeperChanged(address indexed actor, address indexed oldKeeper, address indexed newKeeper);
+
   /// @notice Emitted when pauser address is changed
   /// @param actor Address that initiated the change (msg.sender)
   /// @param oldPauser Previous pauser address
@@ -102,6 +108,9 @@ interface IEarnVaultEventsAndErrors {
 
   /// @notice Thrown when caller is not the authorized yield redistributor
   error NotYieldRedistributor();
+
+  /// @notice Thrown when caller is not the authorized boost reward keeper
+  error NotBoostRewardKeeper();
 
   /// @notice Thrown when caller is not authorized to pause/unpause the contract
   error NotAuthorizedToPause();

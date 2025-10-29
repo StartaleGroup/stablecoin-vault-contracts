@@ -17,6 +17,7 @@ contract EarnVaultTest is Test {
   address public yieldRedistributor = makeAddr('yieldRedistributor');
   address public treasury = makeAddr('treasury');
   address public pauser = makeAddr('pauser');
+  address public operator = makeAddr('operator'); // boost reward keeper
   address public alice = makeAddr('alice');
   address public bob = makeAddr('bob');
   address public charlie = makeAddr('charlie');
@@ -35,7 +36,7 @@ contract EarnVaultTest is Test {
 
     // Deploy EarnVault with proper parameters
     vm.prank(owner);
-    vault = new EarnVault(address(usdsc), owner, yieldRedistributor, treasury, pauser);
+    vault = new EarnVault(address(usdsc), owner, yieldRedistributor, treasury, pauser, operator);
 
     // Mint USDSC to test users
     usdsc.mint(alice, INITIAL_SUPPLY);
@@ -1676,9 +1677,9 @@ contract EarnVaultTest is Test {
     MockERC20 tokenA = new MockERC20('Token A', 'TOKENA', 18);
     MockERC20 tokenB = new MockERC20('Token B', 'TOKENB', 18);
 
-    // Mint tokens to yield redistributor
-    tokenA.mint(yieldRedistributor, 1000e18);
-    tokenB.mint(yieldRedistributor, 1000e18);
+    // Mint tokens to operator (boost reward keeper)
+    tokenA.mint(operator, 1000e18);
+    tokenB.mint(operator, 1000e18);
 
     // === Alice deposits ===
     vm.prank(alice);
@@ -1695,7 +1696,7 @@ contract EarnVaultTest is Test {
     uint256 amountA = 50e18;
     uint256 amountB = 75e18;
 
-    vm.startPrank(yieldRedistributor);
+    vm.startPrank(operator); // operator is boost reward keeper
     tokenA.approve(address(vault), amountA);
     bool successA = tokenA.transfer(address(vault), amountA);
     require(successA, 'Transfer failed');
@@ -1777,7 +1778,7 @@ contract EarnVaultTest is Test {
     address mockToken = makeAddr('mockToken');
 
     // Distribute zero boost rewards (should not revert)
-    vm.prank(yieldRedistributor);
+    vm.prank(operator); // operator is boost reward keeper
     vault.onBoostReward(mockToken, 0);
 
     // Verify no boost rewards were distributed
@@ -2225,7 +2226,7 @@ contract EarnVaultTest is Test {
     mockToken.mint(alice, 100e18);
 
     // Alice tries to distribute boost rewards but vault has no tokens
-    vm.prank(yieldRedistributor);
+    vm.prank(operator); // operator is boost reward keeper
     vm.expectRevert(IEarnVaultEventsAndErrors.InsufficientBoostTokenBalance.selector);
     vault.onBoostReward(address(mockToken), 50e18);
 
@@ -2238,9 +2239,50 @@ contract EarnVaultTest is Test {
     mockToken.mint(address(vault), 10e18);
 
     // Try to distribute more than available balance
-    vm.prank(yieldRedistributor);
+    vm.prank(operator); // operator is boost reward keeper
     vm.expectRevert(IEarnVaultEventsAndErrors.InsufficientBoostClaimReserve.selector);
     vault.onBoostReward(address(mockToken), 20e18);
+  }
+
+  /// @notice Test boost reward access control - only boostRewardKeeper can distribute
+  /// @dev Boost rewards are distributed by keeper/operator (person from company), not by contracts
+  function test_BoostRewardAccessControl() public {
+    MockERC20 boostToken = new MockERC20('Boost Token', 'BOOST', 18);
+    boostToken.mint(address(vault), 1000e18);
+
+    // Test 1: Unauthorized user cannot call onBoostReward
+    address unauthorizedUser = makeAddr('unauthorized');
+    vm.startPrank(unauthorizedUser);
+    vm.expectRevert(IEarnVaultEventsAndErrors.NotBoostRewardKeeper.selector);
+    vault.onBoostReward(address(boostToken), 1000e18);
+    vm.stopPrank();
+
+    // Test 2: yieldRedistributor cannot call onBoostReward
+    // Important: boost rewards are separate from yield distribution
+    // yieldRedistributor is the RewardRedistributor contract, which only handles USDSC yield
+    vm.startPrank(yieldRedistributor);
+    vm.expectRevert(IEarnVaultEventsAndErrors.NotBoostRewardKeeper.selector);
+    vault.onBoostReward(address(boostToken), 1000e18);
+    vm.stopPrank();
+
+    // Test 3: owner cannot call onBoostReward
+    vm.startPrank(owner);
+    vm.expectRevert(IEarnVaultEventsAndErrors.NotBoostRewardKeeper.selector);
+    vault.onBoostReward(address(boostToken), 1000e18);
+    vm.stopPrank();
+
+    // Test 4: Only boostRewardKeeper (operator) can call onBoostReward
+    // First, Alice needs to deposit so there's principal to distribute rewards to
+    vm.prank(alice);
+    vault.deposit(1000e6);
+
+    // Now distribute boost rewards - this simulates a person from the company distributing boost rewards
+    vm.prank(operator); // operator is the boost reward keeper
+    vault.onBoostReward(address(boostToken), 1000e18); // Should succeed
+
+    // Verify boost rewards were distributed
+    uint256 aliceClaimable = vault.getClaimableBoostReward(alice, address(boostToken));
+    assertGt(aliceClaimable, 0, 'Alice should have claimable boost rewards after distribution');
   }
 
   /// @notice Test that blacklisted users cannot access boost reward functions
@@ -2252,7 +2294,7 @@ contract EarnVaultTest is Test {
     // Distribute some boost rewards
     MockERC20 mockToken = new MockERC20('Mock Token', 'MOCK', 18);
     mockToken.mint(address(vault), 100e18);
-    vm.prank(yieldRedistributor);
+    vm.prank(operator); // operator is boost reward keeper
     vault.onBoostReward(address(mockToken), 50e18);
 
     // === Blacklist Alice ===

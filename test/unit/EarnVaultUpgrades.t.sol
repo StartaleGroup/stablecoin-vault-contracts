@@ -29,6 +29,7 @@ contract EarnVaultUpgradesTest is Test {
   address public yieldRedistributor = makeAddr('yieldRedistributor');
   address public treasury = makeAddr('treasury');
   address public pauser = makeAddr('pauser');
+  address public operator = makeAddr('operator'); // boost reward keeper
   address public alice = makeAddr('alice');
   address public bob = makeAddr('bob');
   address public charlie = makeAddr('charlie');
@@ -72,7 +73,7 @@ contract EarnVaultUpgradesTest is Test {
       address(v1Implementation),
       admin, // OpenZeppelin v5 creates ProxyAdmin automatically with this as admin
       abi.encodeWithSelector(
-        EarnVaultUpgradeable.initialize.selector, address(usdsc), owner, yieldRedistributor, treasury, pauser
+        EarnVaultUpgradeable.initialize.selector, address(usdsc), owner, yieldRedistributor, treasury, pauser, operator
       )
     );
     vault = EarnVaultUpgradeable(payable(address(proxy)));

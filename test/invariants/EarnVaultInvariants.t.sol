@@ -16,6 +16,7 @@ contract EarnVaultInvariants is Test {
   address public yieldRedistributor = makeAddr('yieldRedistributor');
   address public treasury = makeAddr('treasury');
   address public pauser = makeAddr('pauser');
+  address public operator = makeAddr('operator'); // boost reward keeper
   address public alice = makeAddr('alice');
   address public bob = makeAddr('bob');
   address public charlie = makeAddr('charlie');
@@ -29,7 +30,7 @@ contract EarnVaultInvariants is Test {
 
     // Deploy EarnVault with proper parameters
     vm.prank(owner);
-    vault = new EarnVault(address(usdsc), owner, yieldRedistributor, treasury, pauser);
+    vault = new EarnVault(address(usdsc), owner, yieldRedistributor, treasury, pauser, operator);
 
     // Mint USDSC to test users
     usdsc.mint(alice, INITIAL_SUPPLY);
@@ -276,14 +277,14 @@ contract EarnVaultInvariants is Test {
   function test_BoostInvariant() public {
     // === Setup: Create mock boost token ===
     MockERC20 boostToken = new MockERC20('Boost Token', 'BOOST', 18);
-    boostToken.mint(yieldRedistributor, 1000e18);
+    boostToken.mint(operator, 1000e18); // operator is boost reward keeper
 
     // === Setup: Alice deposits ===
     vm.prank(alice);
     vault.deposit(1000e6);
 
     // === Distribute boost rewards ===
-    vm.startPrank(yieldRedistributor);
+    vm.startPrank(operator); // operator is boost reward keeper
     boostToken.approve(address(vault), 100e18);
     bool success = boostToken.transfer(address(vault), 100e18);
     require(success, 'Transfer failed');
@@ -300,7 +301,7 @@ contract EarnVaultInvariants is Test {
     // === Verify boost global index never decreases ===
     uint256 initialBoostIndex = vault.boostGlobalIndex(address(boostToken));
 
-    vm.startPrank(yieldRedistributor);
+    vm.startPrank(operator); // operator is boost reward keeper
     boostToken.approve(address(vault), 50e18);
     bool success2 = boostToken.transfer(address(vault), 50e18);
     require(success2, 'Transfer failed');
@@ -326,7 +327,7 @@ contract EarnVaultInvariants is Test {
   function test_BoostCarryCorrectness() public {
     // === Setup: Create mock boost token ===
     MockERC20 boostToken = new MockERC20('Boost Token', 'BOOST', 18);
-    boostToken.mint(yieldRedistributor, 1000e18);
+    boostToken.mint(operator, 1000e18); // operator is boost reward keeper
 
     // === Setup: Alice deposits 10 USDSC ===
     vm.prank(alice);
@@ -336,7 +337,7 @@ contract EarnVaultInvariants is Test {
 
     // === Distribute small amount ===
     uint256 tinyAmount = 1e18; // 1 token (18 decimals)
-    vm.startPrank(yieldRedistributor);
+    vm.startPrank(operator); // operator is boost reward keeper
     boostToken.approve(address(vault), tinyAmount);
     bool success = boostToken.transfer(address(vault), tinyAmount);
     require(success, 'Transfer failed');
@@ -354,7 +355,7 @@ contract EarnVaultInvariants is Test {
     assertEq(boostClaimReserveAfter1, tinyAmount, 'Boost claim reserve should equal tiny amount');
 
     // === Distribute another tiny amount ===
-    vm.startPrank(yieldRedistributor);
+    vm.startPrank(operator); // operator is boost reward keeper
     boostToken.approve(address(vault), tinyAmount);
     bool success2 = boostToken.transfer(address(vault), tinyAmount);
     require(success2, 'Transfer failed');
@@ -373,7 +374,7 @@ contract EarnVaultInvariants is Test {
 
     // === Distribute larger amount to cross threshold ===
     uint256 largerAmount = 5e6; // 5 USDSC worth
-    vm.startPrank(yieldRedistributor);
+    vm.startPrank(operator); // operator is boost reward keeper
     boostToken.approve(address(vault), largerAmount);
     bool success3 = boostToken.transfer(address(vault), largerAmount);
     require(success3, 'Transfer failed');
@@ -399,7 +400,7 @@ contract EarnVaultInvariants is Test {
   function test_PartialWithdrawAfterBoost() public {
     // === Setup: Create mock boost token ===
     MockERC20 boostToken = new MockERC20('Boost Token', 'BOOST', 18);
-    boostToken.mint(yieldRedistributor, 1000e18);
+    boostToken.mint(operator, 1000e18); // operator is boost reward keeper
 
     // === Alice deposits 1000 USDSC ===
     vm.prank(alice);
@@ -409,7 +410,7 @@ contract EarnVaultInvariants is Test {
 
     // === Distribute boost rewards ===
     uint256 boostAmount = 100e18; // 100 BOOST tokens
-    vm.startPrank(yieldRedistributor);
+    vm.startPrank(operator); // operator is boost reward keeper
     boostToken.approve(address(vault), boostAmount);
     bool success = boostToken.transfer(address(vault), boostAmount);
     require(success, 'Transfer failed');
@@ -434,7 +435,7 @@ contract EarnVaultInvariants is Test {
 
     // === Distribute more boost rewards ===
     uint256 additionalBoost = 50e18; // 50 more BOOST tokens
-    vm.startPrank(yieldRedistributor);
+    vm.startPrank(operator); // operator is boost reward keeper
     boostToken.approve(address(vault), additionalBoost);
     bool success2 = boostToken.transfer(address(vault), additionalBoost);
     require(success2, 'Transfer failed');
@@ -459,10 +460,10 @@ contract EarnVaultInvariants is Test {
     MockERC20 tokenB = new MockERC20('Token B', 'TOKENB', 18);
     MockERC20 tokenC = new MockERC20('Token C', 'TOKENC', 6);
 
-    // Mint tokens to yield redistributor
-    tokenA.mint(yieldRedistributor, 1000e18);
-    tokenB.mint(yieldRedistributor, 1000e18);
-    tokenC.mint(yieldRedistributor, 1000e6);
+    // Mint tokens to operator (boost reward keeper)
+    tokenA.mint(operator, 1000e18);
+    tokenB.mint(operator, 1000e18);
+    tokenC.mint(operator, 1000e6);
 
     // === Alice deposits ===
     vm.prank(alice);
@@ -470,25 +471,21 @@ contract EarnVaultInvariants is Test {
 
     // === Distribute boost rewards for token A ===
     uint256 amountA = 100e18;
-    vm.startPrank(yieldRedistributor);
+    vm.startPrank(operator); // operator is boost reward keeper
     tokenA.approve(address(vault), amountA);
     bool success1 = tokenA.transfer(address(vault), amountA);
     require(success1, 'Transfer failed');
     vault.onBoostReward(address(tokenA), amountA);
-    vm.stopPrank();
 
     // === Distribute boost rewards for token B ===
     uint256 amountB = 200e18;
-    vm.startPrank(yieldRedistributor);
     tokenB.approve(address(vault), amountB);
     bool success2 = tokenB.transfer(address(vault), amountB);
     require(success2, 'Transfer failed');
     vault.onBoostReward(address(tokenB), amountB);
-    vm.stopPrank();
 
     // === Distribute boost rewards for token C (6 decimals) ===
     uint256 amountC = 300e6;
-    vm.startPrank(yieldRedistributor);
     tokenC.approve(address(vault), amountC);
     bool success3 = tokenC.transfer(address(vault), amountC);
     require(success3, 'Transfer failed');

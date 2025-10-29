@@ -17,6 +17,7 @@ contract EarnVaultUpgradeableEdgeCasesTest is Test {
   address redistributor = address(0xAED157);
   address treasury = address(0x71EA);
   address pauser = address(0x9A);
+  address operator = address(0x0C3A); // boost reward keeper
   address user = address(0x5E4);
 
   function setUp() public {
@@ -27,7 +28,7 @@ contract EarnVaultUpgradeableEdgeCasesTest is Test {
 
     // Deploy proxy and initialize
     bytes memory initData = abi.encodeWithSelector(
-      EarnVaultUpgradeable.initialize.selector, address(usdsc), owner, redistributor, treasury, pauser
+      EarnVaultUpgradeable.initialize.selector, address(usdsc), owner, redistributor, treasury, pauser, operator
     );
 
     ERC1967Proxy proxy = new ERC1967Proxy(address(implementation), initData);
@@ -45,7 +46,8 @@ contract EarnVaultUpgradeableEdgeCasesTest is Test {
       owner,
       redistributor,
       treasury,
-      pauser
+      pauser,
+      operator
     );
 
     vm.expectRevert(IEarnVaultEventsAndErrors.CanNotBeZeroAddress.selector);
@@ -61,7 +63,8 @@ contract EarnVaultUpgradeableEdgeCasesTest is Test {
       address(0), // zero owner
       redistributor,
       treasury,
-      pauser
+      pauser,
+      operator
     );
 
     vm.expectRevert(IEarnVaultEventsAndErrors.CanNotBeZeroAddress.selector);
@@ -77,7 +80,8 @@ contract EarnVaultUpgradeableEdgeCasesTest is Test {
       owner,
       address(0), // zero redistributor
       treasury,
-      pauser
+      pauser,
+      operator
     );
 
     vm.expectRevert(IEarnVaultEventsAndErrors.CanNotBeZeroAddress.selector);
@@ -93,7 +97,8 @@ contract EarnVaultUpgradeableEdgeCasesTest is Test {
       owner,
       redistributor,
       address(0), // zero treasury
-      pauser
+      pauser,
+      operator
     );
 
     vm.expectRevert(IEarnVaultEventsAndErrors.CanNotBeZeroAddress.selector);
@@ -109,19 +114,43 @@ contract EarnVaultUpgradeableEdgeCasesTest is Test {
       owner,
       redistributor,
       treasury,
-      address(0) // zero pauser
+      address(0), // zero pauser
+      operator
     );
 
     vm.expectRevert(IEarnVaultEventsAndErrors.CanNotBeZeroAddress.selector);
     new ERC1967Proxy(address(impl), initData);
   }
 
-  // ========== Setter Zero Address Tests (3 tests) ==========
+  function test_Revert_InitializeWithZeroBoostRewardKeeper() public {
+    EarnVaultUpgradeable impl = new EarnVaultUpgradeable();
+
+    bytes memory initData = abi.encodeWithSelector(
+      EarnVaultUpgradeable.initialize.selector,
+      address(usdsc),
+      owner,
+      redistributor,
+      treasury,
+      pauser,
+      address(0) // zero boost reward keeper
+    );
+
+    vm.expectRevert(IEarnVaultEventsAndErrors.CanNotBeZeroAddress.selector);
+    new ERC1967Proxy(address(impl), initData);
+  }
+
+  // ========== Setter Zero Address Tests (4 tests) ==========
 
   function test_Revert_SetYieldRedistributorZeroAddress() public {
     vm.prank(owner);
     vm.expectRevert(IEarnVaultEventsAndErrors.CanNotBeZeroAddress.selector);
     vault.setYieldRedistributor(address(0));
+  }
+
+  function test_Revert_SetBoostRewardKeeperZeroAddress() public {
+    vm.prank(owner);
+    vm.expectRevert(IEarnVaultEventsAndErrors.CanNotBeZeroAddress.selector);
+    vault.setBoostRewardKeeper(address(0));
   }
 
   function test_Revert_SetTreasuryZeroAddress() public {
@@ -145,8 +174,8 @@ contract EarnVaultUpgradeableEdgeCasesTest is Test {
   }
 
   function test_Revert_OnBoostRewardNotRedistributor() public {
-    vm.prank(user); // not redistributor
-    vm.expectRevert(IEarnVaultEventsAndErrors.NotYieldRedistributor.selector);
+    vm.prank(user); // not boost reward keeper
+    vm.expectRevert(IEarnVaultEventsAndErrors.NotBoostRewardKeeper.selector);
     vault.onBoostReward(address(0x123), 1000e6);
   }
 
@@ -317,7 +346,7 @@ contract EarnVaultUpgradeableEdgeCasesTest is Test {
     // Distribute boost rewards to create boostClaimReserve
     uint256 boostAmount = 5000e6;
     boostToken.mint(address(vault), boostAmount);
-    vm.prank(redistributor);
+    vm.prank(operator); // operator is boost reward keeper
     vault.onBoostReward(address(boostToken), boostAmount);
 
     // Add extra boost tokens beyond reserve
@@ -348,7 +377,7 @@ contract EarnVaultUpgradeableEdgeCasesTest is Test {
     // Distribute boost rewards to create boostClaimReserve
     uint256 boostAmount = 5000e6;
     boostToken.mint(address(vault), boostAmount);
-    vm.prank(redistributor);
+    vm.prank(operator); // operator is boost reward keeper
     vault.onBoostReward(address(boostToken), boostAmount);
 
     // Try to recover more than available (beyond reserve)
@@ -642,11 +671,11 @@ contract EarnVaultUpgradeableEdgeCasesTest is Test {
     uint256 dotAmount = 750e6;
 
     astrToken.mint(address(vault), astrAmount);
-    vm.prank(redistributor);
+    vm.prank(operator); // operator is boost reward keeper
     vault.onBoostReward(address(astrToken), astrAmount);
 
     dotToken.mint(address(vault), dotAmount);
-    vm.prank(redistributor);
+    vm.prank(operator); // operator is boost reward keeper
     vault.onBoostReward(address(dotToken), dotAmount);
 
     // Get all claimables

@@ -26,6 +26,7 @@ contract EarnVaultUpgradeableSimpleTest is Test {
   address public yieldRedistributor = makeAddr('yieldRedistributor');
   address public treasury = makeAddr('treasury');
   address public pauser = makeAddr('pauser');
+  address public operator = makeAddr('operator'); // boost reward keeper
   address public alice = makeAddr('alice');
   address public bob = makeAddr('bob');
   address public charlie = makeAddr('charlie');
@@ -60,7 +61,7 @@ contract EarnVaultUpgradeableSimpleTest is Test {
       address(implementation),
       admin, // OpenZeppelin v5 creates ProxyAdmin automatically with this as admin
       abi.encodeWithSelector(
-        EarnVaultUpgradeable.initialize.selector, address(usdsc), owner, yieldRedistributor, treasury, pauser
+        EarnVaultUpgradeable.initialize.selector, address(usdsc), owner, yieldRedistributor, treasury, pauser, operator
       )
     );
     vault = EarnVaultUpgradeable(payable(address(proxy)));
@@ -101,13 +102,13 @@ contract EarnVaultUpgradeableSimpleTest is Test {
 
   function test_CannotInitializeTwice() public {
     vm.expectRevert();
-    vault.initialize(address(usdsc), owner, yieldRedistributor, treasury, pauser);
+    vault.initialize(address(usdsc), owner, yieldRedistributor, treasury, pauser, operator);
   }
 
   function test_CannotInitializeImplementationDirectly() public {
     EarnVaultUpgradeableHarness impl = new EarnVaultUpgradeableHarness();
     vm.expectRevert();
-    impl.initialize(address(usdsc), owner, yieldRedistributor, treasury, pauser);
+    impl.initialize(address(usdsc), owner, yieldRedistributor, treasury, pauser, operator);
   }
 
   function test_InitializationSetsCorrectValues() public view {
@@ -768,7 +769,7 @@ contract EarnVaultUpgradeableSimpleTest is Test {
   function test_OnBoostRewardStabilityAcrossUpgrades() public {
     // Deploy mock boost token
     MockERC20 boostToken = new MockERC20('Boost Token', 'BOOST', 18);
-    boostToken.mint(yieldRedistributor, 1000e18);
+    boostToken.mint(operator, 1000e18); // operator is boost reward keeper
 
     // Set up deposits in V1
     vm.prank(alice);
@@ -778,11 +779,11 @@ contract EarnVaultUpgradeableSimpleTest is Test {
     vault.deposit(2000e6);
 
     // First boost reward distribution in V1
-    vm.prank(yieldRedistributor);
+    vm.startPrank(operator); // operator is boost reward keeper
     bool success = boostToken.transfer(address(vault), 100e18);
     require(success, 'Transfer failed');
-    vm.prank(yieldRedistributor);
     vault.onBoostReward(address(boostToken), 100e18);
+    vm.stopPrank();
 
     uint256 aliceBoostClaimableV1 = vault.getClaimableBoostReward(alice, address(boostToken));
     uint256 bobBoostClaimableV1 = vault.getClaimableBoostReward(bob, address(boostToken));
@@ -803,11 +804,11 @@ contract EarnVaultUpgradeableSimpleTest is Test {
     assertEq(vaultV2.getClaimableBoostReward(bob, address(boostToken)), bobBoostClaimableV1);
 
     // Second boost reward distribution in V2
-    vm.prank(yieldRedistributor);
+    vm.startPrank(operator); // operator is boost reward keeper
     bool success2 = boostToken.transfer(address(vaultV2), 200e18);
     require(success2, 'Transfer failed');
-    vm.prank(yieldRedistributor);
     vaultV2.onBoostReward(address(boostToken), 200e18);
+    vm.stopPrank();
 
     // Verify boost distribution works in V2
     assertTrue(vaultV2.getClaimableBoostReward(alice, address(boostToken)) > aliceBoostClaimableV1);
@@ -835,11 +836,11 @@ contract EarnVaultUpgradeableSimpleTest is Test {
     );
 
     // Third boost reward distribution in V3
-    vm.prank(yieldRedistributor);
+    vm.startPrank(operator); // operator is boost reward keeper
     bool success3 = boostToken.transfer(address(vaultV3), 300e18);
     require(success3, 'Transfer failed');
-    vm.prank(yieldRedistributor);
     vaultV3.onBoostReward(address(boostToken), 300e18);
+    vm.stopPrank();
 
     // Verify boost distribution works in V3
     // Note: V3 doesn't modify boost rewards, so they should be the same as V2
@@ -879,19 +880,18 @@ contract EarnVaultUpgradeableSimpleTest is Test {
 
     // Deploy and distribute boost rewards
     MockERC20 boostToken = new MockERC20('Boost Token', 'BOOST', 18);
-    boostToken.mint(yieldRedistributor, 1000e18);
+    boostToken.mint(operator, 1000e18); // operator is boost reward keeper
 
-    vm.prank(yieldRedistributor);
+    vm.startPrank(operator);
     bool success3 = boostToken.transfer(address(vault), 50e18);
     require(success3, 'Transfer failed');
-    vm.prank(yieldRedistributor);
     vault.onBoostReward(address(boostToken), 50e18);
-
-    vm.prank(yieldRedistributor);
+    
+    // Distribute more boost rewards - operator transfers the additional tokens
     bool success4 = boostToken.transfer(address(vault), 100e18);
     require(success4, 'Transfer failed');
-    vm.prank(yieldRedistributor);
     vault.onBoostReward(address(boostToken), 100e18);
+    vm.stopPrank();
 
     // Set admin roles
     address newTreasury = makeAddr('newTreasury');
@@ -990,13 +990,13 @@ contract EarnVaultUpgradeableSimpleTest is Test {
 
     // Deploy boost token and distribute rewards
     MockERC20 boostToken = new MockERC20('Boost Token', 'BOOST', 18);
-    boostToken.mint(yieldRedistributor, 1000e18);
+    boostToken.mint(operator, 1000e18); // operator is boost reward keeper
 
-    vm.prank(yieldRedistributor);
+    vm.startPrank(operator);
     bool success3 = boostToken.transfer(address(vault), 150e18);
     require(success3, 'Transfer failed');
-    vm.prank(yieldRedistributor);
     vault.onBoostReward(address(boostToken), 150e18);
+    vm.stopPrank();
 
     // Capture user states
     uint256 alicePrincipalV1 = vault.principal(alice);

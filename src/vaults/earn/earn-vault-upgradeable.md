@@ -137,7 +137,7 @@ ProxyAdmin Owner (Upgrade Control)
 └── Delegate to vault owner for vault operations
 
 Vault Owner (Vault Administration)
-├── Set yield redistributor, treasury, pauser
+├── Set yield redistributor, boost reward keeper, treasury, pauser
 ├── Manage blacklist
 ├── Emergency operations (when paused)
 ├── Sweep native ETH via sweepNative()
@@ -145,8 +145,11 @@ Vault Owner (Vault Administration)
 
 Yield Redistributor (Yield Operations)
 ├── Distribute yield via onYield()
+└── Typically the RewardRedistributor contract
+
+BoostRewardKeeper (Boost Reward Operations)
 ├── Distribute boost rewards via onBoostReward()
-└── Transfer to treasury
+└── Typically a keeper/operator address
 
 Pauser (Emergency Response)
 ├── Pause contract operations
@@ -202,7 +205,8 @@ function initialize(
     address owner,
     address yieldRedistributor,
     address treasury,
-    address pauser
+    address pauser,
+    address boostRewardKeeper    // Address authorized to call onBoostReward()
 ) public initializer {
     // Initialize base contract
 }
@@ -332,7 +336,8 @@ vault = EarnVaultUpgradeable(payable(
             owner,
             yieldRedistributor,
             treasury,
-            pauser
+            pauser,
+            boostRewardKeeper
         )
     )
 ));
