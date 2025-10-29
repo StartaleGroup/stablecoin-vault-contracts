@@ -2396,4 +2396,130 @@ contract EarnVaultTest is Test {
     // If we got here, the reentrancy protection worked (no revert)
     assertTrue(true, 'Reentrancy protection working');
   }
+
+  /// @notice Test multiple different ERC20 boost tokens sent directly to vault by keeper
+  /// @dev Verifies that keeper can distribute multiple different boost tokens (not USDSC)
+  /// @dev Each token is sent directly to EarnVault, bypassing RewardRedistributor
+  function test_MultipleDifferentBoostTokens_ByKeeper() public {
+    // === Setup: Users deposit USDSC ===
+    vm.prank(alice);
+    vault.deposit(1000e6);
+    vm.prank(bob);
+    vault.deposit(2000e6);
+    vm.prank(charlie);
+    vault.deposit(1500e6);
+
+    assertEq(vault.totalPrincipal(), 4500e6, 'Total principal should be 4500 USDSC');
+
+    // === Deploy multiple different ERC20 boost tokens ===
+    // Tokens with different decimals, names, symbols
+    MockERC20 astrToken = new MockERC20('Astar', 'ASTR', 18);
+    MockERC20 dotToken = new MockERC20('Polkadot', 'DOT', 10);
+    MockERC20 linkToken = new MockERC20('Chainlink', 'LINK', 18);
+
+    // === Mint boost tokens to operator (boost reward keeper) ===
+    astrToken.mint(operator, 5000e18);
+    dotToken.mint(operator, 3000e10);
+    linkToken.mint(operator, 2000e18);
+
+    // === Keeper sends tokens directly to EarnVault and calls onBoostReward ===
+    // This simulates a person from the company distributing boost rewards
+    // Boost tokens bypass RewardRedistributor entirely - sent directly to vault
+    
+    vm.startPrank(operator); // operator is boost reward keeper
+
+    // ASTR distribution (18 decimals)
+    bool success1 = astrToken.transfer(address(vault), 1000e18);
+    require(success1, 'ASTR transfer failed');
+    vault.onBoostReward(address(astrToken), 1000e18);
+
+    // DOT distribution (10 decimals)
+    bool success2 = dotToken.transfer(address(vault), 500e10);
+    require(success2, 'DOT transfer failed');
+    vault.onBoostReward(address(dotToken), 500e10);
+
+    // LINK distribution (18 decimals)
+    bool success3 = linkToken.transfer(address(vault), 1000e18);
+    require(success3, 'LINK transfer failed');
+    vault.onBoostReward(address(linkToken), 1000e18);
+
+    vm.stopPrank();
+
+    // === Verify boost tokens are tracked ===
+    assertTrue(vault.boostGlobalIndex(address(astrToken)) > RAY, 'ASTR global index should be set');
+    assertTrue(vault.boostGlobalIndex(address(dotToken)) > RAY, 'DOT global index should be set');
+    assertTrue(vault.boostGlobalIndex(address(linkToken)) > RAY, 'LINK global index should be set');
+
+    // === Verify users have claimable boost rewards for all tokens ===
+    {
+      uint256 aliceAstr = vault.getClaimableBoostReward(alice, address(astrToken));
+      uint256 aliceDot = vault.getClaimableBoostReward(alice, address(dotToken));
+      uint256 aliceLink = vault.getClaimableBoostReward(alice, address(linkToken));
+
+      // Alice has 1000/4500 = 22.22% share
+      assertGt(aliceAstr, 0, 'Alice should have ASTR claimable');
+      assertGt(aliceDot, 0, 'Alice should have DOT claimable');
+      assertGt(aliceLink, 0, 'Alice should have LINK claimable');
+    }
+
+    {
+      uint256 aliceAstr = vault.getClaimableBoostReward(alice, address(astrToken));
+      uint256 aliceDot = vault.getClaimableBoostReward(alice, address(dotToken));
+      uint256 bobAstr = vault.getClaimableBoostReward(bob, address(astrToken));
+      uint256 bobDot = vault.getClaimableBoostReward(bob, address(dotToken));
+      uint256 charlieAstr = vault.getClaimableBoostReward(charlie, address(astrToken));
+
+      // Bob has 2000/4500 = 44.44% share (should have ~2x Alice)
+      assertGt(bobAstr, aliceAstr, 'Bob should have more ASTR than Alice (2x principal)');
+      assertGt(bobDot, aliceDot, 'Bob should have more DOT than Alice (2x principal)');
+
+      // Charlie has 1500/4500 = 33.33% share
+      assertGt(charlieAstr, 0, 'Charlie should have ASTR claimable');
+      assertGt(charlieAstr, aliceAstr, 'Charlie should have more ASTR than Alice (1.5x principal)');
+    }
+
+    // === Verify getAllClaimables returns all boost tokens ===
+    {
+      uint256 aliceAstr = vault.getClaimableBoostReward(alice, address(astrToken));
+      uint256 aliceDot = vault.getClaimableBoostReward(alice, address(dotToken));
+      uint256 aliceLink = vault.getClaimableBoostReward(alice, address(linkToken));
+
+      (, address[] memory boostTokens, uint256[] memory boostAmounts) = vault.getAllClaimables(alice);
+
+      assertEq(boostTokens.length, 3, 'Alice should have 3 boost tokens');
+      assertEq(boostAmounts.length, 3, 'Alice should have 3 boost amounts');
+
+      // Check that all tokens are in the array
+      bool foundAstr = false;
+      bool foundDot = false;
+      bool foundLink = false;
+
+      for (uint256 i = 0; i < boostTokens.length; i++) {
+        if (boostTokens[i] == address(astrToken)) {
+          assertEq(boostAmounts[i], aliceAstr, 'ASTR amount should match');
+          foundAstr = true;
+        } else if (boostTokens[i] == address(dotToken)) {
+          assertEq(boostAmounts[i], aliceDot, 'DOT amount should match');
+          foundDot = true;
+        } else if (boostTokens[i] == address(linkToken)) {
+          assertEq(boostAmounts[i], aliceLink, 'LINK amount should match');
+          foundLink = true;
+        }
+      }
+
+      assertTrue(foundAstr, 'ASTR should be in boost tokens array');
+      assertTrue(foundDot, 'DOT should be in boost tokens array');
+      assertTrue(foundLink, 'LINK should be in boost tokens array');
+    }
+
+    // === Verify claim reserves are correctly set ===
+    assertEq(vault.boostClaimReserve(address(astrToken)), 1000e18, 'ASTR claim reserve should equal distributed amount');
+    assertEq(vault.boostClaimReserve(address(dotToken)), 500e10, 'DOT claim reserve should equal distributed amount');
+    assertEq(vault.boostClaimReserve(address(linkToken)), 1000e18, 'LINK claim reserve should equal distributed amount');
+
+    // === Verify vault balances ===
+    assertEq(astrToken.balanceOf(address(vault)), 1000e18, 'Vault should have ASTR tokens');
+    assertEq(dotToken.balanceOf(address(vault)), 500e10, 'Vault should have DOT tokens');
+    assertEq(linkToken.balanceOf(address(vault)), 1000e18, 'Vault should have LINK tokens');
+  }
 }
