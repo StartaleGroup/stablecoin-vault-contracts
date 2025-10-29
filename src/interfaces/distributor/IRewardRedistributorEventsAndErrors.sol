@@ -35,6 +35,22 @@ interface IRewardRedistributorEventsAndErrors {
   /// @param fee_on_yield_bps  New fee on yield (bps).
   event ParamsUpdated(address treasury, address earnVault, address susdscVault, uint16 fee_on_yield_bps);
 
+  /// @notice Emitted when Treasury address is updated.
+  /// @param treasury          New Treasury address.
+  event TreasuryUpdated(address treasury);
+
+  /// @notice Emitted when EarnVault address is updated.
+  /// @param earnVault         New EarnVault address.
+  event EarnVaultUpdated(address earnVault);
+
+  /// @notice Emitted when sUSDSC vault address is updated.
+  /// @param susdscVault        New sUSDSC (ERC-4626) vault address.
+  event SusdscVaultUpdated(address susdscVault);
+
+  /// @notice Emitted when fee on yield is updated.
+  /// @param fee_on_yield_bps  New fee on yield (bps).
+  event FeeUpdated(uint16 fee_on_yield_bps);
+
   // ========================================
   // Errors
   // ========================================

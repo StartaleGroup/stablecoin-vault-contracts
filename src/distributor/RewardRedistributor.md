@@ -153,8 +153,8 @@ balance >= claimReserve + incomingYield
 
 ### Roles
 
-- **DEFAULT_ADMIN_ROLE**: Can update parameters, pause/unpause, manage roles
-- **OPERATOR_ROLE**: Can call `distribute()` function (typically automated keeper)
+- **DEFAULT_ADMIN_ROLE**: Granted to admin address in constructor. Can update parameters, pause/unpause, manage roles
+- **OPERATOR_ROLE**: Granted to keeper address in constructor. Can call `distribute()` function (typically automated keeper system)
 
 ### Security Features
 
@@ -174,11 +174,14 @@ uint16 public constant MAX_FEE_BPS = 2000; // Maximum: 20%
 
 ### Parameter Updates
 
-Only `DEFAULT_ADMIN_ROLE` can update:
-- Treasury address
-- EarnVault address
-- sUSDSC vault address
-- Fee on yield (within MAX_FEE_BPS limit)
+Only `DEFAULT_ADMIN_ROLE` can update parameters via separate setter functions:
+
+- `setTreasury(address)`: Update Treasury address
+- `setEarnVault(IEarnVault)`: Update EarnVault address
+- `setSusdscVault(IERC4626)`: Update sUSDSC vault address
+- `setFeeBps(uint16)`: Update fee on yield (within MAX_FEE_BPS limit)
+
+Each setter function only updates its specific parameter, allowing gas-efficient updates without overwriting other values.
 
 ## Events
 
@@ -197,16 +200,16 @@ event Distributed(
 );
 ```
 
-### ParamsUpdated Event
+### Parameter Update Events
 
 ```solidity
-event ParamsUpdated(
-    address startale,
-    address earnVault,
-    address susdscVault,
-    uint16  fee_on_yield_bps
-);
+event TreasuryUpdated(address treasury);
+event EarnVaultUpdated(address earnVault);
+event SusdscVaultUpdated(address susdscVault);
+event FeeUpdated(uint16 fee_on_yield_bps);
 ```
+
+Each setter function emits its corresponding event, making it easy to track individual parameter changes.
 
 ## Integration Points
 
@@ -286,16 +289,20 @@ IERC20(USDSC_ADDRESS).balanceOf(address(this)) == 0  // No dust retention
 rewardRedistributor.distribute();
 ```
 
-### Parameter Update
+### Parameter Updates
 
 ```solidity
-// Admin updates parameters
-rewardRedistributor.setParams(
-    newStartaleAddress,
-    newEarnVaultAddress,
-    newSUSDSCVaultAddress,
-    newFeeBps
-);
+// Admin updates treasury address
+rewardRedistributor.setTreasury(newTreasuryAddress);
+
+// Admin updates EarnVault address
+rewardRedistributor.setEarnVault(newEarnVaultAddress);
+
+// Admin updates sUSDSC vault address
+rewardRedistributor.setSusdscVault(newSUSDSCVaultAddress);
+
+// Admin updates fee on yield
+rewardRedistributor.setFeeBps(newFeeBps);
 ```
 
 ### Emergency Controls
@@ -342,10 +349,10 @@ The RewardRedistributor has comprehensive test coverage including:
 4. Set up Treasury address
 
 ### Initialization Steps
-1. Deploy RewardRedistributor with USDSC address and other parameters
-2. Grant OPERATOR_ROLE to keeper/automation system
-3. Set RewardRedistributor as yieldRecipient in USDSC token contract
-4. Configure fee parameters if needed
+1. Deploy RewardRedistributor with USDSC address, vault addresses, admin address, and keeper address (keeper receives OPERATOR_ROLE)
+2. Set RewardRedistributor as yieldRecipient in USDSC token contract
+3. Set RewardRedistributor as yieldRedistributor in EarnVault
+4. Configure fee parameters if needed using `setFeeBps()`
 5. Verify all integrations work correctly
 
 ### Operational Requirements

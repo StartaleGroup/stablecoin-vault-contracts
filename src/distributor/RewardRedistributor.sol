@@ -62,13 +62,15 @@ contract RewardRedistributor is IRewardRedistributorEventsAndErrors, AccessContr
   /// @param treasuryAddr   Treasury recipient.
   /// @param earnV          EarnVault (checkbox OFF) recipient.
   /// @param sVault         sUSDSC ERC-4626 vault (checkbox ON) recipient.
-  /// @param admin          Admin address; receives DEFAULT_ADMIN_ROLE and OPERATOR_ROLE initially.
-  constructor(address usdscAddress, address treasuryAddr, IEarnVault earnV, IERC4626 sVault, address admin) {
+  /// @param admin          Admin address; receives DEFAULT_ADMIN_ROLE.
+  /// @param keeper         Keeper address; receives OPERATOR_ROLE (can call distribute()).
+  constructor(address usdscAddress, address treasuryAddr, IEarnVault earnV, IERC4626 sVault, address admin, address keeper) {
     if (usdscAddress == address(0)) revert IRewardRedistributorEventsAndErrors.ZeroAddress('USDSC_ADDRESS');
     if (treasuryAddr == address(0)) revert IRewardRedistributorEventsAndErrors.ZeroAddress('treasury');
     if (address(earnV) == address(0)) revert IRewardRedistributorEventsAndErrors.ZeroAddress('earnVault');
     if (address(sVault) == address(0)) revert IRewardRedistributorEventsAndErrors.ZeroAddress('susdscVault');
     if (admin == address(0)) revert IRewardRedistributorEventsAndErrors.ZeroAddress('admin');
+    if (keeper == address(0)) revert IRewardRedistributorEventsAndErrors.ZeroAddress('keeper');
 
     USDSC_ADDRESS = usdscAddress;
     treasury = treasuryAddr;
@@ -76,30 +78,43 @@ contract RewardRedistributor is IRewardRedistributorEventsAndErrors, AccessContr
     susdscVault = sVault;
 
     _grantRole(DEFAULT_ADMIN_ROLE, admin);
-    _grantRole(OPERATOR_ROLE, admin);
+    _grantRole(OPERATOR_ROLE, keeper);
   }
 
-  /// @notice Updates Startale/EarnVault/sUSDSC addresses and the fee on yield.
-  /// @dev    Fee is capped by {MAX_FEE_BPS}. Callable by DEFAULT_ADMIN_ROLE.
+  /// @notice Updates Treasury address.
+  /// @dev    Callable by DEFAULT_ADMIN_ROLE.
   /// @param treasuryAddr   New Treasury address.
-  /// @param earnV          New EarnVault (OFF) address.
-  /// @param sVault         New sUSDSC ERC-4626 vault (ON) address.
-  /// @param newFeeBps      New fee on yield in bps (≤ MAX_FEE_BPS).
-  function setParams(
-    address treasuryAddr,
-    IEarnVault earnV,
-    IERC4626 sVault,
-    uint16 newFeeBps
-  ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+  function setTreasury(address treasuryAddr) external onlyRole(DEFAULT_ADMIN_ROLE) {
     if (treasuryAddr == address(0)) revert IRewardRedistributorEventsAndErrors.ZeroAddress('treasury');
-    if (address(earnV) == address(0)) revert IRewardRedistributorEventsAndErrors.ZeroAddress('earnVault');
-    if (address(sVault) == address(0)) revert IRewardRedistributorEventsAndErrors.ZeroAddress('susdscVault');
-    if (newFeeBps > MAX_FEE_BPS) revert IRewardRedistributorEventsAndErrors.FeeTooHigh(newFeeBps, MAX_FEE_BPS);
     treasury = treasuryAddr;
+    emit IRewardRedistributorEventsAndErrors.TreasuryUpdated(treasuryAddr);
+  }
+
+  /// @notice Updates EarnVault address.
+  /// @dev    Callable by DEFAULT_ADMIN_ROLE.
+  /// @param earnV          New EarnVault (OFF) address.
+  function setEarnVault(IEarnVault earnV) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    if (address(earnV) == address(0)) revert IRewardRedistributorEventsAndErrors.ZeroAddress('earnVault');
     earnVault = earnV;
+    emit IRewardRedistributorEventsAndErrors.EarnVaultUpdated(address(earnV));
+  }
+
+  /// @notice Updates sUSDSC vault address.
+  /// @dev    Callable by DEFAULT_ADMIN_ROLE.
+  /// @param sVault         New sUSDSC ERC-4626 vault (ON) address.
+  function setSusdscVault(IERC4626 sVault) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    if (address(sVault) == address(0)) revert IRewardRedistributorEventsAndErrors.ZeroAddress('susdscVault');
     susdscVault = sVault;
+    emit IRewardRedistributorEventsAndErrors.SusdscVaultUpdated(address(sVault));
+  }
+
+  /// @notice Updates fee on yield.
+  /// @dev    Fee is capped by {MAX_FEE_BPS}. Callable by DEFAULT_ADMIN_ROLE.
+  /// @param newFeeBps      New fee on yield in bps (≤ MAX_FEE_BPS).
+  function setFeeBps(uint16 newFeeBps) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    if (newFeeBps > MAX_FEE_BPS) revert IRewardRedistributorEventsAndErrors.FeeTooHigh(newFeeBps, MAX_FEE_BPS);
     fee_on_yield_bps = newFeeBps;
-    emit ParamsUpdated(treasuryAddr, address(earnV), address(sVault), newFeeBps);
+    emit IRewardRedistributorEventsAndErrors.FeeUpdated(newFeeBps);
   }
 
   function pause(bool p) external onlyRole(DEFAULT_ADMIN_ROLE) {
