@@ -403,7 +403,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
   /// @dev Can be called by boost reward keeper (keeper/operator address)
   /// @param token Token address to distribute as boost rewards
   /// @param amount Amount of boost tokens to distribute
-  function onBoostReward(address token, uint256 amount) external onlyBoostRewardKeeper nonReentrant {
+  function onBoostReward(address token, uint256 amount) external onlyBoostRewardKeeper whenNotPaused nonReentrant {
     BoostRewardsLib.distributeBoostReward(
       token, amount, totalPrincipal, treasury, boostGlobalIndex, boostClaimReserve, activeBoostTokens, boostTokenIndex
     );

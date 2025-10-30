@@ -375,7 +375,7 @@ contract EarnVaultUpgradeable is
   /// @dev Uses same logic as USDSC yield - distributed proportionally based on principal
   /// @param token Token address to distribute as boost rewards
   /// @param amount Amount of boost tokens to distribute
-  function onBoostReward(address token, uint256 amount) external onlyBoostRewardKeeper nonReentrant {
+  function onBoostReward(address token, uint256 amount) external whenNotPaused onlyBoostRewardKeeper nonReentrant {
     EarnVaultStorage storage $ = _getStorage();
     BoostRewardsLib.distributeBoostReward(
       token,

@@ -2522,4 +2522,34 @@ contract EarnVaultTest is Test {
     assertEq(dotToken.balanceOf(address(vault)), 500e10, 'Vault should have DOT tokens');
     assertEq(linkToken.balanceOf(address(vault)), 1000e18, 'Vault should have LINK tokens');
   }
+
+  /// @notice Keeper can be changed mid-lifecycle; old one loses access, new one gains access
+  function test_BoostRewardKeeperCanBeChanged() public {
+    // === Setup: User deposits so rewards can be distributed ===
+    vm.prank(alice);
+    vault.deposit(1000e6);
+
+    // Create a boost token and fund the vault
+    MockERC20 boostToken = new MockERC20('Boost Token', 'BOOST', 18);
+    boostToken.mint(address(vault), 10_000e18);
+
+    // Original keeper distributes successfully
+    vm.prank(operator);
+    vault.onBoostReward(address(boostToken), 1e18);
+
+    // Change keeper to a new operator
+    address newOperator = makeAddr('newOperator');
+    vm.prank(owner);
+    vault.setBoostRewardKeeper(newOperator);
+    assertEq(vault.boostRewardKeeper(), newOperator, 'Keeper should be updated');
+
+    // Old keeper should now revert
+    vm.prank(operator);
+    vm.expectRevert(IEarnVaultEventsAndErrors.NotBoostRewardKeeper.selector);
+    vault.onBoostReward(address(boostToken), 1e18);
+
+    // New keeper should succeed
+    vm.prank(newOperator);
+    vault.onBoostReward(address(boostToken), 1e18);
+  }
 }
