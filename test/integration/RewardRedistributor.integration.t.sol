@@ -4,6 +4,7 @@ pragma solidity ^0.8.30;
 import '../../src/distributor/RewardRedistributor.sol';
 import '../../src/interfaces/distributor/IRewardRedistributorEventsAndErrors.sol';
 import '../../src/interfaces/vaults/earn/IEarnVault.sol';
+import '../../src/interfaces/vaults/earn/IEarnVaultEventsAndErrors.sol';
 import '../../src/vaults/4626/SUSDSCVault.sol';
 import '../../src/vaults/earn/EarnVault.sol';
 import '../mocks/MockERC20.sol';
@@ -46,7 +47,8 @@ contract RewardRedistributorIntegrationTest is Test {
       owner, // owner
       owner, // yieldRedistributor (temporary, will be updated)
       treasury, // treasury
-      pauser // pauser
+      pauser, // pauser
+      operator // boost reward keeper
     );
 
     susdscVault = new SUSDSCVault(
@@ -602,7 +604,7 @@ contract RewardRedistributorIntegrationTest is Test {
 
   function testIntegration_EmptyVaultScenarios() public {
     // Create new clean vaults with no deposits
-    EarnVault emptyEarnVault = new EarnVault(address(usdsc), owner, address(rr), treasury, pauser);
+    EarnVault emptyEarnVault = new EarnVault(address(usdsc), owner, address(rr), treasury, pauser, operator);
 
     SUSDSCVault emptySusdscVault = new SUSDSCVault(IERC20(address(usdsc)), owner, pauser);
 
@@ -781,9 +783,11 @@ contract RewardRedistributorIntegrationTest is Test {
     MockERC20 astr = new MockERC20('Astar', 'ASTR', 18);
     MockERC20 dot = new MockERC20('Polkadot', 'DOT', 10);
 
-    // Mint boost tokens to yield redistributor (simulating external rewards)
-    astr.mint(address(rr), 1000e18);
-    dot.mint(address(rr), 500e10);
+    // Mint boost tokens to operator (boost reward keeper)
+    // Note: Boost rewards are distributed by keeper/operator (person from company),
+    // not by RewardRedistributor contract. Operator just transfers ERC20 tokens to vault.
+    astr.mint(operator, 1000e18);
+    dot.mint(operator, 500e10);
 
     // First, distribute some USDSC yield to establish baseline
     ext.addPending(10_000e6);
@@ -791,14 +795,16 @@ contract RewardRedistributorIntegrationTest is Test {
     rr.distribute();
 
     // Now distribute boost rewards through EarnVault
-    vm.startPrank(address(rr)); // Simulate yield redistributor role
+    // This simulates a person from the company (operator/keeper) distributing boost rewards
+    // Boost rewards are just ERC20 transfers to vault, no contracts involved
+    vm.startPrank(operator); // operator is boost reward keeper (person from company)
 
-    // Transfer tokens to EarnVault first
+    // Transfer tokens to EarnVault first (simple ERC20 transfer)
     bool success1 = astr.transfer(address(earnVault), 100e18);
     bool success2 = dot.transfer(address(earnVault), 50e10);
     require(success1 && success2, 'Transfer failed');
 
-    // Distribute boost rewards
+    // After transferring, call onBoostReward to distribute proportionally to users
     earnVault.onBoostReward(address(astr), 100e18);
     earnVault.onBoostReward(address(dot), 50e10);
 
@@ -860,7 +866,7 @@ contract RewardRedistributorIntegrationTest is Test {
     rr.distribute();
 
     // Distribute boost rewards
-    vm.prank(address(rr));
+    vm.prank(operator); // operator is boost reward keeper
     earnVault.onBoostReward(address(astr), 200e18);
 
     // Alice does partial withdrawal - should auto-claim all rewards
@@ -1237,6 +1243,38 @@ contract RewardRedistributorIntegrationTest is Test {
     vm.stopPrank();
   }
 
+  function testIntegration_EarnVaultBoostRewardAccessControl() public {
+    // Test that boost rewards access control is properly enforced
+    // Boost rewards are distributed by keeper/operator, not by RewardRedistributor contract
+
+    MockERC20 boostToken = new MockERC20('Boost', 'BOOST', 18);
+    boostToken.mint(address(earnVault), 1000e18);
+
+    address unauthorizedUser = makeAddr('unauthorized');
+
+    // Test 1: Unauthorized user cannot call onBoostReward
+    vm.startPrank(unauthorizedUser);
+    vm.expectRevert(IEarnVaultEventsAndErrors.NotBoostRewardKeeper.selector);
+    earnVault.onBoostReward(address(boostToken), 1000e18);
+    vm.stopPrank();
+
+    // Test 2: yieldRedistributor (RewardRedistributor contract) cannot call onBoostReward
+    // This is important - boost rewards are separate from yield distribution
+    vm.startPrank(address(rr)); // RewardRedistributor contract address
+    vm.expectRevert(IEarnVaultEventsAndErrors.NotBoostRewardKeeper.selector);
+    earnVault.onBoostReward(address(boostToken), 1000e18);
+    vm.stopPrank();
+
+    // Test 3: Only boostRewardKeeper (operator) can call onBoostReward
+    // This simulates a person from the company distributing boost rewards via ERC20 transfer
+    vm.prank(operator); // operator is the boost reward keeper
+    earnVault.onBoostReward(address(boostToken), 1000e18); // Should succeed
+
+    // Verify boost rewards were distributed
+    uint256 aliceClaimable = earnVault.getClaimableBoostReward(alice, address(boostToken));
+    assertGt(aliceClaimable, 0, 'Alice should have claimable boost rewards');
+  }
+
   function testIntegration_RewardRedistributorPausedDistribution() public {
     // Test that distribution fails when paused
 
@@ -1460,7 +1498,7 @@ contract RewardRedistributorIntegrationTest is Test {
     // Mint boost tokens and distribute some
     boostToken.mint(address(earnVault), 2000e18);
 
-    vm.prank(address(rr));
+    vm.prank(operator); // operator is boost reward keeper
     earnVault.onBoostReward(address(boostToken), 1000e18);
 
     // Try to recover more than available (should revert)
@@ -1673,7 +1711,7 @@ contract RewardRedistributorIntegrationTest is Test {
 
     // Distribute boost rewards
     boostToken.mint(address(earnVault), 1000e18);
-    vm.prank(address(rr));
+    vm.prank(operator); // operator is boost reward keeper
     earnVault.onBoostReward(address(boostToken), 1000e18);
 
     // Test getAllClaimables after boost rewards

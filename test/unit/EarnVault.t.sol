@@ -17,6 +17,7 @@ contract EarnVaultTest is Test {
   address public yieldRedistributor = makeAddr('yieldRedistributor');
   address public treasury = makeAddr('treasury');
   address public pauser = makeAddr('pauser');
+  address public operator = makeAddr('operator'); // boost reward keeper
   address public alice = makeAddr('alice');
   address public bob = makeAddr('bob');
   address public charlie = makeAddr('charlie');
@@ -35,7 +36,7 @@ contract EarnVaultTest is Test {
 
     // Deploy EarnVault with proper parameters
     vm.prank(owner);
-    vault = new EarnVault(address(usdsc), owner, yieldRedistributor, treasury, pauser);
+    vault = new EarnVault(address(usdsc), owner, yieldRedistributor, treasury, pauser, operator);
 
     // Mint USDSC to test users
     usdsc.mint(alice, INITIAL_SUPPLY);
@@ -1676,9 +1677,9 @@ contract EarnVaultTest is Test {
     MockERC20 tokenA = new MockERC20('Token A', 'TOKENA', 18);
     MockERC20 tokenB = new MockERC20('Token B', 'TOKENB', 18);
 
-    // Mint tokens to yield redistributor
-    tokenA.mint(yieldRedistributor, 1000e18);
-    tokenB.mint(yieldRedistributor, 1000e18);
+    // Mint tokens to operator (boost reward keeper)
+    tokenA.mint(operator, 1000e18);
+    tokenB.mint(operator, 1000e18);
 
     // === Alice deposits ===
     vm.prank(alice);
@@ -1695,7 +1696,7 @@ contract EarnVaultTest is Test {
     uint256 amountA = 50e18;
     uint256 amountB = 75e18;
 
-    vm.startPrank(yieldRedistributor);
+    vm.startPrank(operator); // operator is boost reward keeper
     tokenA.approve(address(vault), amountA);
     bool successA = tokenA.transfer(address(vault), amountA);
     require(successA, 'Transfer failed');
@@ -1777,7 +1778,7 @@ contract EarnVaultTest is Test {
     address mockToken = makeAddr('mockToken');
 
     // Distribute zero boost rewards (should not revert)
-    vm.prank(yieldRedistributor);
+    vm.prank(operator); // operator is boost reward keeper
     vault.onBoostReward(mockToken, 0);
 
     // Verify no boost rewards were distributed
@@ -2225,7 +2226,7 @@ contract EarnVaultTest is Test {
     mockToken.mint(alice, 100e18);
 
     // Alice tries to distribute boost rewards but vault has no tokens
-    vm.prank(yieldRedistributor);
+    vm.prank(operator); // operator is boost reward keeper
     vm.expectRevert(IEarnVaultEventsAndErrors.InsufficientBoostTokenBalance.selector);
     vault.onBoostReward(address(mockToken), 50e18);
 
@@ -2238,9 +2239,50 @@ contract EarnVaultTest is Test {
     mockToken.mint(address(vault), 10e18);
 
     // Try to distribute more than available balance
-    vm.prank(yieldRedistributor);
+    vm.prank(operator); // operator is boost reward keeper
     vm.expectRevert(IEarnVaultEventsAndErrors.InsufficientBoostClaimReserve.selector);
     vault.onBoostReward(address(mockToken), 20e18);
+  }
+
+  /// @notice Test boost reward access control - only boostRewardKeeper can distribute
+  /// @dev Boost rewards are distributed by keeper/operator (person from company), not by contracts
+  function test_BoostRewardAccessControl() public {
+    MockERC20 boostToken = new MockERC20('Boost Token', 'BOOST', 18);
+    boostToken.mint(address(vault), 1000e18);
+
+    // Test 1: Unauthorized user cannot call onBoostReward
+    address unauthorizedUser = makeAddr('unauthorized');
+    vm.startPrank(unauthorizedUser);
+    vm.expectRevert(IEarnVaultEventsAndErrors.NotBoostRewardKeeper.selector);
+    vault.onBoostReward(address(boostToken), 1000e18);
+    vm.stopPrank();
+
+    // Test 2: yieldRedistributor cannot call onBoostReward
+    // Important: boost rewards are separate from yield distribution
+    // yieldRedistributor is the RewardRedistributor contract, which only handles USDSC yield
+    vm.startPrank(yieldRedistributor);
+    vm.expectRevert(IEarnVaultEventsAndErrors.NotBoostRewardKeeper.selector);
+    vault.onBoostReward(address(boostToken), 1000e18);
+    vm.stopPrank();
+
+    // Test 3: owner cannot call onBoostReward
+    vm.startPrank(owner);
+    vm.expectRevert(IEarnVaultEventsAndErrors.NotBoostRewardKeeper.selector);
+    vault.onBoostReward(address(boostToken), 1000e18);
+    vm.stopPrank();
+
+    // Test 4: Only boostRewardKeeper (operator) can call onBoostReward
+    // First, Alice needs to deposit so there's principal to distribute rewards to
+    vm.prank(alice);
+    vault.deposit(1000e6);
+
+    // Now distribute boost rewards - this simulates a person from the company distributing boost rewards
+    vm.prank(operator); // operator is the boost reward keeper
+    vault.onBoostReward(address(boostToken), 1000e18); // Should succeed
+
+    // Verify boost rewards were distributed
+    uint256 aliceClaimable = vault.getClaimableBoostReward(alice, address(boostToken));
+    assertGt(aliceClaimable, 0, 'Alice should have claimable boost rewards after distribution');
   }
 
   /// @notice Test that blacklisted users cannot access boost reward functions
@@ -2252,7 +2294,7 @@ contract EarnVaultTest is Test {
     // Distribute some boost rewards
     MockERC20 mockToken = new MockERC20('Mock Token', 'MOCK', 18);
     mockToken.mint(address(vault), 100e18);
-    vm.prank(yieldRedistributor);
+    vm.prank(operator); // operator is boost reward keeper
     vault.onBoostReward(address(mockToken), 50e18);
 
     // === Blacklist Alice ===
@@ -2353,5 +2395,161 @@ contract EarnVaultTest is Test {
 
     // If we got here, the reentrancy protection worked (no revert)
     assertTrue(true, 'Reentrancy protection working');
+  }
+
+  /// @notice Test multiple different ERC20 boost tokens sent directly to vault by keeper
+  /// @dev Verifies that keeper can distribute multiple different boost tokens (not USDSC)
+  /// @dev Each token is sent directly to EarnVault, bypassing RewardRedistributor
+  function test_MultipleDifferentBoostTokens_ByKeeper() public {
+    // === Setup: Users deposit USDSC ===
+    vm.prank(alice);
+    vault.deposit(1000e6);
+    vm.prank(bob);
+    vault.deposit(2000e6);
+    vm.prank(charlie);
+    vault.deposit(1500e6);
+
+    assertEq(vault.totalPrincipal(), 4500e6, 'Total principal should be 4500 USDSC');
+
+    // === Deploy multiple different ERC20 boost tokens ===
+    // Tokens with different decimals, names, symbols
+    MockERC20 astrToken = new MockERC20('Astar', 'ASTR', 18);
+    MockERC20 dotToken = new MockERC20('Polkadot', 'DOT', 10);
+    MockERC20 linkToken = new MockERC20('Chainlink', 'LINK', 18);
+
+    // === Mint boost tokens to operator (boost reward keeper) ===
+    astrToken.mint(operator, 5000e18);
+    dotToken.mint(operator, 3000e10);
+    linkToken.mint(operator, 2000e18);
+
+    // === Keeper sends tokens directly to EarnVault and calls onBoostReward ===
+    // This simulates a person from the company distributing boost rewards
+    // Boost tokens bypass RewardRedistributor entirely - sent directly to vault
+    
+    vm.startPrank(operator); // operator is boost reward keeper
+
+    // ASTR distribution (18 decimals)
+    bool success1 = astrToken.transfer(address(vault), 1000e18);
+    require(success1, 'ASTR transfer failed');
+    vault.onBoostReward(address(astrToken), 1000e18);
+
+    // DOT distribution (10 decimals)
+    bool success2 = dotToken.transfer(address(vault), 500e10);
+    require(success2, 'DOT transfer failed');
+    vault.onBoostReward(address(dotToken), 500e10);
+
+    // LINK distribution (18 decimals)
+    bool success3 = linkToken.transfer(address(vault), 1000e18);
+    require(success3, 'LINK transfer failed');
+    vault.onBoostReward(address(linkToken), 1000e18);
+
+    vm.stopPrank();
+
+    // === Verify boost tokens are tracked ===
+    assertTrue(vault.boostGlobalIndex(address(astrToken)) > RAY, 'ASTR global index should be set');
+    assertTrue(vault.boostGlobalIndex(address(dotToken)) > RAY, 'DOT global index should be set');
+    assertTrue(vault.boostGlobalIndex(address(linkToken)) > RAY, 'LINK global index should be set');
+
+    // === Verify users have claimable boost rewards for all tokens ===
+    {
+      uint256 aliceAstr = vault.getClaimableBoostReward(alice, address(astrToken));
+      uint256 aliceDot = vault.getClaimableBoostReward(alice, address(dotToken));
+      uint256 aliceLink = vault.getClaimableBoostReward(alice, address(linkToken));
+
+      // Alice has 1000/4500 = 22.22% share
+      assertGt(aliceAstr, 0, 'Alice should have ASTR claimable');
+      assertGt(aliceDot, 0, 'Alice should have DOT claimable');
+      assertGt(aliceLink, 0, 'Alice should have LINK claimable');
+    }
+
+    {
+      uint256 aliceAstr = vault.getClaimableBoostReward(alice, address(astrToken));
+      uint256 aliceDot = vault.getClaimableBoostReward(alice, address(dotToken));
+      uint256 bobAstr = vault.getClaimableBoostReward(bob, address(astrToken));
+      uint256 bobDot = vault.getClaimableBoostReward(bob, address(dotToken));
+      uint256 charlieAstr = vault.getClaimableBoostReward(charlie, address(astrToken));
+
+      // Bob has 2000/4500 = 44.44% share (should have ~2x Alice)
+      assertGt(bobAstr, aliceAstr, 'Bob should have more ASTR than Alice (2x principal)');
+      assertGt(bobDot, aliceDot, 'Bob should have more DOT than Alice (2x principal)');
+
+      // Charlie has 1500/4500 = 33.33% share
+      assertGt(charlieAstr, 0, 'Charlie should have ASTR claimable');
+      assertGt(charlieAstr, aliceAstr, 'Charlie should have more ASTR than Alice (1.5x principal)');
+    }
+
+    // === Verify getAllClaimables returns all boost tokens ===
+    {
+      uint256 aliceAstr = vault.getClaimableBoostReward(alice, address(astrToken));
+      uint256 aliceDot = vault.getClaimableBoostReward(alice, address(dotToken));
+      uint256 aliceLink = vault.getClaimableBoostReward(alice, address(linkToken));
+
+      (, address[] memory boostTokens, uint256[] memory boostAmounts) = vault.getAllClaimables(alice);
+
+      assertEq(boostTokens.length, 3, 'Alice should have 3 boost tokens');
+      assertEq(boostAmounts.length, 3, 'Alice should have 3 boost amounts');
+
+      // Check that all tokens are in the array
+      bool foundAstr = false;
+      bool foundDot = false;
+      bool foundLink = false;
+
+      for (uint256 i = 0; i < boostTokens.length; i++) {
+        if (boostTokens[i] == address(astrToken)) {
+          assertEq(boostAmounts[i], aliceAstr, 'ASTR amount should match');
+          foundAstr = true;
+        } else if (boostTokens[i] == address(dotToken)) {
+          assertEq(boostAmounts[i], aliceDot, 'DOT amount should match');
+          foundDot = true;
+        } else if (boostTokens[i] == address(linkToken)) {
+          assertEq(boostAmounts[i], aliceLink, 'LINK amount should match');
+          foundLink = true;
+        }
+      }
+
+      assertTrue(foundAstr, 'ASTR should be in boost tokens array');
+      assertTrue(foundDot, 'DOT should be in boost tokens array');
+      assertTrue(foundLink, 'LINK should be in boost tokens array');
+    }
+
+    // === Verify claim reserves are correctly set ===
+    assertEq(vault.boostClaimReserve(address(astrToken)), 1000e18, 'ASTR claim reserve should equal distributed amount');
+    assertEq(vault.boostClaimReserve(address(dotToken)), 500e10, 'DOT claim reserve should equal distributed amount');
+    assertEq(vault.boostClaimReserve(address(linkToken)), 1000e18, 'LINK claim reserve should equal distributed amount');
+
+    // === Verify vault balances ===
+    assertEq(astrToken.balanceOf(address(vault)), 1000e18, 'Vault should have ASTR tokens');
+    assertEq(dotToken.balanceOf(address(vault)), 500e10, 'Vault should have DOT tokens');
+    assertEq(linkToken.balanceOf(address(vault)), 1000e18, 'Vault should have LINK tokens');
+  }
+
+  /// @notice Keeper can be changed mid-lifecycle; old one loses access, new one gains access
+  function test_BoostRewardKeeperCanBeChanged() public {
+    // === Setup: User deposits so rewards can be distributed ===
+    vm.prank(alice);
+    vault.deposit(1000e6);
+
+    // Create a boost token and fund the vault
+    MockERC20 boostToken = new MockERC20('Boost Token', 'BOOST', 18);
+    boostToken.mint(address(vault), 10_000e18);
+
+    // Original keeper distributes successfully
+    vm.prank(operator);
+    vault.onBoostReward(address(boostToken), 1e18);
+
+    // Change keeper to a new operator
+    address newOperator = makeAddr('newOperator');
+    vm.prank(owner);
+    vault.setBoostRewardKeeper(newOperator);
+    assertEq(vault.boostRewardKeeper(), newOperator, 'Keeper should be updated');
+
+    // Old keeper should now revert
+    vm.prank(operator);
+    vm.expectRevert(IEarnVaultEventsAndErrors.NotBoostRewardKeeper.selector);
+    vault.onBoostReward(address(boostToken), 1e18);
+
+    // New keeper should succeed
+    vm.prank(newOperator);
+    vault.onBoostReward(address(boostToken), 1e18);
   }
 }

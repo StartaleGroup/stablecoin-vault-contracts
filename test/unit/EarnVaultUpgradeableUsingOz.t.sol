@@ -24,6 +24,7 @@ contract EarnVaultUpgradeableUsingOzTest is Test {
   address public yieldRedistributor = makeAddr('yieldRedistributor');
   address public treasury = makeAddr('treasury');
   address public pauser = makeAddr('pauser');
+  address public operator = makeAddr('operator'); // boost reward keeper
   address public alice = makeAddr('alice');
   address public bob = makeAddr('bob');
   address public charlie = makeAddr('charlie');
@@ -61,7 +62,7 @@ contract EarnVaultUpgradeableUsingOzTest is Test {
           address(v1Implementation),
           admin, // ProxyAdmin owner
           abi.encodeWithSelector(
-            EarnVaultUpgradeable.initialize.selector, address(usdsc), owner, yieldRedistributor, treasury, pauser
+            EarnVaultUpgradeable.initialize.selector, address(usdsc), owner, yieldRedistributor, treasury, pauser, operator
           )
         ))
     );
@@ -105,7 +106,8 @@ contract EarnVaultUpgradeableUsingOzTest is Test {
         owner,
         yieldRedistributor,
         treasury,
-        pauser
+        pauser,
+        operator
       )
     );
   }
@@ -123,7 +125,8 @@ contract EarnVaultUpgradeableUsingOzTest is Test {
         address(0), // Zero owner address
         yieldRedistributor,
         treasury,
-        pauser
+        pauser,
+        operator
       )
     );
   }
@@ -141,7 +144,8 @@ contract EarnVaultUpgradeableUsingOzTest is Test {
         owner,
         address(0), // Zero yield redistributor address
         treasury,
-        pauser
+        pauser,
+        operator
       )
     );
   }
@@ -159,7 +163,8 @@ contract EarnVaultUpgradeableUsingOzTest is Test {
         owner,
         yieldRedistributor,
         address(0), // Zero treasury address
-        pauser
+        pauser,
+        operator
       )
     );
   }
@@ -177,7 +182,8 @@ contract EarnVaultUpgradeableUsingOzTest is Test {
         owner,
         yieldRedistributor,
         treasury,
-        address(0) // Zero pauser address
+        address(0), // Zero pauser address
+        operator
       )
     );
   }

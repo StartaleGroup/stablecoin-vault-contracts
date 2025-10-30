@@ -13,7 +13,8 @@ abstract contract EarnVaultStorageBase is IEarnVaultEventsAndErrors {
     // -------- Constants --------
     uint256 RAY; // High precision for yield calculations (MakerDAO standard)
     // -------- Access Control --------
-    address yieldRedistributor; // Address authorized to call onYield() and onBoostReward()
+    address yieldRedistributor; // Address authorized to call onYield() (RewardRedistributor contract)
+    address boostRewardKeeper; // Address authorized to call onBoostReward() (keeper/operator address)
     address pauser; // Address authorized to pause/unpause the contract
     // -------- Immutables (stored as regular variables in upgradeable) --------
     IERC20 USDSC; // USDSC token contract

@@ -2,6 +2,7 @@
 pragma solidity ^0.8.30;
 
 import {EarnVault} from '../../src/vaults/earn/EarnVault.sol';
+import {IEarnVaultEventsAndErrors} from '../../src/interfaces/vaults/earn/IEarnVaultEventsAndErrors.sol';
 import {MockERC20} from '../mocks/MockERC20.sol';
 import {Test} from 'lib/forge-std/src/Test.sol';
 
@@ -12,6 +13,7 @@ contract EarnVaultBoostTest is Test {
   MockERC20 public dot;
 
   address public admin = makeAddr('admin');
+  address public operator = makeAddr('operator'); // boost reward keeper
   address public user1 = makeAddr('user1');
   address public user2 = makeAddr('user2');
   address public treasury = makeAddr('treasury');
@@ -29,18 +31,22 @@ contract EarnVaultBoostTest is Test {
     dot = new MockERC20('DOT Token', 'DOT', 18);
 
     // Deploy EarnVault
+    // Note: yieldRedistributor and boostRewardKeeper are separate roles
+    // yieldRedistributor = RewardRedistributor contract (handles USDSC yield)
+    // boostRewardKeeper = operator (person from company, handles boost rewards via direct ERC20 transfers)
     earnVault = new EarnVault(
       address(usdsc),
       admin,
-      admin, // yield redistributor
+      admin, // yield redistributor (could be RewardRedistributor contract in production)
       treasury,
-      pauser
+      pauser,
+      operator // boost reward keeper (person from company)
     );
 
     // Setup initial balances
     usdsc.mint(admin, INITIAL_SUPPLY);
-    astr.mint(admin, ASTR_REWARD);
-    dot.mint(admin, DOT_REWARD);
+    astr.mint(operator, ASTR_REWARD); // Boost tokens to operator (keeper)
+    dot.mint(operator, DOT_REWARD); // Boost tokens to operator (keeper)
 
     // Setup users
     usdsc.mint(user1, DEPOSIT_AMOUNT * 3);
@@ -73,7 +79,7 @@ contract EarnVaultBoostTest is Test {
     // =========================
     // Action: Admin distributes ASTR boost rewards
     // =========================
-    vm.startPrank(admin);
+    vm.startPrank(operator); // operator is boost reward keeper
     astr.approve(address(earnVault), ASTR_REWARD);
     bool success = astr.transfer(address(earnVault), ASTR_REWARD);
     require(success, 'Transfer failed');
@@ -113,7 +119,7 @@ contract EarnVaultBoostTest is Test {
     // =========================
     // Action: Admin distributes ASTR boost rewards
     // =========================
-    vm.startPrank(admin);
+    vm.startPrank(operator); // operator is boost reward keeper
     astr.approve(address(earnVault), ASTR_REWARD);
     bool success = astr.transfer(address(earnVault), ASTR_REWARD);
     require(success, 'Transfer failed');
@@ -150,7 +156,7 @@ contract EarnVaultBoostTest is Test {
     // =========================
     // Action: Admin distributes ASTR boost rewards
     // =========================
-    vm.startPrank(admin);
+    vm.startPrank(operator); // operator is boost reward keeper
     astr.approve(address(earnVault), ASTR_REWARD);
     bool success = astr.transfer(address(earnVault), ASTR_REWARD);
     require(success, 'Transfer failed');
@@ -184,22 +190,22 @@ contract EarnVaultBoostTest is Test {
     earnVault.deposit(DEPOSIT_AMOUNT);
 
     // =========================
-    // Action: Admin distributes both USDSC yield and ASTR boost rewards
+    // Action: Distribute both USDSC yield and ASTR boost rewards
     // =========================
+    // Distribute USDSC yield (admin is yieldRedistributor in setUp)
     vm.startPrank(admin);
-
-    // Distribute USDSC yield
     usdsc.approve(address(earnVault), 100e6);
     bool success = usdsc.transfer(address(earnVault), 100e6);
     require(success, 'Transfer failed');
     earnVault.onYield(100e6);
+    vm.stopPrank();
 
-    // Distribute ASTR boost rewards
+    // Distribute ASTR boost rewards (operator is boostRewardKeeper)
+    vm.startPrank(operator);
     astr.approve(address(earnVault), ASTR_REWARD);
     bool success2 = astr.transfer(address(earnVault), ASTR_REWARD);
     require(success2, 'Transfer failed');
     earnVault.onBoostReward(address(astr), ASTR_REWARD);
-
     vm.stopPrank();
 
     // =========================
@@ -234,27 +240,35 @@ contract EarnVaultBoostTest is Test {
     earnVault.deposit(DEPOSIT_AMOUNT);
 
     // =========================
-    // Action: Admin distributes multiple token rewards
+    // Action: Operator (boost reward keeper) distributes multiple token rewards
     // =========================
-    vm.startPrank(admin);
-
     // Distribute ASTR boost rewards
+    vm.startPrank(operator); // operator is boost reward keeper
     astr.approve(address(earnVault), ASTR_REWARD);
     bool success = astr.transfer(address(earnVault), ASTR_REWARD);
     require(success, 'Transfer failed');
     earnVault.onBoostReward(address(astr), ASTR_REWARD);
+    vm.stopPrank();
 
     // Distribute DOT boost rewards
+    vm.startPrank(operator); // operator is boost reward keeper
     dot.approve(address(earnVault), DOT_REWARD);
     bool success2 = dot.transfer(address(earnVault), DOT_REWARD);
     require(success2, 'Transfer failed');
     earnVault.onBoostReward(address(dot), DOT_REWARD);
-
     vm.stopPrank();
 
     // =========================
     // Verification: User claims all boost rewards
     // =========================
+    
+    // Verify access control: only operator (boostRewardKeeper) can distribute
+    astr.mint(address(earnVault), ASTR_REWARD);
+    vm.startPrank(admin); // admin is yieldRedistributor but NOT boostRewardKeeper
+    vm.expectRevert(IEarnVaultEventsAndErrors.NotBoostRewardKeeper.selector);
+    earnVault.onBoostReward(address(astr), ASTR_REWARD);
+    vm.stopPrank();
+
     // Record initial balances
     uint256 initialASTR = astr.balanceOf(user1);
     uint256 initialDOT = dot.balanceOf(user1);
@@ -288,7 +302,7 @@ contract EarnVaultBoostTest is Test {
     // =========================
     // Action: Admin distributes boost rewards when no deposits exist
     // =========================
-    vm.startPrank(admin);
+    vm.startPrank(operator); // operator is boost reward keeper
     astr.approve(address(earnVault), ASTR_REWARD);
     bool success = astr.transfer(address(earnVault), ASTR_REWARD);
     require(success, 'Transfer failed');
@@ -350,7 +364,7 @@ contract EarnVaultBoostTest is Test {
     // =========================
     // Action: First boost reward distribution (gi increases, ui is still 0)
     // =========================
-    vm.startPrank(admin);
+    vm.startPrank(operator); // operator is boost reward keeper
     astr.approve(address(earnVault), ASTR_REWARD);
     bool success = astr.transfer(address(earnVault), ASTR_REWARD);
     require(success, 'Transfer failed');
@@ -364,8 +378,12 @@ contract EarnVaultBoostTest is Test {
     // =========================
     // Action: Second boost reward distribution WITHOUT user claiming first
     // =========================
-    vm.startPrank(admin);
-    astr.mint(admin, ASTR_REWARD); // Mint more ASTR
+    // Mint more ASTR to operator (boost reward keeper)
+    vm.startPrank(admin); // admin mints to operator
+    astr.mint(operator, ASTR_REWARD); // Mint more ASTR to operator
+    vm.stopPrank();
+    
+    vm.startPrank(operator); // operator is boost reward keeper (person from company)
     astr.approve(address(earnVault), ASTR_REWARD);
     bool success2 = astr.transfer(address(earnVault), ASTR_REWARD);
     require(success2, 'Transfer failed');
@@ -404,7 +422,7 @@ contract EarnVaultBoostTest is Test {
     vm.prank(user1);
     earnVault.deposit(DEPOSIT_AMOUNT);
 
-    vm.startPrank(admin);
+    vm.startPrank(operator); // operator is boost reward keeper
     astr.approve(address(earnVault), ASTR_REWARD);
     bool success = astr.transfer(address(earnVault), ASTR_REWARD);
     require(success, 'Transfer failed');
@@ -442,7 +460,7 @@ contract EarnVaultBoostTest is Test {
     // =========================
     // Action: Distribute boost rewards (gi > ui for both users)
     // =========================
-    vm.startPrank(admin);
+    vm.startPrank(operator); // operator is boost reward keeper
     astr.approve(address(earnVault), ASTR_REWARD);
     bool success = astr.transfer(address(earnVault), ASTR_REWARD);
     require(success, 'Transfer failed');
@@ -481,7 +499,7 @@ contract EarnVaultBoostTest is Test {
     earnVault.deposit(DEPOSIT_AMOUNT);
 
     // Distribute boost rewards
-    vm.startPrank(admin);
+    vm.startPrank(operator); // operator is boost reward keeper
     astr.approve(address(earnVault), ASTR_REWARD);
     bool success = astr.transfer(address(earnVault), ASTR_REWARD);
     require(success, 'Transfer failed');

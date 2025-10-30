@@ -48,6 +48,12 @@ contract EarnVaultUpgradeable is
     _;
   }
 
+  /// @dev Modifier to check if caller is the boost reward keeper
+  modifier onlyBoostRewardKeeper() {
+    _onlyBoostRewardKeeper();
+    _;
+  }
+
   /// @dev Modifier to check if caller is the pauser
   modifier onlyPauser() {
     _onlyPauser();
@@ -67,12 +73,14 @@ contract EarnVaultUpgradeable is
   /// @param yieldRedistributorAddr Yield redistributor address
   /// @param treasuryAddr Treasury address
   /// @param pauserAddr Pauser address
+  /// @param boostRewardKeeperAddr Boost reward keeper address
   function initialize(
     address usdsc,
     address owner,
     address yieldRedistributorAddr,
     address treasuryAddr,
-    address pauserAddr
+    address pauserAddr,
+    address boostRewardKeeperAddr
   ) public initializer {
     if (usdsc == address(0) || owner == address(0)) {
       revert IEarnVaultEventsAndErrors.CanNotBeZeroAddress();
@@ -81,6 +89,7 @@ contract EarnVaultUpgradeable is
       revert IEarnVaultEventsAndErrors.CanNotBeZeroAddress();
     }
     if (pauserAddr == address(0)) revert IEarnVaultEventsAndErrors.CanNotBeZeroAddress();
+    if (boostRewardKeeperAddr == address(0)) revert IEarnVaultEventsAndErrors.CanNotBeZeroAddress();
 
     // Initialize upgradeable contracts
     __Ownable2Step_init();
@@ -96,6 +105,7 @@ contract EarnVaultUpgradeable is
     $.USDSC = IERC20(usdsc);
     $.treasury = treasuryAddr;
     $.yieldRedistributor = yieldRedistributorAddr;
+    $.boostRewardKeeper = boostRewardKeeperAddr;
     $.pauser = pauserAddr;
     $.globalIndex = $.RAY; // Initialize to RAY
   }
@@ -122,6 +132,16 @@ contract EarnVaultUpgradeable is
     address oldRedistributor = $.yieldRedistributor;
     $.yieldRedistributor = who;
     emit YieldRedistributorChanged(msg.sender, oldRedistributor, who);
+  }
+
+  /// @notice Set the boost reward keeper address
+  /// @param who New boost reward keeper address
+  function setBoostRewardKeeper(address who) external onlyOwner {
+    if (who == address(0)) revert IEarnVaultEventsAndErrors.CanNotBeZeroAddress();
+    EarnVaultStorage storage $ = _getStorage();
+    address oldKeeper = $.boostRewardKeeper;
+    $.boostRewardKeeper = who;
+    emit BoostRewardKeeperChanged(msg.sender, oldKeeper, who);
   }
 
   /// @notice Set the treasury address
@@ -355,7 +375,7 @@ contract EarnVaultUpgradeable is
   /// @dev Uses same logic as USDSC yield - distributed proportionally based on principal
   /// @param token Token address to distribute as boost rewards
   /// @param amount Amount of boost tokens to distribute
-  function onBoostReward(address token, uint256 amount) external onlyYieldRedistributor nonReentrant {
+  function onBoostReward(address token, uint256 amount) external whenNotPaused onlyBoostRewardKeeper nonReentrant {
     EarnVaultStorage storage $ = _getStorage();
     BoostRewardsLib.distributeBoostReward(
       token,
@@ -649,6 +669,11 @@ contract EarnVaultUpgradeable is
   function _onlyYieldRedistributor() internal view {
     EarnVaultStorage storage $ = _getStorage();
     if (msg.sender != $.yieldRedistributor) revert IEarnVaultEventsAndErrors.NotYieldRedistributor();
+  }
+
+  function _onlyBoostRewardKeeper() internal view {
+    EarnVaultStorage storage $ = _getStorage();
+    if (msg.sender != $.boostRewardKeeper) revert IEarnVaultEventsAndErrors.NotBoostRewardKeeper();
   }
 
   function _onlyPauser() internal view {
