@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import {EarnVault} from '../../src/vaults/earn/EarnVault.sol';
 import {IEarnVaultEventsAndErrors} from '../../src/interfaces/vaults/earn/IEarnVaultEventsAndErrors.sol';
+import {EarnVault} from '../../src/vaults/earn/EarnVault.sol';
 import {MockERC20} from '../mocks/MockERC20.sol';
 import {Test} from 'lib/forge-std/src/Test.sol';
 
@@ -261,7 +261,7 @@ contract EarnVaultBoostTest is Test {
     // =========================
     // Verification: User claims all boost rewards
     // =========================
-    
+
     // Verify access control: only operator (boostRewardKeeper) can distribute
     astr.mint(address(earnVault), ASTR_REWARD);
     vm.startPrank(admin); // admin is yieldRedistributor but NOT boostRewardKeeper
@@ -382,7 +382,7 @@ contract EarnVaultBoostTest is Test {
     vm.startPrank(admin); // admin mints to operator
     astr.mint(operator, ASTR_REWARD); // Mint more ASTR to operator
     vm.stopPrank();
-    
+
     vm.startPrank(operator); // operator is boost reward keeper (person from company)
     astr.approve(address(earnVault), ASTR_REWARD);
     bool success2 = astr.transfer(address(earnVault), ASTR_REWARD);

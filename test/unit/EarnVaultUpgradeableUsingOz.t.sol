@@ -62,7 +62,13 @@ contract EarnVaultUpgradeableUsingOzTest is Test {
           address(v1Implementation),
           admin, // ProxyAdmin owner
           abi.encodeWithSelector(
-            EarnVaultUpgradeable.initialize.selector, address(usdsc), owner, yieldRedistributor, treasury, pauser, operator
+            EarnVaultUpgradeable.initialize.selector,
+            address(usdsc),
+            owner,
+            yieldRedistributor,
+            treasury,
+            pauser,
+            operator
           )
         ))
     );

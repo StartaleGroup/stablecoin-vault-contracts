@@ -90,7 +90,12 @@ contract DeployRewardRedistributor is Script, DeployHelpers {
     bytes memory creationCode = abi.encodePacked(
       type(RewardRedistributor).creationCode,
       abi.encode(
-        usdscAddress, treasuryAddress, IEarnVault(earnVaultAddress), IERC4626(susdscVaultAddress), adminAddress, keeperAddress
+        usdscAddress,
+        treasuryAddress,
+        IEarnVault(earnVaultAddress),
+        IERC4626(susdscVaultAddress),
+        adminAddress,
+        keeperAddress
       )
     );
 
@@ -191,7 +196,12 @@ contract DeployRewardRedistributor is Script, DeployHelpers {
 
     // Estimate deployment by creating contract locally
     RewardRedistributor simulated = new RewardRedistributor(
-      usdscAddress, treasuryAddress, IEarnVault(earnVaultAddress), IERC4626(susdscVaultAddress), adminAddress, keeperAddress
+      usdscAddress,
+      treasuryAddress,
+      IEarnVault(earnVaultAddress),
+      IERC4626(susdscVaultAddress),
+      adminAddress,
+      keeperAddress
     );
 
     console.log('Simulated deployment at:', address(simulated));

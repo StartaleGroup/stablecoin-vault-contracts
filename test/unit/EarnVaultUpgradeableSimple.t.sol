@@ -886,7 +886,7 @@ contract EarnVaultUpgradeableSimpleTest is Test {
     bool success3 = boostToken.transfer(address(vault), 50e18);
     require(success3, 'Transfer failed');
     vault.onBoostReward(address(boostToken), 50e18);
-    
+
     // Distribute more boost rewards - operator transfers the additional tokens
     bool success4 = boostToken.transfer(address(vault), 100e18);
     require(success4, 'Transfer failed');
