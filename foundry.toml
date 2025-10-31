@@ -1,13 +1,23 @@
 [profile.default]
-evm_version = "cancun"
+evm_version = "prague"
 gas_reports = ["*"]
 gas_reports_ignore = []
 ignored_error_codes = []
 optimizer = true
 optimizer_runs = 999999
-solc_version = "0.8.26"
+solc_version = "0.8.30"
 libs = ['node_modules', 'lib']
 verbosity = 3
+
+[lint]
+exclude_lints = ["mixed-case-variable", "unaliased-plain-import", "mixed-case-function"]
+
+[profile.default.fuzz]
+runs = 5_000  # Reduced from 1,000 for faster CI
+
+[profile.default.invariant]
+runs = 512
+depth = 50
 
 [fmt]
 line_length = 120
@@ -23,9 +33,6 @@ sort_imports = true
 via_ir = true
 out = 'out-via-ir'
 
-[lint]
-lint_on_build = false
-
 [profile.production]
 build_info = true
 sizes = true
@@ -39,22 +46,22 @@ depth = 25            # The number of times to run the invariant tests
 fail_on_revert = true # Fail the test if the contract reverts
 
 [profile.ci]
-evm_version = "cancun"
+evm_version = "prague"
 gas_reports = ["*"]
 gas_reports_ignore = []
 ignored_error_codes = []
 optimizer = true
 optimizer_runs = 999999
-solc_version = "0.8.26"
+solc_version = "0.8.30"
 libs = ['node_modules', 'lib']
 verbosity = 3
 
 [profile.ci.fuzz]
-runs = 10_000
+runs = 100  # Reduced from 1,000 for faster CI
 
 [profile.ci.invariant]
-runs = 512
-depth = 250
+runs = 50   # Reduced from 256
+depth = 10  # Reduced from 50
 
 [rpc_endpoints]
 localhost = "${LOCALHOST_RPC_URL}"

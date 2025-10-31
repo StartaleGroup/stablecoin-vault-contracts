@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.26;
+pragma solidity ^0.8.30;
 
 import {IGreeter} from './IGreeter.sol';
 import {IERC20} from 'forge-std/interfaces/IERC20.sol';
@@ -24,10 +24,14 @@ contract Greeter is IGreeter {
    * @notice Reverts in case the function was not called by the owner of the contract
    */
   modifier onlyOwner() {
+    _onlyOwner();
+    _;
+  }
+
+  function _onlyOwner() internal view {
     if (msg.sender != OWNER) {
       revert Greeter_OnlyOwner();
     }
-    _;
   }
 
   /**

@@ -1,4 +1,7 @@
 {
+  "lib/erc4626-tests": {
+    "rev": "232ff9ba8194e406967f52ecc5cb52ed764209e9"
+  },
   "lib/evm-m-extensions": {
     "branch": {
       "name": "linea-deployment",

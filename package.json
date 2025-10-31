@@ -17,6 +17,8 @@
     "clean": "make -B clean",
     "compile": "forge compile",
     "coverage": "make -B coverage",
+    "coverage:filtered": "make coverage-filtered",
+    "coverage:html": "make coverage-html",
     "deploy-local": "make -B deploy-local",
     "deploy-sepolia": "make -B deploy-sepolia",
     "doc": "forge doc --serve --port 4000",

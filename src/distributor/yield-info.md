@@ -4,8 +4,8 @@
 
 ### other notes:
 
-we earn yield on all USDR minted (by wrapping M inside USDR contract)
-we only give yield to those who deposit USDR in our vaults by different means.
+we earn yield on all USDSC minted (by wrapping M inside USDSC contract)
+we only give yield to those who deposit USDSC in our vaults by different means.
 
 
 ### contract

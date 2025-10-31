@@ -1,10 +1,347 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.26;
+pragma solidity ^0.8.30;
 
-// Placeholder init
+import {IRewardRedistributorEventsAndErrors} from '../interfaces/distributor/IRewardRedistributorEventsAndErrors.sol';
+import {IEarnVault} from '../interfaces/vaults/earn/IEarnVault.sol';
+import {AccessControl} from 'lib/openzeppelin-contracts/contracts/access/AccessControl.sol';
+import {IERC4626} from 'lib/openzeppelin-contracts/contracts/interfaces/IERC4626.sol';
+import {IERC20} from 'lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol';
+import {SafeERC20} from 'lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol';
+import {Pausable} from 'lib/openzeppelin-contracts/contracts/utils/Pausable.sol';
+import {ReentrancyGuardTransient} from 'lib/openzeppelin-contracts/contracts/utils/ReentrancyGuardTransient.sol';
+import {IMYieldToOne} from 'm-extensions/projects/yieldToOne/IMYieldToOne.sol';
 
-contract RewardRedistributor {
-  constructor() {
-    // constructor
+/// @title RewardRedistributor
+/// @notice Pulls freshly-minted USDSC yield from the M0 extension, applies an optional fee to Startale,
+///         then allocates the **net** yield to eligible cohorts by their share of the
+///         **base supply** S (supply before this mint):
+///         - EarnVault (checkbox OFF) receives `toEarn = Y_net * T_earn / S_base`
+///         - sUSDSC (ERC-4626) vault (checkbox ON) receives `toOn = Y_net * T_yield / S_base`
+///         - Remainder (wallets/LP/points + rounding) → Startale (`toStartaleExtra`)
+/// @dev    Uses per-cohort integer carry to remove long-run rounding bias.
+///         Delivers to EarnVault with transfer→onYield ordering to satisfy its funding invariant.
+///         Delivers to sUSDSC via raw transfer, which raises PPS in ERC-4626.
+///
+///         Architecture:
+///         - USDSC_ADDRESS: Single USDSC token address that implements both IERC20 and IMYieldToOne interfaces
+///         - Cast to IERC20 for transfers and supply queries (totalSupply, safeTransfer)
+///         - Cast to IMYieldToOne for yield operations (claimYield, yield)
+contract RewardRedistributor is IRewardRedistributorEventsAndErrors, AccessControl, Pausable, ReentrancyGuardTransient {
+  using SafeERC20 for IERC20;
+
+  /// Keeper allowed to call distribute()
+  bytes32 public constant OPERATOR_ROLE = keccak256('OPERATOR_ROLE');
+
+  /// @notice Maximum fee allowed (basis points).
+  uint16 public constant MAX_FEE_BPS = 2000;
+
+  /// @notice USDSC token address - used for both transfers/supply queries (IERC20) and yield operations (IMYieldToOne).
+  /// @dev    The same address implements both IERC20 and IMYieldToOne interfaces.
+  address public immutable USDSC_ADDRESS;
+
+  /// @notice Treasury recipient for fees and ineligible cohort yield.
+  address public treasury;
+
+  /// @notice Earn vault (checkbox OFF) that indexes yield via {IEarnVault.onYield}.
+  IEarnVault public earnVault;
+
+  /// @notice sUSDSC (ERC-4626) vault that receives yield via raw transfers (no minting).
+  IERC4626 public susdscVault;
+
+  /// @notice Fee on newly minted yield expressed in basis points (e.g., 1000 = 10%).
+  uint16 public fee_on_yield_bps = 0;
+
+  /// @dev Carry accumulator for EarnVault share calculations across epochs.
+  uint256 private carryEarn;
+
+  /// @dev Carry accumulator for sUSDSC share calculations across epochs.
+  uint256 private carryOn;
+
+  /// @notice Initializes the redistributor.
+  /// @param usdscAddress    USDSC token address (implements both IERC20 and IMYieldToOne interfaces).
+  /// @param treasuryAddr   Treasury recipient.
+  /// @param earnV          EarnVault (checkbox OFF) recipient.
+  /// @param sVault         sUSDSC ERC-4626 vault (checkbox ON) recipient.
+  /// @param admin          Admin address; receives DEFAULT_ADMIN_ROLE.
+  /// @param keeper         Keeper address; receives OPERATOR_ROLE (can call distribute()).
+  constructor(address usdscAddress, address treasuryAddr, IEarnVault earnV, IERC4626 sVault, address admin, address keeper) {
+    if (usdscAddress == address(0)) revert IRewardRedistributorEventsAndErrors.ZeroAddress('USDSC_ADDRESS');
+    if (treasuryAddr == address(0)) revert IRewardRedistributorEventsAndErrors.ZeroAddress('treasury');
+    if (address(earnV) == address(0)) revert IRewardRedistributorEventsAndErrors.ZeroAddress('earnVault');
+    if (address(sVault) == address(0)) revert IRewardRedistributorEventsAndErrors.ZeroAddress('susdscVault');
+    if (admin == address(0)) revert IRewardRedistributorEventsAndErrors.ZeroAddress('admin');
+    if (keeper == address(0)) revert IRewardRedistributorEventsAndErrors.ZeroAddress('keeper');
+
+    USDSC_ADDRESS = usdscAddress;
+    treasury = treasuryAddr;
+    earnVault = earnV;
+    susdscVault = sVault;
+
+    _grantRole(DEFAULT_ADMIN_ROLE, admin);
+    _grantRole(OPERATOR_ROLE, keeper);
+  }
+
+  /// @notice Updates Treasury address.
+  /// @dev    Callable by DEFAULT_ADMIN_ROLE.
+  /// @param treasuryAddr   New Treasury address.
+  function setTreasury(address treasuryAddr) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    if (treasuryAddr == address(0)) revert IRewardRedistributorEventsAndErrors.ZeroAddress('treasury');
+    treasury = treasuryAddr;
+    emit IRewardRedistributorEventsAndErrors.TreasuryUpdated(treasuryAddr);
+  }
+
+  /// @notice Updates EarnVault address.
+  /// @dev    Callable by DEFAULT_ADMIN_ROLE.
+  /// @param earnV          New EarnVault (OFF) address.
+  function setEarnVault(IEarnVault earnV) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    if (address(earnV) == address(0)) revert IRewardRedistributorEventsAndErrors.ZeroAddress('earnVault');
+    earnVault = earnV;
+    emit IRewardRedistributorEventsAndErrors.EarnVaultUpdated(address(earnV));
+  }
+
+  /// @notice Updates sUSDSC vault address.
+  /// @dev    Callable by DEFAULT_ADMIN_ROLE.
+  /// @param sVault         New sUSDSC ERC-4626 vault (ON) address.
+  function setSusdscVault(IERC4626 sVault) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    if (address(sVault) == address(0)) revert IRewardRedistributorEventsAndErrors.ZeroAddress('susdscVault');
+    susdscVault = sVault;
+    emit IRewardRedistributorEventsAndErrors.SusdscVaultUpdated(address(sVault));
+  }
+
+  /// @notice Updates fee on yield.
+  /// @dev    Fee is capped by {MAX_FEE_BPS}. Callable by DEFAULT_ADMIN_ROLE.
+  /// @param newFeeBps      New fee on yield in bps (≤ MAX_FEE_BPS).
+  function setFeeBps(uint16 newFeeBps) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    if (newFeeBps > MAX_FEE_BPS) revert IRewardRedistributorEventsAndErrors.FeeTooHigh(newFeeBps, MAX_FEE_BPS);
+    fee_on_yield_bps = newFeeBps;
+    emit IRewardRedistributorEventsAndErrors.FeeUpdated(newFeeBps);
+  }
+
+  function pause(bool p) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    p ? _pause() : _unpause();
+  }
+
+  /// @notice Claims pending USDSC yield from the extension and distributes it per policy.
+  /// @dev    Sequence:
+  ///         1) Record `balanceBefore = IERC20(USDSC_ADDRESS).balanceOf(address(this))`.
+  ///         2) `minted = IMYieldToOne(USDSC_ADDRESS).claimYield()` mints fresh USDSC to this contract (must be yieldRecipient).
+  ///         3) Calculate `gross = balanceBefore + minted` to handle both normal flow and external claimYield() calls.
+  ///         4) `feeToStartale = gross * fee_on_yield_bps / 10_000`.
+  ///         5) Compute `S_base = IERC20(USDSC_ADDRESS).totalSupply() - minted` (supply **before** this mint).
+  ///         6) Read TVLs: `T_earn = earnVault.totalPrincipal()`, `T_yield = susdscVault.totalAssets()`.
+  ///         7) Allocate net using carries:
+  ///            `toEarn = floor((net*T_earn + carryEarn)/S_base)`, `carryEarn = (net*T_earn + carryEarn) % S_base`
+  ///            `toOn   = floor((net*T_yield   + carryOn)/S_base)`,   `carryOn   = (net*T_yield   + carryOn)   % S_base`
+  ///            `toStartaleExtra = net - (toEarn + toOn)`
+  ///         8) Transfers:
+  ///            - Startale: `feeToStartale + toStartaleExtra`
+  ///            - EarnVault: transfer `toEarn` **then** call `earnVault.onYield(toEarn)`
+  ///            - sUSDSC: transfer `toOn` (PPS rises)
+  /// @custom:security nonReentrant and Pausable.
+  function distribute() external whenNotPaused onlyRole(OPERATOR_ROLE) nonReentrant {
+    uint256 balanceBefore = IERC20(USDSC_ADDRESS).balanceOf(address(this));
+    uint256 minted = IMYieldToOne(USDSC_ADDRESS).claimYield();
+    uint256 gross = balanceBefore + minted;
+
+    if (gross == 0) return;
+
+    uint256 feeToStartale;
+    uint256 toEarn;
+    uint256 toOn;
+    uint256 toStartaleExtra;
+    uint256 S_base;
+    uint256 T_earn;
+    uint256 T_yield;
+
+    (feeToStartale, toEarn, toOn, toStartaleExtra, S_base, T_earn, T_yield) = _calculateSplit(gross, true, false);
+
+    if (S_base == 0) {
+      if (feeToStartale > 0) IERC20(USDSC_ADDRESS).safeTransfer(treasury, feeToStartale);
+      if (toStartaleExtra > 0) IERC20(USDSC_ADDRESS).safeTransfer(treasury, toStartaleExtra);
+      emit Distributed(gross, feeToStartale, 0, 0, toStartaleExtra, 0, 0, 0);
+      return;
+    }
+
+    if (S_base > 0) {
+      uint256 net = gross - feeToStartale;
+      uint256 numEarn = net * T_earn + carryEarn;
+      carryEarn = numEarn % S_base;
+
+      uint256 numOn = net * T_yield + carryOn;
+      carryOn = numOn % S_base;
+    }
+
+    uint256 startaleTotal = feeToStartale + toStartaleExtra;
+    if (startaleTotal > 0) IERC20(USDSC_ADDRESS).safeTransfer(treasury, startaleTotal);
+
+    if (toEarn > 0) {
+      IERC20(USDSC_ADDRESS).safeTransfer(address(earnVault), toEarn);
+      earnVault.onYield(toEarn);
+    }
+    if (toOn > 0) {
+      IERC20(USDSC_ADDRESS).safeTransfer(address(susdscVault), toOn);
+    }
+
+    emit Distributed(gross, feeToStartale, toEarn, toOn, toStartaleExtra, S_base, T_earn, T_yield);
+  }
+
+  /// @notice Preview a split for a hypothetical minted amount.
+  /// @dev    Pure math helper (no state/carry usage). Does **not** call the extension.
+  /// @param minted  Hypothetical fresh yield to allocate (pre-fee).
+  /// @return feeToStartale     Fee portion (bps of `minted`) to Startale.
+  /// @return toEarn            Portion of net allocated to EarnVault (OFF) **without carry**.
+  /// @return toOn              Portion of net allocated to sUSDSC (ON) **without carry**.
+  /// @return toStartaleExtra   Remainder of net: ineligible cohorts + rounding.
+  /// @return S_base            Total USDSC supply **before** this mint (= totalSupply - minted if ≥0).
+  /// @return T_earn            EarnVault TVL used for allocation (`earnVault.totalPrincipal()`).
+  /// @return T_yield              sUSDSCVault TVL used for allocation (`susdscVault.totalAssets()`).
+  function previewSplit(uint256 minted)
+    external
+    view
+    returns (
+      uint256 feeToStartale,
+      uint256 toEarn,
+      uint256 toOn,
+      uint256 toStartaleExtra,
+      uint256 S_base,
+      uint256 T_earn,
+      uint256 T_yield
+    )
+  {
+    return _calculateSplit(minted, false, true);
+  }
+
+  /// @notice Preview a split using the extension's **current pending** yield (no carries).
+  /// @dev    Reads {IUSDSCMExtension.yield}. Pure preview; does not mutate.
+  /// @return couldBeMinted     Pending fresh yield on the extension at this moment.
+  /// @return feeToStartale     Fee portion (bps of `couldBeMinted`) to Startale.
+  /// @return toEarn            Portion of net to EarnVault (OFF) **without carry**.
+  /// @return toOn              Portion of net to sUSDSC (ON) **without carry**.
+  /// @return toStartaleExtra   Remainder of net: ineligible cohorts + rounding.
+  /// @return S_base            Total USDSC supply **before** this mint.
+  /// @return T_earn            EarnVault TVL used for allocation.
+  /// @return T_yield              sUSDSCVault TVL used for allocation.
+  function previewSplitCurrent()
+    external
+    view
+    returns (
+      uint256 couldBeMinted,
+      uint256 feeToStartale,
+      uint256 toEarn,
+      uint256 toOn,
+      uint256 toStartaleExtra,
+      uint256 S_base,
+      uint256 T_earn,
+      uint256 T_yield
+    )
+  {
+    couldBeMinted = IMYieldToOne(USDSC_ADDRESS).yield();
+    (feeToStartale, toEarn, toOn, toStartaleExtra, S_base, T_earn, T_yield) =
+      _calculateSplit(couldBeMinted, false, true);
+  }
+
+  /// @notice Exact dry-run of {distribute} against current chain state (includes carries).
+  /// @dev    Reads extension's pending yield and current carries; does not mutate state.
+  /// @return couldBeMinted            Pending fresh yield on the extension at this moment.
+  /// @return feeToStartale     Fee portion (bps of `couldBeMinted`) to Startale.
+  /// @return toEarn            Portion of net to EarnVault (OFF) **with carry** (exact if called now).
+  /// @return toOn              Portion of net to sUSDSC (ON) **with carry** (exact if called now).
+  /// @return toStartaleExtra   Remainder of net: ineligible cohorts + rounding.
+  /// @return S_base            Total USDSC supply **before** this mint.
+  /// @return T_earn            EarnVault TVL used for allocation.
+  /// @return T_yield              sUSDSCVault TVL used for allocation.
+  function previewDistribute()
+    external
+    view
+    returns (
+      uint256 couldBeMinted,
+      uint256 feeToStartale,
+      uint256 toEarn,
+      uint256 toOn,
+      uint256 toStartaleExtra,
+      uint256 S_base,
+      uint256 T_earn,
+      uint256 T_yield
+    )
+  {
+    couldBeMinted = IMYieldToOne(USDSC_ADDRESS).yield();
+    (feeToStartale, toEarn, toOn, toStartaleExtra, S_base, T_earn, T_yield) = _calculateSplit(couldBeMinted, true, true);
+  }
+
+  /// @notice Internal helper to calculate yield distribution split.
+  /// @dev    Core calculation logic shared by preview functions and distribute().
+  /// @param minted            Amount of fresh yield to allocate (pre-fee).
+  /// @param useCarries        Whether to include carry calculations (true for distribute/previewDistribute).
+  /// @param preMint           Whether this is a preview (true) or actual distribution (false).
+  /// @return feeToStartale    Fee portion (bps of `minted`) to Startale.
+  /// @return toEarn           Portion of net allocated to EarnVault (OFF).
+  /// @return toOn             Portion of net allocated to sUSDSC (ON).
+  /// @return toStartaleExtra  Remainder of net: ineligible cohorts + rounding.
+  /// @return S_base           Total USDSC supply **before** this mint.
+  /// @return T_earn           EarnVault TVL used for allocation.
+  /// @return T_yield          sUSDSCVault TVL used for allocation.
+  function _calculateSplit(
+    uint256 minted,
+    bool useCarries,
+    bool preMint
+  )
+    internal
+    view
+    returns (
+      uint256 feeToStartale,
+      uint256 toEarn,
+      uint256 toOn,
+      uint256 toStartaleExtra,
+      uint256 S_base,
+      uint256 T_earn,
+      uint256 T_yield
+    )
+  {
+    if (minted == 0) {
+      return (0, 0, 0, 0, _supplyBase(0), earnVault.totalPrincipal(), susdscVault.totalAssets());
+    }
+
+    feeToStartale = (minted * fee_on_yield_bps) / 10_000;
+    uint256 net = minted - feeToStartale;
+
+    uint256 SNow = IERC20(USDSC_ADDRESS).totalSupply();
+    if (preMint) {
+      S_base = SNow;
+    } else {
+      S_base = SNow > minted ? SNow - minted : 0;
+    }
+
+    T_earn = earnVault.totalPrincipal();
+    T_yield = susdscVault.totalAssets();
+
+    if (S_base == 0) {
+      toStartaleExtra = net;
+      return (feeToStartale, 0, 0, toStartaleExtra, S_base, T_earn, T_yield);
+    }
+
+    if (useCarries) {
+      uint256 _carryEarn = carryEarn;
+      uint256 _carryOn = carryOn;
+
+      uint256 numEarn = net * T_earn + _carryEarn;
+      toEarn = numEarn / S_base;
+
+      uint256 numOn = net * T_yield + _carryOn;
+      toOn = numOn / S_base;
+    } else {
+      toEarn = (net * T_earn) / S_base;
+      toOn = (net * T_yield) / S_base;
+    }
+
+    toStartaleExtra = net - (toEarn + toOn);
+  }
+
+  /// @notice Computes the **base supply** used for allocation for a hypothetical `minted` amount.
+  /// @dev    Defined as `totalSupply() > minted ? totalSupply() - minted : 0`.
+  /// @param minted  Hypothetical fresh yield.
+  /// @return        Total USDSC supply **before** the hypothetical mint.
+  function _supplyBase(uint256 minted) internal view returns (uint256) {
+    uint256 SNow = IERC20(USDSC_ADDRESS).totalSupply();
+    return SNow > minted ? SNow - minted : 0;
   }
 }

@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.26;
+pragma solidity ^0.8.30;
 
 /// @author Modified from Solmate (https://github.com/transmissions11/solmate/blob/main/src/tokens/ERC20.sol)
-abstract contract MockERC20 {
+contract MockERC20 {
   event Transfer(address indexed from, address indexed to, uint256 amount);
   event Approval(address indexed owner, address indexed spender, uint256 amount);
 
   string public name;
   string public symbol;
-  uint8 public immutable decimals;
+  uint8 public immutable DECIMALS;
   uint256 public totalSupply;
   mapping(address => uint256) public balanceOf;
   mapping(address => mapping(address => uint256)) public allowance;
@@ -16,7 +16,7 @@ abstract contract MockERC20 {
   constructor(string memory name_, string memory symbol_, uint8 decimals_) {
     name = name_;
     symbol = symbol_;
-    decimals = decimals_;
+    DECIMALS = decimals_;
   }
 
   function approve(address spender, uint256 amount) public virtual returns (bool) {

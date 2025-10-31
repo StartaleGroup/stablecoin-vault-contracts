@@ -10,6 +10,9 @@ out/
 # Coverage files
 coverage/
 lcov.info
+lcov-full.info
+lcov-filtered.info
+coverage-html
 
 # Docs
 docs/
@@ -34,3 +37,7 @@ broadcast/
 
 # Deployments
 deployments/
+
+# submodules that cause CI issues
+lib/common/
+lib/m-portal/
