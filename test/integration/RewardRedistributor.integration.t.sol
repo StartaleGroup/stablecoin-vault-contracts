@@ -1349,7 +1349,7 @@ contract RewardRedistributorIntegrationTest is Test {
     address newTreasury = makeAddr('newTreasury2');
     vm.prank(owner);
     rr.setTreasury(newTreasury);
-    
+
     vm.prank(owner);
     rr.setFeeBps(100);
 

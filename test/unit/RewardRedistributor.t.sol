@@ -156,43 +156,43 @@ contract RewardRedistributorTest is Test {
   function testRoleManagement_ChangeOperatorAfterDeployment() public {
     // Initial setup: operator (keeper) has OPERATOR_ROLE from constructor
     bytes32 operatorRole = rr.OPERATOR_ROLE();
-    
+
     // Verify original operator has the role
     assertTrue(rr.hasRole(operatorRole, operator), 'Original operator should have OPERATOR_ROLE');
-    
+
     // Verify original operator can call distribute()
     ext.addPending(1000e6);
     vm.prank(operator);
     rr.distribute(); // Should succeed
-    
+
     // Setup new operator address
     address newOperator = address(0x9999999999999999999999999999999999999999);
-    
+
     // Admin grants OPERATOR_ROLE to new operator
     vm.prank(admin);
     rr.grantRole(operatorRole, newOperator);
-    
+
     // Verify new operator has the role
     assertTrue(rr.hasRole(operatorRole, newOperator), 'New operator should have OPERATOR_ROLE');
-    
+
     // Verify new operator can call distribute()
     ext.addPending(1000e6);
     vm.prank(newOperator);
     rr.distribute(); // Should succeed
-    
+
     // Admin revokes OPERATOR_ROLE from original operator
     vm.prank(admin);
     rr.revokeRole(operatorRole, operator);
-    
+
     // Verify original operator no longer has the role
     assertFalse(rr.hasRole(operatorRole, operator), 'Original operator should not have OPERATOR_ROLE');
-    
+
     // Verify original operator can no longer call distribute()
     ext.addPending(1000e6);
     vm.prank(operator);
     vm.expectRevert(); // Should fail - no longer has OPERATOR_ROLE
     rr.distribute();
-    
+
     // Verify new operator still has the role and can call distribute()
     ext.addPending(1000e6);
     vm.prank(newOperator);

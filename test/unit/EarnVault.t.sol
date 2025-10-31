@@ -2425,7 +2425,7 @@ contract EarnVaultTest is Test {
     // === Keeper sends tokens directly to EarnVault and calls onBoostReward ===
     // This simulates a person from the company distributing boost rewards
     // Boost tokens bypass RewardRedistributor entirely - sent directly to vault
-    
+
     vm.startPrank(operator); // operator is boost reward keeper
 
     // ASTR distribution (18 decimals)

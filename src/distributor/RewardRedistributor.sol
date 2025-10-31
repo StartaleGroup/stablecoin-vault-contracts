@@ -64,8 +64,17 @@ contract RewardRedistributor is IRewardRedistributorEventsAndErrors, AccessContr
   /// @param sVault         sUSDSC ERC-4626 vault (checkbox ON) recipient.
   /// @param admin          Admin address; receives DEFAULT_ADMIN_ROLE.
   /// @param keeper         Keeper address; receives OPERATOR_ROLE (can call distribute()).
-  constructor(address usdscAddress, address treasuryAddr, IEarnVault earnV, IERC4626 sVault, address admin, address keeper) {
-    if (usdscAddress == address(0)) revert IRewardRedistributorEventsAndErrors.ZeroAddress('USDSC_ADDRESS');
+  constructor(
+    address usdscAddress,
+    address treasuryAddr,
+    IEarnVault earnV,
+    IERC4626 sVault,
+    address admin,
+    address keeper
+  ) {
+    if (usdscAddress == address(0)) {
+      revert IRewardRedistributorEventsAndErrors.ZeroAddress('USDSC_ADDRESS');
+    }
     if (treasuryAddr == address(0)) revert IRewardRedistributorEventsAndErrors.ZeroAddress('treasury');
     if (address(earnV) == address(0)) revert IRewardRedistributorEventsAndErrors.ZeroAddress('earnVault');
     if (address(sVault) == address(0)) revert IRewardRedistributorEventsAndErrors.ZeroAddress('susdscVault');
