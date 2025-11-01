@@ -516,4 +516,132 @@ contract EarnVaultBoostTest is Test {
     uint256 user1Claimable = earnVault.getClaimableBoostReward(user1, address(astr));
     assertEq(user1Claimable, ASTR_REWARD, 'User1 with principal should have full reward');
   }
+
+  /// @notice Test that boost rewards are not double-accrued
+  /// @dev Verifies that even though both _settleBoost() and claimBoostReward() have settlement logic,
+  ///      rewards are only accrued once, not twice
+  /// @dev This is critical because withdraw() calls _settleBoost() then claimBoostReward(),
+  ///      and we need to ensure no double-accrual occurs
+  function test_NoDoubleAccrualInWithdraw() public {
+    // =========================
+    // Setup: User deposits
+    // =========================
+    vm.prank(user1);
+    earnVault.deposit(DEPOSIT_AMOUNT);
+
+    // =========================
+    // Action: Distribute boost rewards
+    // =========================
+    vm.startPrank(operator);
+    astr.approve(address(earnVault), ASTR_REWARD);
+    bool success = astr.transfer(address(earnVault), ASTR_REWARD);
+    require(success, 'Transfer failed');
+    earnVault.onBoostReward(address(astr), ASTR_REWARD);
+    vm.stopPrank();
+
+    // =========================
+    // Calculate expected reward (manual calculation to verify no double-accrual)
+    // =========================
+    // User has DEPOSIT_AMOUNT (1000e6) principal
+    // Total principal is DEPOSIT_AMOUNT
+    // Boost reward is ASTR_REWARD (100e18)
+    // Expected: User should get 100% of rewards (only user)
+    uint256 expectedReward = ASTR_REWARD;
+
+    // Verify claimable before withdraw
+    uint256 claimableBefore = earnVault.getClaimableBoostReward(user1, address(astr));
+    assertEq(claimableBefore, expectedReward, 'User should have correct claimable amount');
+
+    // =========================
+    // Action: Withdraw (this calls _settleBoost() then claimBoostReward())
+    // =========================
+    uint256 user1InitialBalance = astr.balanceOf(user1);
+    uint256 user1Principal = earnVault.principal(user1);
+
+    // Store global index before withdraw (to verify user index gets updated)
+    uint256 globalIndexBefore = earnVault.boostGlobalIndex(address(astr));
+
+    vm.prank(user1);
+    earnVault.withdraw(user1Principal); // Withdraw all, which will claim boost rewards
+
+    // =========================
+    // Verification: User should receive exactly the expected amount (not double)
+    // =========================
+    uint256 user1FinalBalance = astr.balanceOf(user1);
+    uint256 received = user1FinalBalance - user1InitialBalance;
+
+    assertEq(received, expectedReward, 'User should receive exactly expected reward, not double');
+    assertEq(received, claimableBefore, 'Received amount should equal claimable before withdraw');
+
+    // Verify user index was updated correctly
+    uint256 userIndexAfter = earnVault.userBoostIndex(user1, address(astr));
+    assertEq(userIndexAfter, globalIndexBefore, 'User index should be updated to global index');
+
+    // Verify no more rewards can be claimed
+    uint256 claimableAfter = earnVault.getClaimableBoostReward(user1, address(astr));
+    assertEq(claimableAfter, 0, 'User should have no more claimable rewards');
+  }
+
+  /// @notice Test that boost rewards are not double-accrued in claim()
+  /// @dev Verifies that even though claim() calls _settleBoost() then claimBoostReward(),
+  ///      rewards are only accrued once, not twice
+  /// @dev claim() flow: _settleBoost() (accrues and updates index) -> claimBoostReward() (reads updated index, gi==ui so no accrual)
+  function test_NoDoubleAccrualInClaim() public {
+    // =========================
+    // Setup: User deposits
+    // =========================
+    vm.prank(user1);
+    earnVault.deposit(DEPOSIT_AMOUNT);
+
+    // =========================
+    // Action: Distribute boost rewards
+    // =========================
+    vm.startPrank(operator);
+    astr.approve(address(earnVault), ASTR_REWARD);
+    bool success = astr.transfer(address(earnVault), ASTR_REWARD);
+    require(success, 'Transfer failed');
+    earnVault.onBoostReward(address(astr), ASTR_REWARD);
+    vm.stopPrank();
+
+    // =========================
+    // Calculate expected reward
+    // =========================
+    uint256 expectedReward = ASTR_REWARD; // Only user, so gets 100%
+
+    // Verify claimable
+    uint256 claimableBefore = earnVault.getClaimableBoostReward(user1, address(astr));
+    assertEq(claimableBefore, expectedReward, 'User should have correct claimable amount');
+
+    // Store indices before claim to verify update
+    uint256 userIndexBefore = earnVault.userBoostIndex(user1, address(astr));
+    uint256 globalIndexBefore = earnVault.boostGlobalIndex(address(astr));
+    
+    // User index should be 0 (uninitialized) or less than global index
+    assertTrue(userIndexBefore < globalIndexBefore || userIndexBefore == 0, 'User index should be less than global index before claim');
+
+    // =========================
+    // Action: Claim (this calls _settleBoost() then claimBoostReward())
+    // =========================
+    uint256 user1InitialBalance = astr.balanceOf(user1);
+
+    vm.prank(user1);
+    earnVault.claim(); // Claims both USDSC yield and boost rewards
+
+    // =========================
+    // Verification: User should receive exactly the expected amount (not double)
+    // =========================
+    uint256 user1FinalBalance = astr.balanceOf(user1);
+    uint256 received = user1FinalBalance - user1InitialBalance;
+
+    assertEq(received, expectedReward, 'User should receive exactly expected reward, not double');
+    assertEq(received, claimableBefore, 'Received amount should equal claimable before claim');
+
+    // Verify user index was updated correctly by _settleBoost()
+    uint256 userIndexAfter = earnVault.userBoostIndex(user1, address(astr));
+    assertEq(userIndexAfter, globalIndexBefore, 'User index should be updated to global index by _settleBoost()');
+
+    // Verify no more rewards can be claimed
+    uint256 claimableAfter = earnVault.getClaimableBoostReward(user1, address(astr));
+    assertEq(claimableAfter, 0, 'User should have no more claimable rewards');
+  }
 }
