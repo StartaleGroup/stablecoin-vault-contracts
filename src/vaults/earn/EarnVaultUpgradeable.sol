@@ -658,10 +658,18 @@ contract EarnVaultUpgradeable is
   /// @param token Token address to settle boost rewards for
   function _settleBoost(address user, address token) internal {
     EarnVaultStorage storage $ = _getStorage();
-    BoostRewardsLib.settleBoost(
-      user, token, $.principal[user], $.userBoostIndex[user][token], $.boostGlobalIndex[token], $.userBoostAccrued
-    );
-    $.userBoostIndex[user][token] = $.boostGlobalIndex[token];
+    uint256 p = $.principal[user];
+    if (p == 0) {
+      $.userBoostIndex[user][token] = $.boostGlobalIndex[token];
+      return;
+    }
+
+    uint256 ui = $.userBoostIndex[user][token];
+    uint256 gi = $.boostGlobalIndex[token];
+    if (gi > ui) {
+      BoostRewardsLib.settleBoost(user, token, p, ui, gi, $.userBoostAccrued);
+    }
+    $.userBoostIndex[user][token] = gi; // Always update index for consistency
   }
 
   // -------- Internal Functions (View) --------

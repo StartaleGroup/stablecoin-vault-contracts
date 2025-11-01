@@ -162,12 +162,10 @@ library BoostRewardsLib {
       // User has no principal, nothing to settle
       return;
     }
-    if (boostGlobalIndex >= userBoostIndex) {
-      if (boostGlobalIndex > userBoostIndex) {
+    if (boostGlobalIndex > userBoostIndex) {
         uint256 owed = Math.mulDiv(principal, boostGlobalIndex - userBoostIndex, RAY);
         userBoostAccrued[user][token] += owed;
-      }
-      // Note: User's boost index update is handled by the calling contract
     }
+    // Note: User's boost index update is handled by the calling contract
   }
 }
