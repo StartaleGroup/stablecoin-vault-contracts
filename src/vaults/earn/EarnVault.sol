@@ -617,10 +617,18 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
   /// @param user Address to settle
   /// @param token Token address to settle boost rewards for
   function _settleBoost(address user, address token) internal {
-    BoostRewardsLib.settleBoost(
-      user, token, principal[user], userBoostIndex[user][token], boostGlobalIndex[token], userBoostAccrued
-    );
-    userBoostIndex[user][token] = boostGlobalIndex[token];
+    uint256 p = principal[user];
+    if (p == 0) {
+      userBoostIndex[user][token] = boostGlobalIndex[token];
+      return;
+    }
+
+    uint256 ui = userBoostIndex[user][token];
+    uint256 gi = boostGlobalIndex[token];
+    if (gi > ui) {
+      BoostRewardsLib.settleBoost(user, token, p, ui, gi, userBoostAccrued);
+    }
+    userBoostIndex[user][token] = gi; // Always update index for consistency
   }
 
   // ================================================================
