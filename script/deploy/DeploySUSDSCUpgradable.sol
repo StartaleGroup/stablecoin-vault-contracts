@@ -30,8 +30,8 @@ contract DeploySUSDSCVaultUpgradeable is Script, DeployHelpers {
   SUSDSCVaultUpgradable public susdscVault;
 
   // Salt for CREATE3 deployment
-  string public constant IMPLEMENTATION_NAME = 'SUSDSCVaultUpgradeable_Implementation2';
-  string public constant PROXY_NAME = 'SUSDSCVaultUpgradeable_Proxy2';
+  string public constant IMPLEMENTATION_NAME = 'SUSDSCVaultUpgradeable_Implementation_03112025';
+  string public constant PROXY_NAME = 'SUSDSCVaultUpgradeable_Proxy_03112025';
 
   function setUp() public {
     // Load environment variables

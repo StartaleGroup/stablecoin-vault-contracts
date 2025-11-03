@@ -31,8 +31,8 @@ contract DeployEarnVaultUpgradeable is Script, DeployHelpers {
   EarnVaultUpgradeable public earnVault;
 
   // Salt for CREATE3 deployment
-  string public constant IMPLEMENTATION_NAME = 'EarnVaultUpgradeable_Implementation';
-  string public constant PROXY_NAME = 'EarnVaultUpgradeable_Proxy';
+  string public constant IMPLEMENTATION_NAME = 'EarnVaultUpgradeable_Implementation_03112025';
+  string public constant PROXY_NAME = 'EarnVaultUpgradeable_Proxy_03112025';
 
   function setUp() public {
     // Load environment variables

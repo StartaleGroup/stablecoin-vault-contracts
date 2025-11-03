@@ -36,6 +36,7 @@ forge script script/deploy/DeploySUSDSCUpgradable.sol:DeploySUSDSCVaultUpgradeab
   -vvvv
 ```
 
+// Note: After having Create3 predicted address (and fixed salt string) we would have this in advance
 **Save proxy address as** `SUSDSC_VAULT_ADDRESS` in `.env`
 
 ---

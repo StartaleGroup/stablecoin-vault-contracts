@@ -39,7 +39,7 @@ contract DeployRewardRedistributor is Script, DeployHelpers {
   RewardRedistributor public rewardRedistributor;
 
   // Salt for CREATE3 deployment
-  string public constant CONTRACT_NAME = 'RewardRedistributor';
+  string public constant CONTRACT_NAME = 'RewardRedistributor_03112025';
 
   function setUp() public {
     // Load environment variables
