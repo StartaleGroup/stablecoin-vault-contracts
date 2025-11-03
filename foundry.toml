@@ -68,6 +68,7 @@ localhost = "${LOCALHOST_RPC_URL}"
 mainnet = "${MAINNET_RPC_URL}"
 arbitrum = "${ARBITRUM_RPC_URL}"
 optimism = "${OPTIMISM_RPC_URL}"
+soneium_minato = "${SONEIUM_MINATO_RPC_URL}"
 sepolia = "${SEPOLIA_RPC_URL}"
 soneium = "${SONEIUM_RPC_URL}"
 
