@@ -24,6 +24,7 @@ contract DeployEarnVaultUpgradeable is Script, DeployHelpers {
   address treasuryAddress;
   address pauserAddress;
   address proxyAdminOwner;
+  address boostRewardKeeperAddress;
 
   // Deployment artifacts
   EarnVaultUpgradeable public implementation;
@@ -41,6 +42,8 @@ contract DeployEarnVaultUpgradeable is Script, DeployHelpers {
     yieldRedistributorAddress = vm.envAddress('YIELD_REDISTRIBUTOR_ADDRESS');
     treasuryAddress = vm.envAddress('TREASURY_ADDRESS');
     pauserAddress = vm.envAddress('PAUSER_ADDRESS');
+    boostRewardKeeperAddress = vm.envAddress('BOOST_REWARD_KEEPER_ADDRESS');
+
 
     // ProxyAdmin owner - defaults to owner if not set
     proxyAdminOwner = vm.envOr('PROXY_ADMIN_OWNER', ownerAddress);
@@ -52,6 +55,7 @@ contract DeployEarnVaultUpgradeable is Script, DeployHelpers {
     require(treasuryAddress != address(0), 'TREASURY_ADDRESS not set');
     require(pauserAddress != address(0), 'PAUSER_ADDRESS not set');
     require(proxyAdminOwner != address(0), 'PROXY_ADMIN_OWNER not set');
+    require(boostRewardKeeperAddress != address(0), 'BOOST_REWARD_KEEPER_ADDRESS not set');
 
     console.log('=== Deployment Configuration ===');
     console.log('USDSC Address:', usdscAddress);
@@ -60,6 +64,7 @@ contract DeployEarnVaultUpgradeable is Script, DeployHelpers {
     console.log('Treasury Address:', treasuryAddress);
     console.log('Pauser Address:', pauserAddress);
     console.log('ProxyAdmin Owner:', proxyAdminOwner);
+    console.log('Boost Reward Keeper Address:', boostRewardKeeperAddress);
     console.log('Deployer:', msg.sender);
   }
 
@@ -104,7 +109,8 @@ contract DeployEarnVaultUpgradeable is Script, DeployHelpers {
       ownerAddress,
       yieldRedistributorAddress,
       treasuryAddress,
-      pauserAddress
+      pauserAddress,
+      boostRewardKeeperAddress
     );
 
     // Step 3: Deploy proxy using CREATE3
@@ -142,7 +148,7 @@ contract DeployEarnVaultUpgradeable is Script, DeployHelpers {
   function simulateDeploy() public {
     setUp();
 
-    address deployer = msg.sender;
+    address deployer = msg.sender; // Foundry default sender
     bytes32 implSalt = _computeSalt(deployer, IMPLEMENTATION_NAME);
     bytes32 proxySalt = _computeSalt(deployer, PROXY_NAME);
 
@@ -168,16 +174,18 @@ contract DeployEarnVaultUpgradeable is Script, DeployHelpers {
       ownerAddress,
       yieldRedistributorAddress,
       treasuryAddress,
-      pauserAddress
+      pauserAddress,
+      boostRewardKeeperAddress
     );
 
     // Simulate proxy deployment
     TransparentUpgradeableProxy simulatedProxy =
       new TransparentUpgradeableProxy(address(simulatedImpl), proxyAdminOwner, initData);
+    console.log('Simulated proxy deployed at:', address(simulatedProxy));
 
     EarnVaultUpgradeable simulatedVault = EarnVaultUpgradeable(payable(address(simulatedProxy)));
 
-    console.log('Simulated proxy deployed at:', address(simulatedProxy));
+
     console.log('Simulation successful!');
 
     // Display initial state

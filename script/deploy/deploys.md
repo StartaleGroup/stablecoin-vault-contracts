@@ -97,7 +97,8 @@ forge script script/deploy/DeployRewardRedistributor.s.sol:DeployRewardRedistrib
 
 ## Post-Deployment
 
-Update EarnVault's yieldRedistributor if placeholder was used:
+#### // NotE: We would not need to do below once we use pre-mined addresses using Create3 salt and CreateX Factory.
+Update EarnVault's yieldRedistributor if placeholder was used: 
 
 ```bash
 cast send <EARN_VAULT_PROXY> "setYieldRedistributor(address)" <REWARD_REDISTRIBUTOR> --rpc-url $SEPOLIA_RPC_URL --private-key $PRIVATE_KEY
@@ -108,26 +109,36 @@ cast send 0x5F022ebd58F9aD9E425E06Ce6DD3f7924cc0F722 "setYieldRedistributor(addr
 
 ## Sepolia deployment info
 
+( Latest 03-11-2025)
+
 ✅ SUSDSCVault
 
-Implementation: 0x56bf6ed4689c3a2d0cE75aB1cC57EC080dBaB1B4
+Implementation: 0xAd66e2C9732c8a29a96c3ddacc7ad82cc5492F99
 
-Proxy: 0x97Bf9acfD3A4D0Fcee3bd86BCa1FdD5617925fd0
+Proxy: 0x58f54D5B3F72cC9fF35d5bD950319E46d294A40c
 
 
 ✅ EarnVault
 
-BoostRewardsLib: 0x5CB235474Bd0125a362A12B3922361eD42cb4843
 
-Implementation: 0x7043E917373Ce7a50A18885fD897D48D5686bd80
+Implementation: 0xA3B1A989AEDa56fFF76777C9dC708F88190A37Ed
 
-Proxy: 0x5F022ebd58F9aD9E425E06Ce6DD3f7924cc0F722
-
-ProxyAdmin: 0xC0DF3EB4B7707907e73e8ba1245434F1Eb9FaE97
-
+Proxy: 0x40eA9e92d55C1c49c6D2061E74ec60bb48f8C61f
 
 
 ✅ RewardRedistributor
 
-Contract: 0x49A441D35d3305dE31398BA62fdeAD474c10b466
+Contract: 0xA8B3DBB860A0Aa77Fe04E83a7334de9f6E97C18b
+
+=== Deployment Summary ===
+  Contract: RewardRedistributor
+  Address: 0xA8B3DBB860A0Aa77Fe04E83a7334de9f6E97C18b
+  USDSC Token: 0x7E426d026f604d1c47b50059752122d8ab1E2C28
+  Treasury: 0x77001610a4fD68548B80E49226c02a99c3b6Ae14
+  EarnVault: 0x40eA9e92d55C1c49c6D2061E74ec60bb48f8C61f
+  sUSDSC Vault: 0x58f54D5B3F72cC9fF35d5bD950319E46d294A40c
+  Admin: 0x77001610a4fD68548B80E49226c02a99c3b6Ae14
+  Keeper: 0x77001610a4fD68548B80E49226c02a99c3b6Ae14
+  Fee (bps): 0
+  Max Fee (bps): 2000
 
