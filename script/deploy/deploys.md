@@ -30,10 +30,6 @@ forge script script/deploy/DeploySUSDSCUpgradable.sol:DeploySUSDSCVaultUpgradeab
   --verify \
   -vvvv
 ```
-
-// Note: After having Create3 predicted address (and fixed salt string) we would have this in advance
-**Save proxy address as** `SUSDSC_VAULT_ADDRESS` in `.env`
-
 ---
 
 ## 2. DeployEarnVaultUpgradable.s.sol (Deploy SECOND)
@@ -54,9 +50,6 @@ forge script script/deploy/DeployEarnVaultUpgradable.s.sol:DeployEarnVaultUpgrad
   --verify \
   -vvvv
 ```
-
-**Save proxy address as** `EARN_VAULT_ADDRESS` in `.env`
-
 ---
 
 ## 3. DeployRewardRedistributor.s.sol (Deploy LAST)
@@ -80,50 +73,26 @@ forge script script/deploy/DeployRewardRedistributor.s.sol:DeployRewardRedistrib
 
 ---
 
-## Post-Deployment
-
-#### // NotE: We would not need to do below once we use pre-mined addresses using Create3 salt and CreateX Factory.
-Update EarnVault's yieldRedistributor if placeholder was used:
-
-```bash
-cast send <EARN_VAULT_PROXY> "setYieldRedistributor(address)" <REWARD_REDISTRIBUTOR> --rpc-url $SEPOLIA_RPC_URL --private-key $PRIVATE_KEY
-cast send 0x5F022ebd58F9aD9E425E06Ce6DD3f7924cc0F722 "setYieldRedistributor(address)" 0x49A441D35d3305dE31398BA62fdeAD474c10b466 --rpc-url $SEPOLIA_RPC_URL --private-key $PRIVATE_KEY
-```
-
----
-
 ## Sepolia deployment info
 
-( Latest 03-11-2025)
+( Latest 07-11-2025)
 
-✅ SUSDSCVault
+✅ SUSDSCVaultUpgradeable
 
-Implementation: 0xAd66e2C9732c8a29a96c3ddacc7ad82cc5492F99
+  Implementation: 0xdE13186F7ff1173628Ed5e15173d9E78e10Ad6Bb
 
-Proxy: 0x58f54D5B3F72cC9fF35d5bD950319E46d294A40c
-
-
-✅ EarnVault
+  Proxy (SUSDSCVault): 0x938bca6c4281313Baa82154745E4d020E85E7340
 
 
-Implementation: 0xA3B1A989AEDa56fFF76777C9dC708F88190A37Ed
+✅ EarnVault EarnVaultUpgradeable
 
-Proxy: 0x40eA9e92d55C1c49c6D2061E74ec60bb48f8C61f
+
+  Implementation: 0x7dCA02767dfD57888CE087900f9cfDf3D9a2af6f
+
+  Proxy (EarnVault): 0xFdeB7e9F59cad080D9158ff850Ce79bCf6cdd5f0
 
 
 ✅ RewardRedistributor
 
-Contract: 0xA8B3DBB860A0Aa77Fe04E83a7334de9f6E97C18b
-
-=== Deployment Summary ===
-  Contract: RewardRedistributor
-  Address: 0xA8B3DBB860A0Aa77Fe04E83a7334de9f6E97C18b
-  USDSC Token: 0x7E426d026f604d1c47b50059752122d8ab1E2C28
-  Treasury: 0x77001610a4fD68548B80E49226c02a99c3b6Ae14
-  EarnVault: 0x40eA9e92d55C1c49c6D2061E74ec60bb48f8C61f
-  sUSDSC Vault: 0x58f54D5B3F72cC9fF35d5bD950319E46d294A40c
-  Admin: 0x77001610a4fD68548B80E49226c02a99c3b6Ae14
-  Keeper: 0x77001610a4fD68548B80E49226c02a99c3b6Ae14
-  Fee (bps): 0
-  Max Fee (bps): 2000
+Contract: 0xFee1467934428Df54C696B36a4747c5Be86674CC
 
