@@ -96,3 +96,18 @@ forge script script/deploy/DeployRewardRedistributor.s.sol:DeployRewardRedistrib
 
 Contract: 0xFee1467934428Df54C696B36a4747c5Be86674CC
 
+---
+
+## Salt strings and calculated salt
+
+EarnVaultUpgradeable proxy salt 0x111d4f7f87754e05e66689be7d672d1299f3a8bb004e1cab70ac2568bcfa48b7
+
+RewardRedistributor calt 0x111d4f7f87754e05e66689be7d672d1299f3a8bb00eb96670b1b53534e05a7b0
+
+SUSDSCVaultUpgradeable proxy salt 0x111d4f7f87754e05e66689be7d672d1299f3a8bb00f7d9a433ec92de4cb6761a
+
+EarnVaultUpgradeable_Proxy_112025
+
+SUSDSCVaultUpgradeable_Proxy_112025
+
+RewardRedistributor_112025
