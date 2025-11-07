@@ -79,7 +79,7 @@ sequenceDiagram
     Pool-->>Swapper: Receive 100k USDC
 
     Swapper->>Bridge: Send 100k USDC to L1
-    Bridge-->>UniV3: Receive 100k USDC on Ethereum
+    Bridge-->>Champion: Receive 100k USDC on Ethereum
 
     Champion->>UniV3: Swap USDC → wM
     UniV3-->>Champion: Receive wM
@@ -118,7 +118,7 @@ sequenceDiagram
     Pool-->>Swapper: Receive 100k USDSC
 
     Swapper->>Bridge: Send 100k USDSC to L1
-    Bridge-->>UniV3: Receive 100k USDSC on Ethereum
+    Bridge-->>Champion: Receive 100k USDSC on Ethereum
 
     Champion->>UniV3: Swap USDSC → wM
     UniV3-->>Champion: Receive wM
