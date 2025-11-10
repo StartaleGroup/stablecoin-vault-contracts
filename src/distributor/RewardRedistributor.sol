@@ -142,7 +142,6 @@ contract RewardRedistributor is IRewardRedistributorEventsAndErrors, AccessContr
     super.renounceRole(role, callerConfirmation);
   }
 
-
   /// @notice Claims pending USDSC yield from the extension and distributes it per policy.
   /// @dev    Sequence:
   ///         1) Record `balanceBefore = IERC20(USDSC_ADDRESS).balanceOf(address(this))`.
