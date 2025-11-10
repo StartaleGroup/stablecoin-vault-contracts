@@ -448,6 +448,45 @@ contract EarnVaultUpgradeable is
     emit NativeSwept(to, amount);
   }
 
+  /// @notice Remove a boost reward token from activeBoostTokens array (only owner)
+  /// @dev Can be used to clean up tokens that are frozen or no longer used
+  /// @dev Only allows removal if boostClaimReserve[token] == 0 (no pending claims)
+  /// @param token Token address to remove from activeBoostTokens array
+  function removeBoostRewardToken(address token) external onlyOwner nonReentrant {
+    EarnVaultStorage storage $ = _getStorage();
+    if (token == address(0)) revert IEarnVaultEventsAndErrors.CanNotBeZeroAddress();
+    
+    uint256 tokenIndex = $.boostTokenIndex[token];
+    if (tokenIndex == 0) {
+      // Token not in array, nothing to remove
+      return;
+    }
+    
+    // Convert to 0-based index
+    uint256 arrayIndex = tokenIndex - 1;
+    
+    // Verify no pending claims for this token
+    if ($.boostClaimReserve[token] > 0) {
+      revert IEarnVaultEventsAndErrors.InsufficientBoostClaimReserve();
+    }
+    
+    uint256 arrayLength = $.activeBoostTokens.length;
+    
+    // Swap with last element and pop (O(1) removal)
+    if (arrayIndex != arrayLength - 1) {
+      // Not the last element, swap with last
+      address lastToken = $.activeBoostTokens[arrayLength - 1];
+      $.activeBoostTokens[arrayIndex] = lastToken;
+      $.boostTokenIndex[lastToken] = tokenIndex; // Update swapped token's index
+    }
+    
+    // Remove last element
+    $.activeBoostTokens.pop();
+    delete $.boostTokenIndex[token];
+    
+    emit IEarnVaultEventsAndErrors.BoostRewardTokenRemoved(token);
+  }
+
   // -------- External Functions (View) --------
 
   function asset() external view returns (address) {

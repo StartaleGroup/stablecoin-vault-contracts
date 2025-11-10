@@ -102,6 +102,16 @@ interface IEarnVaultEventsAndErrors {
   /// @param amount Amount of boost rewards claimed
   event BoostRewardClaimed(address indexed user, address indexed token, uint256 amount);
 
+  /// @notice Emitted when a boost reward transfer fails (e.g., token is frozen)
+  /// @param user Address that attempted to claim boost rewards
+  /// @param token Token address that failed to transfer
+  /// @param amount Amount of boost rewards that failed to transfer
+  event BoostRewardTransferFailed(address indexed user, address indexed token, uint256 amount);
+
+  /// @notice Emitted when a boost reward token is removed from activeBoostTokens array
+  /// @param token Token address that was removed
+  event BoostRewardTokenRemoved(address indexed token);
+
   // ========================================
   // Errors
   // ========================================
