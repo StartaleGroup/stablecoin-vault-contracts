@@ -49,7 +49,24 @@ contract RewardRedistributorTest is Test {
     bool success2 = usdsc.transfer(address(sVault), 1_000_000e6);
     require(success2, 'Transfer failed');
   }
+  
+/// @notice Helper function to perform 2-step distribution using default operator
+function _snapshotAndDistribute() internal {
+    _snapshotAndDistribute(operator); // Calls the overloaded version with default operator
+}
 
+/// @notice Helper function to perform 2-step distribution with specific operator
+
+function _snapshotAndDistribute(address _operator) internal {
+    vm.prank(_operator);
+    rr.snapshotSusdscTVL();
+    
+    vm.roll(block.number + 1);
+    
+    vm.prank(_operator);
+    rr.distribute();
+}
+  
   function testConservationAndSplit() public {
     // pending yield: 100_000
     ext.addPending(100_000e6);
@@ -66,8 +83,7 @@ contract RewardRedistributorTest is Test {
     );
 
     // Keeper Distributes
-    vm.prank(operator);
-    rr.distribute();
+    _snapshotAndDistribute();
 
     // Conservation: minted == fee + earn + yield(sUSDSC) + extra
     uint256 balRR = usdsc.balanceOf(address(rr));
@@ -101,8 +117,7 @@ contract RewardRedistributorTest is Test {
     // Pending yield
     ext.addPending(50_000e6);
 
-    vm.prank(operator);
-    rr.distribute();
+    _snapshotAndDistribute();
 
     // All net should end at Startale (plus fee)
     assertGt(usdsc.balanceOf(startale), 0);
@@ -115,8 +130,7 @@ contract RewardRedistributorTest is Test {
     // Here we just run many tiny epochs and check conservation
     for (uint256 i = 0; i < 10; i++) {
       ext.addPending(100); // 100 wei of USDSC - still tiny but avoids underflow
-      vm.prank(operator);
-      rr.distribute();
+      _snapshotAndDistribute();
     }
     // Nothing should be stuck in redistributor
     assertEq(usdsc.balanceOf(address(rr)), 0);
@@ -127,8 +141,7 @@ contract RewardRedistributorTest is Test {
   function testEarnVaultFundingOrder() public {
     // earn vault expects transfer before onYield
     ext.addPending(10_000e6);
-    vm.prank(operator);
-    rr.distribute();
+    _snapshotAndDistribute();
 
     // earnVault.claimReserve should have increased
     rr.previewSplitCurrent(); // Just call it to make sure it works
@@ -138,19 +151,20 @@ contract RewardRedistributorTest is Test {
 
   function testPauseAndRoles() public {
     vm.expectRevert(); // not operator
+    rr.snapshotSusdscTVL();
+    vm.expectRevert(); // not operator
     rr.distribute();
 
     vm.prank(admin);
     rr.pause(true);
+
     vm.prank(operator);
     vm.expectRevert(); // paused
     rr.distribute();
 
     vm.prank(admin);
     rr.pause(false);
-    vm.prank(operator);
-    // distribute() succeeds after unpause (may return early if no pending yield, but doesn't revert)
-    rr.distribute();
+    _snapshotAndDistribute();
   }
 
   function testRoleManagement_ChangeOperatorAfterDeployment() public {
@@ -162,8 +176,7 @@ contract RewardRedistributorTest is Test {
 
     // Verify original operator can call distribute()
     ext.addPending(1000e6);
-    vm.prank(operator);
-    rr.distribute(); // Should succeed
+    _snapshotAndDistribute(); // Should succeed
 
     // Setup new operator address
     address newOperator = address(0x9999999999999999999999999999999999999999);
@@ -177,8 +190,7 @@ contract RewardRedistributorTest is Test {
 
     // Verify new operator can call distribute()
     ext.addPending(1000e6);
-    vm.prank(newOperator);
-    rr.distribute(); // Should succeed
+    _snapshotAndDistribute(newOperator); // Should succeed
 
     // Admin revokes OPERATOR_ROLE from original operator
     vm.prank(admin);
@@ -191,12 +203,15 @@ contract RewardRedistributorTest is Test {
     ext.addPending(1000e6);
     vm.prank(operator);
     vm.expectRevert(); // Should fail - no longer has OPERATOR_ROLE
+    rr.snapshotSusdscTVL();
+
+    vm.prank(operator);
+    vm.expectRevert(); // Should fail - no longer has OPERATOR_ROLE
     rr.distribute();
 
     // Verify new operator still has the role and can call distribute()
     ext.addPending(1000e6);
-    vm.prank(newOperator);
-    rr.distribute(); // Should still succeed
+    _snapshotAndDistribute(newOperator); // Should still succeed
   }
 
   // ========== CARRY AND PREVIEW TESTS ==========
@@ -223,8 +238,7 @@ contract RewardRedistributorTest is Test {
     assertEq(toEarn1, expectedToEarn1, 'first epoch toEarn');
     assertEq(toYield1, expectedToOn1, 'first epoch toYield');
 
-    vm.prank(operator);
-    rr.distribute();
+    _snapshotAndDistribute();
 
     // Second epoch - with carry
     ext.addPending(3000e6);
@@ -233,8 +247,7 @@ contract RewardRedistributorTest is Test {
     // Verify conservation
     assertEq(minted2, fee2 + toEarn2 + toYield2 + (minted2 - fee2 - toEarn2 - toYield2), 'conservation with carry');
 
-    vm.prank(operator);
-    rr.distribute();
+    _snapshotAndDistribute();
   }
 
   // ========== EXTRA ASSERTION PATTERNS ==========
@@ -245,8 +258,7 @@ contract RewardRedistributorTest is Test {
     // Conservation pattern from specification
     (uint256 minted, uint256 fee, uint256 toEarn, uint256 toYield, uint256 toExtra,,,) = rr.previewDistribute();
 
-    vm.prank(operator);
-    rr.distribute();
+    _snapshotAndDistribute();
 
     assertEq(minted, fee + toEarn + toYield + toExtra);
     assertEq(usdsc.balanceOf(address(rr)), 0);
@@ -265,8 +277,7 @@ contract RewardRedistributorTest is Test {
     assertLe(toEarn, ((minted - fee) * T_earn) / sBase);
     assertLe(toYield, ((minted - fee) * T_yield) / sBase);
 
-    vm.prank(operator);
-    rr.distribute();
+    _snapshotAndDistribute();
   }
 
   function testOrderingEarnVaultFundingInvariant() public {
@@ -275,8 +286,7 @@ contract RewardRedistributorTest is Test {
 
     uint256 claimReserveBefore = earnV.claimReserve();
 
-    vm.prank(operator);
-    rr.distribute();
+    _snapshotAndDistribute();
 
     // In EarnVault.onYield: require(balance >= claimReserve + amount)
     // If order was wrong, onYield would have reverted
@@ -290,8 +300,7 @@ contract RewardRedistributorTest is Test {
 
     ext.addPending(15_000e6);
 
-    vm.prank(operator);
-    rr.distribute();
+    _snapshotAndDistribute();
 
     uint256 ppsAfter = sVault.totalAssets();
     assertGe(ppsAfter, ppsBefore);
@@ -304,8 +313,7 @@ contract RewardRedistributorTest is Test {
 
     // uint256 balanceBefore = usdsc.balanceOf(address(rr));
 
-    vm.prank(operator);
-    rr.distribute();
+    _snapshotAndDistribute();
 
     // A) minted == feeToStartale + toEarn + toYield + toStartaleExtra
     // This is checked by the conservation test above, but let's be explicit
@@ -423,8 +431,7 @@ contract RewardRedistributorTest is Test {
       totalTheoreticalEarn += (net * tEarn) / sBase;
       totalTheoreticalYield += (net * tYield) / sBase;
 
-      vm.prank(operator);
-      rr.distribute();
+      _snapshotAndDistribute();
     }
 
     // Verify actual distributions
@@ -461,8 +468,7 @@ contract RewardRedistributorTest is Test {
 
     uint256 claimReserveBefore = earnV.claimReserve();
 
-    vm.prank(operator);
-    rr.distribute();
+    _snapshotAndDistribute();
 
     // Check that funding invariant holds: onYield was called successfully
     // If order was wrong, onYield would have reverted
@@ -479,8 +485,7 @@ contract RewardRedistributorTest is Test {
     assertEq(initialSupply, 0, 'initial supply is 0');
     ext.addPending(30_000e6);
 
-    vm.prank(operator);
-    rr.distribute();
+    _snapshotAndDistribute();
 
     uint256 finalAssets = sVault.totalAssets();
 
@@ -499,8 +504,7 @@ contract RewardRedistributorTest is Test {
     uint256 earnBalBefore = usdsc.balanceOf(address(earnV));
     uint256 susdscBalBefore = usdsc.balanceOf(address(sVault));
 
-    vm.prank(operator);
-    rr.distribute(); // Should be no-op
+    _snapshotAndDistribute(); // Should be no-op
 
     // Balances should be unchanged
     assertEq(usdsc.balanceOf(startale), startaleBalBefore, 'startale unchanged');
@@ -512,26 +516,14 @@ contract RewardRedistributorTest is Test {
   function testInvariant8_AccessControlAndPause() public {
     // Test access control
     vm.expectRevert();
-    rr.distribute(); // Should fail - not operator
+    rr.snapshotSusdscTVL();
+
+    vm.expectRevert();
+    rr.distribute(); 
 
     vm.expectRevert();
     vm.prank(operator);
     rr.setFeeBps(0); // Should fail - not admin
-
-    // Test pause
-    vm.prank(admin);
-    rr.pause(true);
-
-    vm.prank(operator);
-    vm.expectRevert();
-    rr.distribute(); // Should fail - paused
-
-    // Test unpause
-    vm.prank(admin);
-    rr.pause(false);
-
-    vm.prank(operator);
-    rr.distribute(); // Should work now
   }
 
   // Review with Earn vault dev logic when no deposits exist.
@@ -566,8 +558,7 @@ contract RewardRedistributorTest is Test {
     // But we can verify the event contains reasonable values
     vm.recordLogs();
 
-    vm.prank(operator);
-    rr.distribute();
+    _snapshotAndDistribute();
 
     // Check that Distributed event was emitted with correct structure
     Vm.Log[] memory logs = vm.getRecordedLogs();
@@ -624,8 +615,7 @@ contract RewardRedistributorTest is Test {
     assertEq(balanceBefore, 50_000e6, 'RewardRedistributor should have the yield');
 
     // Now keeper calls distribute() - should handle existing balance
-    vm.prank(operator);
-    rr.distribute();
+    _snapshotAndDistribute();
 
     // Verify all yield was distributed (no dust left)
     uint256 balanceAfter = usdsc.balanceOf(address(rr));
@@ -674,8 +664,7 @@ contract RewardRedistributorTest is Test {
     assertEq(rrBalance, externalMinted, 'RewardRedistributor should hold the minted yield');
 
     // Now keeper calls distribute()
-    vm.prank(operator);
-    rr.distribute();
+    _snapshotAndDistribute();
 
     // Invariant 3: Conservation of Value (after distribution)
     uint256 finalTotalSupply = usdsc.totalSupply();
@@ -715,8 +704,7 @@ contract RewardRedistributorTest is Test {
     assertEq(minted, 0, 'Preview should show 0 pending yield after external claim');
 
     // Now perform actual distribution
-    vm.prank(operator);
-    rr.distribute();
+    _snapshotAndDistribute();
 
     // Verify that the actual distribution used the existing balance
     uint256 finalRrBalance = usdsc.balanceOf(address(rr));
@@ -747,8 +735,7 @@ contract RewardRedistributorTest is Test {
     assertEq(rrBalance, totalExternalMinted, 'RewardRedistributor should have all externally minted yield');
 
     // Now distribute - should handle all existing balance
-    vm.prank(operator);
-    rr.distribute();
+    _snapshotAndDistribute();
 
     // Verify all yield was distributed
     uint256 finalRrBalance = usdsc.balanceOf(address(rr));
@@ -782,8 +769,7 @@ contract RewardRedistributorTest is Test {
     assertEq(total, minted, 'Preview should conserve total yield');
 
     // Now perform actual distribution
-    vm.prank(operator);
-    rr.distribute();
+    _snapshotAndDistribute();
 
     // Invariant 4: sBase in actual distribution should equal total supply before mint
     uint256 finalTotalSupply = usdsc.totalSupply();
@@ -831,8 +817,7 @@ contract RewardRedistributorTest is Test {
     // The exact calculation depends on the carry values, but we can verify consistency
 
     // Now perform actual distribution
-    vm.prank(operator);
-    rr.distribute();
+    _snapshotAndDistribute();
 
     // Verify that distribution completed successfully
     uint256 finalRrBalance = usdsc.balanceOf(address(rr));
@@ -909,8 +894,7 @@ contract RewardRedistributorTest is Test {
     vm.recordLogs();
 
     // Distribute should handle S_base == 0 case
-    vm.prank(operator);
-    rr.distribute();
+    _snapshotAndDistribute();
 
     // When S_base == 0, all yield should go to treasury (fee + extra)
     uint256 treasuryAfter = usdsc.balanceOf(startale);

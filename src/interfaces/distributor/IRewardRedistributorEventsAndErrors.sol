@@ -51,6 +51,12 @@ interface IRewardRedistributorEventsAndErrors {
   /// @param fee_on_yield_bps  New fee on yield (bps).
   event FeeUpdated(uint16 fee_on_yield_bps);
 
+  /// @notice Emitted when a TVL snapshot is captured.
+  /// @param susdscTVL        The captured sUSDSC vault TVL.
+  /// @param blockNumber      The block number at which the snapshot was taken.
+  event TVLSnapshotCaptured(uint256 susdscTVL, uint256 blockNumber);
+
+
   // ========================================
   // Errors
   // ========================================
@@ -64,6 +70,12 @@ interface IRewardRedistributorEventsAndErrors {
   /// @param maxFeeBps Maximum allowed fee in basis points
   error FeeTooHigh(uint16 feeBps, uint16 maxFeeBps);
 
+  /// @notice Thrown when attempting to distribute without a valid snapshot
+  error InvalidSnapshot();
+
+  /// @notice Thrown when the recorded sUSDSC TVL does not match the current TVL
+  error UnexpectedSusdscTVL();
+  
   /// @notice Thrown when attempting to distribute with zero yield
   error ZeroYield();
 }

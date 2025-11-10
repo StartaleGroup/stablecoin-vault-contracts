@@ -57,6 +57,15 @@ contract RewardRedistributor is IRewardRedistributorEventsAndErrors, AccessContr
   /// @dev Carry accumulator for sUSDSC share calculations across epochs.
   uint256 private carryOn;
 
+  /// @notice Snapshot of sUSDSC vault TVL from previous block
+  struct SusdscSnapshot {
+      uint256 susdscTVL;
+      uint256 blockNumber;
+      bool isValid;
+  }
+  
+  SusdscSnapshot public lastSnapshot;
+
   /// @notice Initializes the redistributor.
   /// @param usdscAddress    USDSC token address (implements both IERC20 and IMYieldToOne interfaces).
   /// @param treasuryAddr   Treasury recipient.
@@ -130,6 +139,18 @@ contract RewardRedistributor is IRewardRedistributorEventsAndErrors, AccessContr
     p ? _pause() : _unpause();
   }
 
+  /// @notice Capture sUSDSC vault TVL for next distribution
+  /// @dev Must be called in block N before distribute() in block N+1
+  /// @custom:security Prevents same-block TVL manipulation attacks
+  function snapshotSusdscTVL() external onlyRole(OPERATOR_ROLE) {
+    lastSnapshot = SusdscSnapshot({
+        susdscTVL: susdscVault.totalAssets(),
+        blockNumber: block.number,
+        isValid: true
+    });    
+    emit TVLSnapshotCaptured(lastSnapshot.susdscTVL, block.number);
+  }
+
   /// @notice Claims pending USDSC yield from the extension and distributes it per policy.
   /// @dev    Sequence:
   ///         1) Record `balanceBefore = IERC20(USDSC_ADDRESS).balanceOf(address(this))`.
@@ -148,6 +169,8 @@ contract RewardRedistributor is IRewardRedistributorEventsAndErrors, AccessContr
   ///            - sUSDSC: transfer `toOn` (PPS rises)
   /// @custom:security nonReentrant and Pausable.
   function distribute() external whenNotPaused onlyRole(OPERATOR_ROLE) nonReentrant {
+    if (lastSnapshot.blockNumber != block.number - 1 || !lastSnapshot.isValid) revert IRewardRedistributorEventsAndErrors.InvalidSnapshot();
+
     uint256 balanceBefore = IERC20(USDSC_ADDRESS).balanceOf(address(this));
     uint256 minted = IMYieldToOne(USDSC_ADDRESS).claimYield();
     uint256 gross = balanceBefore + minted;
@@ -162,7 +185,17 @@ contract RewardRedistributor is IRewardRedistributorEventsAndErrors, AccessContr
     uint256 T_earn;
     uint256 T_yield;
 
+    // This step is added to keep susdscTVL _calculateSplit() and previewDistribute() as view functions
+    // and to avoid state changes in them.
+    if (lastSnapshot.susdscTVL != susdscVault.totalAssets()) {
+      revert IRewardRedistributorEventsAndErrors.UnexpectedSusdscTVL();
+    }
+
+    // Calculate split including carries
     (feeToStartale, toEarn, toOn, toStartaleExtra, S_base, T_earn, T_yield) = _calculateSplit(gross, true, false);
+
+    // make lastSnapshot invalid to prevent reuse in distribute()
+    lastSnapshot.isValid = false;
 
     if (S_base == 0) {
       if (feeToStartale > 0) IERC20(USDSC_ADDRESS).safeTransfer(treasury, feeToStartale);
