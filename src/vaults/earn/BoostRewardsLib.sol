@@ -163,8 +163,8 @@ library BoostRewardsLib {
       return;
     }
     if (boostGlobalIndex > userBoostIndex) {
-      uint256 owed = Math.mulDiv(principal, boostGlobalIndex - userBoostIndex, RAY);
-      userBoostAccrued[user][token] += owed;
+        uint256 owed = Math.mulDiv(principal, boostGlobalIndex - userBoostIndex, RAY);
+        userBoostAccrued[user][token] += owed;
     }
     // Note: User's boost index update is handled by the calling contract
   }
