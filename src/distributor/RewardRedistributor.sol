@@ -166,6 +166,9 @@ contract RewardRedistributor is IRewardRedistributorEventsAndErrors, AccessContr
   /// @custom:security nonReentrant and Pausable.
   function distribute() external whenNotPaused onlyRole(OPERATOR_ROLE) nonReentrant {
     if (lastSnapshot.blockNumber != block.number - 1 || !lastSnapshot.isValid) {
+      revert IRewardRedistributorEventsAndErrors.SnapshotTooOld();
+    }
+    if (lastSnapshot.blockNumber != block.number - 1 || !lastSnapshot.isValid) {
       revert IRewardRedistributorEventsAndErrors.InvalidSnapshot();
     }
 
@@ -183,8 +186,8 @@ contract RewardRedistributor is IRewardRedistributorEventsAndErrors, AccessContr
     uint256 T_earn;
     uint256 T_yield;
 
-    // This step is added to keep susdscTVL _calculateSplit() and previewDistribute() as view functions
-    // and to avoid state changes in them.
+    // This validation is performed here to keep _calculateSplit() and previewDistribute() as view functions
+    // and avoid state changes in them.
     if (lastSnapshot.susdscTVL != susdscVault.totalAssets()) {
       revert IRewardRedistributorEventsAndErrors.UnexpectedSusdscTVL();
     }

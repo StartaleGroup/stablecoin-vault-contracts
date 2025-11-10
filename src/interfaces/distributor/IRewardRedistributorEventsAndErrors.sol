@@ -72,6 +72,9 @@ interface IRewardRedistributorEventsAndErrors {
   /// @notice Thrown when attempting to distribute without a valid snapshot
   error InvalidSnapshot();
 
+  /// @notice Thrown when the snapshot is too old (not from previous block)
+  error SnapshotTooOld();
+
   /// @notice Thrown when the recorded sUSDSC TVL does not match the current TVL
   error UnexpectedSusdscTVL();
 
