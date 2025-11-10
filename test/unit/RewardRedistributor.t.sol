@@ -946,4 +946,266 @@ contract RewardRedistributorTest is Test {
 
     assertTrue(foundEvent, 'Distributed event should be emitted for S_base == 0 case');
   }
+
+  // ========== SNAPSHOT MECHANISM TESTS ==========
+
+  function testSnapshot_BasicFlow() public {
+    // Add pending yield
+    ext.addPending(10_000e6);
+
+    // Step 1: Snapshot in block N
+    vm.prank(operator);
+    rr.snapshotSusdscTVL();
+
+    // Verify snapshot was captured
+    (uint256 tvl, uint256 blockNum, bool isValid) = rr.lastSnapshot();
+    assertEq(tvl, sVault.totalAssets(), 'Snapshot TVL should match vault TVL');
+    assertEq(blockNum, block.number, 'Snapshot block should be current block');
+    assertTrue(isValid, 'Snapshot should be valid');
+
+    // Step 2: Roll to next block and distribute
+    vm.roll(block.number + 1);
+    vm.prank(operator);
+    rr.distribute();
+
+    // Verify snapshot was invalidated after distribution
+    (,, bool isValidAfter) = rr.lastSnapshot();
+    assertFalse(isValidAfter, 'Snapshot should be invalidated after distribution');
+  }
+
+  function testSnapshot_EmitsEvent() public {
+    uint256 expectedTVL = sVault.totalAssets();
+
+    vm.expectEmit(true, true, true, true);
+    emit IRewardRedistributorEventsAndErrors.TVLSnapshotCaptured(expectedTVL, block.number);
+
+    vm.prank(operator);
+    rr.snapshotSusdscTVL();
+  }
+
+  function testSnapshot_RequiresOperatorRole() public {
+    address unauthorized = makeAddr('unauthorized');
+
+    vm.prank(unauthorized);
+    vm.expectRevert();
+    rr.snapshotSusdscTVL();
+  }
+
+  function testSnapshot_CannotDistributeWithoutSnapshot() public {
+    ext.addPending(10_000e6);
+
+    // Try to distribute without taking snapshot first
+    // Both checks use the same condition, so SnapshotTooOld is thrown first
+    vm.prank(operator);
+    vm.expectRevert(IRewardRedistributorEventsAndErrors.SnapshotTooOld.selector);
+    rr.distribute();
+  }
+
+  function testSnapshot_CannotDistributeInSameBlock() public {
+    ext.addPending(10_000e6);
+
+    // Take snapshot in block N
+    vm.prank(operator);
+    rr.snapshotSusdscTVL();
+
+    // Try to distribute in same block
+    vm.prank(operator);
+    vm.expectRevert(IRewardRedistributorEventsAndErrors.SnapshotTooOld.selector);
+    rr.distribute();
+  }
+
+  function testSnapshot_CannotDistributeTwoBlocksLater() public {
+    ext.addPending(10_000e6);
+
+    // Take snapshot in block N
+    vm.prank(operator);
+    rr.snapshotSusdscTVL();
+
+    // Roll forward 2 blocks (snapshot is now too old)
+    vm.roll(block.number + 2);
+
+    // Try to distribute - should fail because snapshot is not from previous block
+    vm.prank(operator);
+    vm.expectRevert(IRewardRedistributorEventsAndErrors.SnapshotTooOld.selector);
+    rr.distribute();
+  }
+
+  function testSnapshot_CannotReuseSnapshot() public {
+    ext.addPending(10_000e6);
+
+    // First distribution cycle
+    vm.prank(operator);
+    rr.snapshotSusdscTVL();
+    vm.roll(block.number + 1);
+    vm.prank(operator);
+    rr.distribute();
+
+    // Try to distribute again without new snapshot
+    // The snapshot is invalidated, and blockNumber check will fail
+    ext.addPending(5000e6);
+    vm.roll(block.number + 1);
+    vm.prank(operator);
+    vm.expectRevert(IRewardRedistributorEventsAndErrors.SnapshotTooOld.selector);
+    rr.distribute();
+  }
+
+  function testSnapshot_TVLMustMatchAtDistribution() public {
+    ext.addPending(10_000e6);
+
+    // Take snapshot
+    vm.prank(operator);
+    rr.snapshotSusdscTVL();
+
+    // Manipulate sVault TVL after snapshot (simulating attack or unexpected change)
+    vm.roll(block.number + 1);
+    usdsc.mint(address(sVault), 1_000_000e6); // TVL changed!
+
+    // Try to distribute - should fail because TVL doesn't match snapshot
+    vm.prank(operator);
+    vm.expectRevert(IRewardRedistributorEventsAndErrors.UnexpectedSusdscTVL.selector);
+    rr.distribute();
+  }
+
+  function testSnapshot_CanUpdateSnapshotBeforeDistribution() public {
+    ext.addPending(10_000e6);
+
+    // Take first snapshot
+    vm.prank(operator);
+    rr.snapshotSusdscTVL();
+    (uint256 tvl1,,) = rr.lastSnapshot();
+
+    // Take another snapshot in a later block (overwriting previous)
+    vm.roll(block.number + 1);
+    usdsc.mint(address(sVault), 100_000e6); // TVL increases
+    vm.prank(operator);
+    rr.snapshotSusdscTVL();
+    (uint256 tvl2,,) = rr.lastSnapshot();
+
+    assertGt(tvl2, tvl1, 'Second snapshot should have higher TVL');
+
+    // Now distribute should work with the latest snapshot
+    vm.roll(block.number + 1);
+    vm.prank(operator);
+    rr.distribute(); // Should succeed
+  }
+
+  function testSnapshot_MultipleDistributionCycles() public {
+    // Cycle 1
+    ext.addPending(10_000e6);
+    _snapshotAndDistribute();
+
+    // Cycle 2
+    ext.addPending(5000e6);
+    _snapshotAndDistribute();
+
+    // Cycle 3
+    ext.addPending(8000e6);
+    _snapshotAndDistribute();
+
+    // All should succeed - verifying no state corruption
+    assertEq(usdsc.balanceOf(address(rr)), 0, 'No funds should be stuck');
+  }
+
+  function testSnapshot_WithZeroYield() public {
+    // Take snapshot with no pending yield
+    vm.prank(operator);
+    rr.snapshotSusdscTVL();
+
+    // Roll to next block and distribute
+    vm.roll(block.number + 1);
+
+    // Verify valid before distribution
+    (,, bool validBefore) = rr.lastSnapshot();
+    assertTrue(validBefore, 'Should be valid before distribution');
+
+    vm.prank(operator);
+    rr.distribute(); // Should not revert, just return early due to gross == 0
+
+    // Note: When distribute() returns early due to gross == 0,
+    // the snapshot is NOT invalidated because the invalidation happens
+    // after the early return check. This is acceptable behavior.
+    (,, bool isValid) = rr.lastSnapshot();
+    assertTrue(isValid, 'Snapshot remains valid when distribute returns early with zero yield');
+  }
+
+  function testSnapshot_PreventsFlashLoanAttack() public {
+    // Simulating a flash loan attack scenario:
+    // Attacker tries to inflate TVL in the same block as distribution
+
+    ext.addPending(100_000e6);
+
+    // Honest operator takes snapshot in block N
+    vm.prank(operator);
+    rr.snapshotSusdscTVL();
+
+    // Move to next block
+    vm.roll(block.number + 1);
+
+    // Attacker tries to inflate TVL with flash loan in distribution block
+    // (In real scenario, this would be atomic with distribute call)
+    uint256 flashLoanAmount = 10_000_000e6;
+    usdsc.mint(address(sVault), flashLoanAmount);
+
+    // Distribution should fail because TVL changed
+    vm.prank(operator);
+    vm.expectRevert(IRewardRedistributorEventsAndErrors.UnexpectedSusdscTVL.selector);
+    rr.distribute();
+
+    // Verify no funds were distributed
+    assertEq(usdsc.balanceOf(address(rr)), 0, 'No partial distribution should occur');
+  }
+
+  function testSnapshot_SnapshotBlockNumberProgression() public {
+    ext.addPending(5000e6);
+
+    // Take snapshot at block 1
+    vm.roll(1);
+    vm.prank(operator);
+    rr.snapshotSusdscTVL();
+    (, uint256 block1,) = rr.lastSnapshot();
+    assertEq(block1, 1, 'Snapshot should be at block 1');
+
+    // Distribute at block 2
+    vm.roll(2);
+    vm.prank(operator);
+    rr.distribute();
+
+    // Take new snapshot at block 5
+    ext.addPending(3000e6);
+    vm.roll(5);
+    vm.prank(operator);
+    rr.snapshotSusdscTVL();
+    (, uint256 block5,) = rr.lastSnapshot();
+    assertEq(block5, 5, 'Snapshot should be at block 5');
+
+    // Distribute at block 6
+    vm.roll(6);
+    vm.prank(operator);
+    rr.distribute(); // Should succeed
+  }
+
+  function testSnapshot_InvalidatedAfterDistribution() public {
+    ext.addPending(10_000e6);
+
+    vm.prank(operator);
+    rr.snapshotSusdscTVL();
+
+    // Verify valid before distribution
+    (,, bool validBefore) = rr.lastSnapshot();
+    assertTrue(validBefore, 'Should be valid before distribution');
+
+    vm.roll(block.number + 1);
+    vm.prank(operator);
+    rr.distribute();
+
+    // Verify invalid after distribution
+    (,, bool validAfter) = rr.lastSnapshot();
+    assertFalse(validAfter, 'Should be invalid after distribution');
+
+    // Try to distribute again should fail (snapshot block number won't match)
+    vm.roll(block.number + 1);
+    vm.prank(operator);
+    vm.expectRevert(IRewardRedistributorEventsAndErrors.SnapshotTooOld.selector);
+    rr.distribute();
+  }
 }
