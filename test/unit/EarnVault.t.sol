@@ -1449,7 +1449,7 @@ contract EarnVaultTest is Test {
     address newDistributor = makeAddr('newDistributor');
     vm.prank(owner);
     vault.setYieldRedistributor(newDistributor);
-    assertEq(vault.yieldRedistributor(), newDistributor, 'Owner should still be able to call owner functions');
+    assertEq(vault.yieldRedistributor(), newDistributor, 'Owner functions should still work');
   }
 
   /// @notice Test asset function
