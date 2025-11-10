@@ -1437,22 +1437,19 @@ contract EarnVaultTest is Test {
 
   /// @notice Test renounce ownership functionality
   function test_RenounceOwnership() public {
-    // Owner can renounce ownership
+    // Owner cannot renounce ownership (security fix)
     vm.prank(owner);
+    vm.expectRevert(IEarnVaultEventsAndErrors.OwnershipRenunciationDisabled.selector);
     vault.renounceOwnership();
 
-    // Verify ownership is renounced
-    assertEq(vault.owner(), address(0));
+    // Verify ownership is NOT renounced
+    assertEq(vault.owner(), owner, 'Owner should remain unchanged');
 
-    // No one should be able to call owner functions
+    // Owner should still be able to call owner functions
+    address newDistributor = makeAddr('newDistributor');
     vm.prank(owner);
-    vm.expectRevert();
-    vault.setYieldRedistributor(makeAddr('newDistributor'));
-
-    // Even the old owner cannot call owner functions
-    vm.prank(owner);
-    vm.expectRevert();
-    vault.setYieldRedistributor(makeAddr('newDistributor'));
+    vault.setYieldRedistributor(newDistributor);
+    assertEq(vault.yieldRedistributor(), newDistributor, 'Owner should still be able to call owner functions');
   }
 
   /// @notice Test asset function
