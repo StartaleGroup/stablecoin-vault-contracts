@@ -615,9 +615,12 @@ contract EarnVaultBoostTest is Test {
     // Store indices before claim to verify update
     uint256 userIndexBefore = earnVault.userBoostIndex(user1, address(astr));
     uint256 globalIndexBefore = earnVault.boostGlobalIndex(address(astr));
-    
+
     // User index should be 0 (uninitialized) or less than global index
-    assertTrue(userIndexBefore < globalIndexBefore || userIndexBefore == 0, 'User index should be less than global index before claim');
+    assertTrue(
+      userIndexBefore < globalIndexBefore || userIndexBefore == 0,
+      'User index should be less than global index before claim'
+    );
 
     // =========================
     // Action: Claim (this calls _settleBoost() then claimBoostReward())
@@ -669,16 +672,16 @@ contract EarnVaultBoostTest is Test {
     // =========================
     uint256 initialASTRBalance = astr.balanceOf(user1);
     uint256 initialUSDSCBalance = usdsc.balanceOf(user1);
-    
+
     // Verify user has no ASTR tokens initially
     assertEq(initialASTRBalance, 0, 'User should have no ASTR tokens initially');
-    
+
     vm.prank(user1);
     earnVault.claim(); // First claim - this clears userBoostAccrued[user1][astr] = 0
 
     uint256 astrBalanceAfterFirstClaim = astr.balanceOf(user1);
     uint256 usdscBalanceAfterFirstClaim = usdsc.balanceOf(user1);
-    
+
     // Verify user received ASTR rewards in first claim (no USDSC yield in this test)
     assertGe(astrBalanceAfterFirstClaim, initialASTRBalance, 'User ASTR balance should increase or stay same');
     assertGt(astrBalanceAfterFirstClaim, initialASTRBalance, 'User ASTR balance should increase');
@@ -702,8 +705,12 @@ contract EarnVaultBoostTest is Test {
     earnVault.claim(); // Second claim attempt - should revert
 
     // Verify balances didn't change
-    assertEq(astr.balanceOf(user1), astrBalanceAfterFirstClaim, 'ASTR balance should not change after failed claim attempt');
-    assertEq(usdsc.balanceOf(user1), usdscBalanceAfterFirstClaim, 'USDSC balance should not change after failed claim attempt');
+    assertEq(
+      astr.balanceOf(user1), astrBalanceAfterFirstClaim, 'ASTR balance should not change after failed claim attempt'
+    );
+    assertEq(
+      usdsc.balanceOf(user1), usdscBalanceAfterFirstClaim, 'USDSC balance should not change after failed claim attempt'
+    );
 
     // =========================
     // Additional verification: Even if new rewards are distributed,
@@ -711,7 +718,7 @@ contract EarnVaultBoostTest is Test {
     // =========================
     // Mint more ASTR tokens to operator for the second distribution
     astr.mint(operator, ASTR_REWARD);
-    
+
     // Distribute new boost rewards
     vm.startPrank(operator);
     astr.approve(address(earnVault), ASTR_REWARD);
@@ -727,12 +734,14 @@ contract EarnVaultBoostTest is Test {
     uint256 astrBalanceBeforeSecondClaim = astr.balanceOf(user1);
     vm.prank(user1);
     earnVault.claim(); // Should succeed and claim only the new rewards
-    
+
     uint256 astrBalanceAfterSecondClaim = astr.balanceOf(user1);
     uint256 receivedSecondClaim = astrBalanceAfterSecondClaim - astrBalanceBeforeSecondClaim;
-    
+
     // User should receive exactly ASTR_REWARD (the new rewards), not ASTR_REWARD * 2
     assertEq(receivedSecondClaim, ASTR_REWARD, 'User should only receive new rewards, not old ones again');
-    assertEq(astrBalanceAfterSecondClaim, ASTR_REWARD * 2, 'Total received should be exactly 2x ASTR_REWARD (first + second)');
+    assertEq(
+      astrBalanceAfterSecondClaim, ASTR_REWARD * 2, 'Total received should be exactly 2x ASTR_REWARD (first + second)'
+    );
   }
 }

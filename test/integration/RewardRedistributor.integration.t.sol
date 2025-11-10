@@ -94,13 +94,13 @@ contract RewardRedistributorIntegrationTest is Test {
   /// @notice Helper function to perform 2-step distribution (snapshot + distribute)
   /// @dev Snapshots in current block, rolls to next block, then distributes
   function _snapshotAndDistribute() internal {
-      vm.prank(operator);
-      rr.snapshotSusdscTVL();
-      
-      vm.roll(block.number + 1);
-      
-      vm.prank(operator);
-      rr.distribute();
+    vm.prank(operator);
+    rr.snapshotSusdscTVL();
+
+    vm.roll(block.number + 1);
+
+    vm.prank(operator);
+    rr.distribute();
   }
 
   function _setupInitialVaultStates() internal {

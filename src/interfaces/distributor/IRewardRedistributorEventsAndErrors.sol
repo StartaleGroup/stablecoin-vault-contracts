@@ -56,7 +56,6 @@ interface IRewardRedistributorEventsAndErrors {
   /// @param blockNumber      The block number at which the snapshot was taken.
   event TVLSnapshotCaptured(uint256 susdscTVL, uint256 blockNumber);
 
-
   // ========================================
   // Errors
   // ========================================
@@ -75,7 +74,7 @@ interface IRewardRedistributorEventsAndErrors {
 
   /// @notice Thrown when the recorded sUSDSC TVL does not match the current TVL
   error UnexpectedSusdscTVL();
-  
+
   /// @notice Thrown when attempting to distribute with zero yield
   error ZeroYield();
 }

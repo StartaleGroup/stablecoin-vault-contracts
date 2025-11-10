@@ -49,24 +49,24 @@ contract RewardRedistributorTest is Test {
     bool success2 = usdsc.transfer(address(sVault), 1_000_000e6);
     require(success2, 'Transfer failed');
   }
-  
-/// @notice Helper function to perform 2-step distribution using default operator
-function _snapshotAndDistribute() internal {
+
+  /// @notice Helper function to perform 2-step distribution using default operator
+  function _snapshotAndDistribute() internal {
     _snapshotAndDistribute(operator); // Calls the overloaded version with default operator
-}
+  }
 
-/// @notice Helper function to perform 2-step distribution with specific operator
+  /// @notice Helper function to perform 2-step distribution with specific operator
 
-function _snapshotAndDistribute(address _operator) internal {
+  function _snapshotAndDistribute(address _operator) internal {
     vm.prank(_operator);
     rr.snapshotSusdscTVL();
-    
+
     vm.roll(block.number + 1);
-    
+
     vm.prank(_operator);
     rr.distribute();
-}
-  
+  }
+
   function testConservationAndSplit() public {
     // pending yield: 100_000
     ext.addPending(100_000e6);
@@ -519,7 +519,7 @@ function _snapshotAndDistribute(address _operator) internal {
     rr.snapshotSusdscTVL();
 
     vm.expectRevert();
-    rr.distribute(); 
+    rr.distribute();
 
     vm.expectRevert();
     vm.prank(operator);

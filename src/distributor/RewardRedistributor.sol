@@ -59,11 +59,11 @@ contract RewardRedistributor is IRewardRedistributorEventsAndErrors, AccessContr
 
   /// @notice Snapshot of sUSDSC vault TVL from previous block
   struct SusdscSnapshot {
-      uint256 susdscTVL;
-      uint256 blockNumber;
-      bool isValid;
+    uint256 susdscTVL;
+    uint256 blockNumber;
+    bool isValid;
   }
-  
+
   SusdscSnapshot public lastSnapshot;
 
   /// @notice Initializes the redistributor.
@@ -143,11 +143,7 @@ contract RewardRedistributor is IRewardRedistributorEventsAndErrors, AccessContr
   /// @dev Must be called in block N before distribute() in block N+1
   /// @custom:security Prevents same-block TVL manipulation attacks
   function snapshotSusdscTVL() external onlyRole(OPERATOR_ROLE) {
-    lastSnapshot = SusdscSnapshot({
-        susdscTVL: susdscVault.totalAssets(),
-        blockNumber: block.number,
-        isValid: true
-    });    
+    lastSnapshot = SusdscSnapshot({susdscTVL: susdscVault.totalAssets(), blockNumber: block.number, isValid: true});
     emit TVLSnapshotCaptured(lastSnapshot.susdscTVL, block.number);
   }
 
@@ -169,7 +165,9 @@ contract RewardRedistributor is IRewardRedistributorEventsAndErrors, AccessContr
   ///            - sUSDSC: transfer `toOn` (PPS rises)
   /// @custom:security nonReentrant and Pausable.
   function distribute() external whenNotPaused onlyRole(OPERATOR_ROLE) nonReentrant {
-    if (lastSnapshot.blockNumber != block.number - 1 || !lastSnapshot.isValid) revert IRewardRedistributorEventsAndErrors.InvalidSnapshot();
+    if (lastSnapshot.blockNumber != block.number - 1 || !lastSnapshot.isValid) {
+      revert IRewardRedistributorEventsAndErrors.InvalidSnapshot();
+    }
 
     uint256 balanceBefore = IERC20(USDSC_ADDRESS).balanceOf(address(this));
     uint256 minted = IMYieldToOne(USDSC_ADDRESS).claimYield();
