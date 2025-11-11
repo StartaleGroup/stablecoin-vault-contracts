@@ -1210,4 +1210,78 @@ contract RewardRedistributorTest is Test {
 
     assertTrue(foundEvent, 'Distributed event should be emitted for S_base == 0 case');
   }
+
+  function testRevert_DistributeWhenYieldRecipientChanged() public {
+    // Setup: Add pending yield
+    ext.addPending(10_000e6);
+
+    // Change yield recipient to different address
+    address newRecipient = makeAddr('newRecipient');
+    ext.setYieldRecipient(newRecipient);
+
+    // Attempt to distribute should revert
+    vm.prank(operator);
+    vm.expectRevert(
+        abi.encodeWithSelector(
+            IRewardRedistributorEventsAndErrors.YieldRecipientChanged.selector,
+            newRecipient
+        )
+    );
+    rr.distribute();
+  }
+
+  function testRevert_DistributeWhenYieldRecipientZero() public {
+    // Setup: Add pending yield
+    ext.addPending(10_000e6);
+
+    // Change yield recipient to zero address
+    ext.setYieldRecipient(address(0));
+
+    // Attempt to distribute should revert
+    vm.prank(operator);
+    vm.expectRevert(
+        abi.encodeWithSelector(
+            IRewardRedistributorEventsAndErrors.YieldRecipientChanged.selector,
+            address(0)
+        )
+    );
+    rr.distribute();
+  }
+
+  function testRevert_DistributeWhenYieldRecipientChangedMidOperation() public {
+    // First distribution succeeds
+    ext.addPending(5_000e6);
+    vm.prank(operator);
+    rr.distribute();
+
+    // Change yield recipient between distributions
+    address newRecipient = makeAddr('newRecipient');
+    ext.setYieldRecipient(newRecipient);
+
+    // Second distribution should fail
+    ext.addPending(5_000e6);
+    vm.prank(operator);
+    vm.expectRevert(
+        abi.encodeWithSelector(
+            IRewardRedistributorEventsAndErrors.YieldRecipientChanged.selector,
+            newRecipient
+        )
+    );
+    rr.distribute();
+  }
+
+  function test_DistributeSucceedsWhenYieldRecipientCorrect() public {
+    // Verify that yield recipient is correctly set
+    assertEq(ext.yieldRecipient(), address(rr), 'Yield recipient should be RewardRedistributor');
+
+    // Setup: Add pending yield
+    ext.addPending(10_000e6);
+
+    // Distribution should succeed when yield recipient is correct
+    vm.prank(operator);
+    rr.distribute();
+
+    // Verify distribution happened (treasury received something)
+    assertGt(usdsc.balanceOf(startale), 0, 'Treasury should receive yield');
+  }
 }

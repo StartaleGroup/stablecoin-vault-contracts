@@ -67,6 +67,10 @@ interface IRewardRedistributorEventsAndErrors {
   /// @param maxFeeBps Maximum allowed fee in basis points
   error FeeTooHigh(uint16 feeBps, uint16 maxFeeBps);
 
+  /// @notice Thrown when the yield recipient has changed
+  /// @param currentRecipient The current yield recipient address
+  error YieldRecipientChanged(address currentRecipient);
+
   /// @notice Thrown when attempting to distribute with zero yield
   error ZeroYield();
 }

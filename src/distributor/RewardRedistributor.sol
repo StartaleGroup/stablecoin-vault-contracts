@@ -174,6 +174,13 @@ contract RewardRedistributor is
       }
     }
     super.revokeRole(role, account);
+  /// @notice Validates that this contract is still the yield recipient on the extension.
+  /// @dev    Reverts if the yield recipient has changed.
+  function validateYieldRecipient() internal view {
+    address currentRecipient = IMYieldToOne(USDSC_ADDRESS).yieldRecipient();
+    if(currentRecipient != address(this)) {
+      revert IRewardRedistributorEventsAndErrors.YieldRecipientChanged(currentRecipient);
+    }
   }
 
   /// @notice Claims pending USDSC yield from the extension and distributes it per policy.
@@ -194,6 +201,7 @@ contract RewardRedistributor is
   ///            - sUSDSC: transfer `toOn` (PPS rises)
   /// @custom:security nonReentrant and Pausable.
   function distribute() external whenNotPaused onlyRole(OPERATOR_ROLE) nonReentrant {
+    validateYieldRecipient();
     uint256 balanceBefore = IERC20(USDSC_ADDRESS).balanceOf(address(this));
     uint256 minted = IMYieldToOne(USDSC_ADDRESS).claimYield();
     uint256 gross = balanceBefore + minted;
