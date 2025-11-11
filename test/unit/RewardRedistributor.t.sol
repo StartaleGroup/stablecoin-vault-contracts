@@ -301,7 +301,7 @@ contract RewardRedistributorTest is Test {
 
   function testRoleRevocation_CanRevokeAdminWhenMultipleExist() public {
     bytes32 adminRole = rr.DEFAULT_ADMIN_ROLE();
-    address secondAdmin = address(0xADDD2222222222222222222222222222222222);
+    address secondAdmin = makeAddr('admin2');
 
     // Grant admin role to a second admin
     vm.prank(admin);
@@ -326,8 +326,8 @@ contract RewardRedistributorTest is Test {
 
   function testRoleRevocation_CannotRevokeLastOfMultipleAdmins() public {
     bytes32 adminRole = rr.DEFAULT_ADMIN_ROLE();
-    address secondAdmin = address(0xADDD2222222222222222222222222222222222);
-    address thirdAdmin = address(0xADDD3333333333333333333333333333333333);
+    address secondAdmin = makeAddr('admin2');
+    address thirdAdmin = makeAddr('admin3');
 
     // Grant admin role to second and third admins
     vm.prank(admin);
@@ -1266,10 +1266,7 @@ contract RewardRedistributorTest is Test {
     // Attempt to distribute should revert
     vm.prank(operator);
     vm.expectRevert(
-        abi.encodeWithSelector(
-            IRewardRedistributorEventsAndErrors.YieldRecipientChanged.selector,
-            newRecipient
-        )
+      abi.encodeWithSelector(IRewardRedistributorEventsAndErrors.YieldRecipientChanged.selector, newRecipient)
     );
     rr.distribute();
   }
@@ -1284,17 +1281,14 @@ contract RewardRedistributorTest is Test {
     // Attempt to distribute should revert
     vm.prank(operator);
     vm.expectRevert(
-        abi.encodeWithSelector(
-            IRewardRedistributorEventsAndErrors.YieldRecipientChanged.selector,
-            address(0)
-        )
+      abi.encodeWithSelector(IRewardRedistributorEventsAndErrors.YieldRecipientChanged.selector, address(0))
     );
     rr.distribute();
   }
 
   function testRevert_DistributeWhenYieldRecipientChangedMidOperation() public {
     // First distribution succeeds
-    ext.addPending(5_000e6);
+    ext.addPending(5000e6);
     vm.prank(operator);
     rr.distribute();
 
@@ -1303,13 +1297,10 @@ contract RewardRedistributorTest is Test {
     ext.setYieldRecipient(newRecipient);
 
     // Second distribution should fail
-    ext.addPending(5_000e6);
+    ext.addPending(5000e6);
     vm.prank(operator);
     vm.expectRevert(
-        abi.encodeWithSelector(
-            IRewardRedistributorEventsAndErrors.YieldRecipientChanged.selector,
-            newRecipient
-        )
+      abi.encodeWithSelector(IRewardRedistributorEventsAndErrors.YieldRecipientChanged.selector, newRecipient)
     );
     rr.distribute();
   }

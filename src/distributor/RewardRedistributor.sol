@@ -165,10 +165,7 @@ contract RewardRedistributor is
   ///      Only an account with the admin role can revoke roles from others.
   /// @param role The role to revoke.
   /// @param account The account from which to revoke the role.
-  function revokeRole(
-    bytes32 role,
-    address account
-  ) public virtual override(AccessControl, IAccessControl) onlyRole(getRoleAdmin(role)) {
+  function revokeRole(bytes32 role, address account) public virtual override(AccessControl, IAccessControl) {
     if (role == DEFAULT_ADMIN_ROLE) {
       // Only check last admin protection if the account actually has the role
       if (hasRole(DEFAULT_ADMIN_ROLE, account) && getRoleMemberCount(DEFAULT_ADMIN_ROLE) <= 1) {
