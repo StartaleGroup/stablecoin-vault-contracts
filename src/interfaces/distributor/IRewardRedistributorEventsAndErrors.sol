@@ -55,9 +55,6 @@ interface IRewardRedistributorEventsAndErrors {
   // Errors
   // ========================================
 
-  /// @notice Thrown when an attempt is made to renounce the DEFAULT_ADMIN_ROLE.
-  error AdminRoleRenunciationDisabled();
-
   /// @notice Thrown when an attempt is made to revoke the last DEFAULT_ADMIN_ROLE.
   error CannotRemoveLastAdmin();
 
