@@ -169,4 +169,7 @@ interface IEarnVaultEventsAndErrors {
 
   /// @notice Thrown when boost reward distribution fails due to insufficient claim reserve
   error InsufficientBoostClaimReserve();
+
+  /// @notice Thrown when attempting to add more boost tokens than the maximum allowed
+  error TooManyBoostTokens();
 }

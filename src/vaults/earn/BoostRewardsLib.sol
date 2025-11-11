@@ -14,6 +14,7 @@ library BoostRewardsLib {
 
   // -------- Constants --------
   uint256 public constant RAY = 1e27;
+  uint256 public constant MAX_BOOST_TOKENS = 10;
 
   /// @notice Distribute boost rewards to vault users
   /// @dev Uses same logic as USDSC yield - distributed proportionally based on principal
@@ -75,6 +76,10 @@ library BoostRewardsLib {
 
     // Track active boost tokens (only add if not already tracked)
     if (boostTokenIndex[token] == 0) {
+      // Check maximum limit before adding new token
+      if (activeBoostTokens.length >= MAX_BOOST_TOKENS) {
+        revert IEarnVaultEventsAndErrors.TooManyBoostTokens();
+      }
       // Token not tracked yet, add to array and set index
       activeBoostTokens.push(token);
       boostTokenIndex[token] = activeBoostTokens.length; // 1-based index
