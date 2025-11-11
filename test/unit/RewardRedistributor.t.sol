@@ -258,6 +258,28 @@ contract RewardRedistributorTest is Test {
     rr.distribute();
   }
 
+  /// @notice Test that renouncing a role you don't have doesn't trigger last admin protection
+  /// @dev This verifies the fix for the edge case where someone without admin role
+  ///      tries to renounce DEFAULT_ADMIN_ROLE when there's only 1 admin
+  function testRoleRenunciation_NonAdminCanAttemptRenounceWithoutError() public {
+    bytes32 adminRole = rr.DEFAULT_ADMIN_ROLE();
+
+    // Verify operator does NOT have DEFAULT_ADMIN_ROLE
+    assertFalse(rr.hasRole(adminRole, operator), 'Operator should NOT have DEFAULT_ADMIN_ROLE');
+    assertEq(rr.getRoleMemberCount(adminRole), 1, 'Should have exactly 1 admin');
+
+    // Operator tries to renounce DEFAULT_ADMIN_ROLE they don't have
+    // This should NOT revert with CannotRemoveLastAdmin since they don't have the role
+    // It should just silently do nothing (OpenZeppelin's _revokeRole returns false)
+    vm.prank(operator);
+    rr.renounceRole(adminRole, operator);
+
+    // Verify nothing changed
+    assertFalse(rr.hasRole(adminRole, operator), 'Operator should still NOT have the role');
+    assertTrue(rr.hasRole(adminRole, admin), 'Admin should still have the role');
+    assertEq(rr.getRoleMemberCount(adminRole), 1, 'Should still have exactly 1 admin');
+  }
+
   // ========== ROLE REVOCATION TESTS ==========
 
   function testRoleRevocation_CannotRevokeSingleAdmin() public {
@@ -373,6 +395,28 @@ contract RewardRedistributorTest is Test {
     // Verify roles are unchanged
     assertTrue(rr.hasRole(operatorRole, operator), 'Operator should still have OPERATOR_ROLE');
     assertTrue(rr.hasRole(adminRole, admin), 'Admin should still have DEFAULT_ADMIN_ROLE');
+  }
+
+  /// @notice Test that revoking a role from someone who doesn't have it doesn't trigger last admin protection
+  /// @dev This verifies the fix for the edge case where admin tries to revoke DEFAULT_ADMIN_ROLE
+  ///      from someone who doesn't have it, when there's only 1 admin
+  function testRoleRevocation_NonAdminRevocationDoesNotTriggerProtection() public {
+    bytes32 adminRole = rr.DEFAULT_ADMIN_ROLE();
+
+    // Verify operator does NOT have DEFAULT_ADMIN_ROLE
+    assertFalse(rr.hasRole(adminRole, operator), 'Operator should NOT have DEFAULT_ADMIN_ROLE');
+    assertEq(rr.getRoleMemberCount(adminRole), 1, 'Should have exactly 1 admin');
+
+    // Admin tries to revoke DEFAULT_ADMIN_ROLE from operator (who doesn't have it)
+    // This should NOT revert with CannotRemoveLastAdmin since operator doesn't have the role
+    // It should just silently do nothing (OpenZeppelin's _revokeRole returns false)
+    vm.prank(admin);
+    rr.revokeRole(adminRole, operator);
+
+    // Verify nothing changed
+    assertFalse(rr.hasRole(adminRole, operator), 'Operator should still NOT have the role');
+    assertTrue(rr.hasRole(adminRole, admin), 'Admin should still have the role');
+    assertEq(rr.getRoleMemberCount(adminRole), 1, 'Should still have exactly 1 admin');
   }
 
   function testRoleRevocation_MultiAdminScenario() public {

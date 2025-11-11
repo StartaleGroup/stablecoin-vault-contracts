@@ -150,7 +150,8 @@ contract RewardRedistributor is
     address callerConfirmation
   ) public virtual override(AccessControl, IAccessControl) {
     if (role == DEFAULT_ADMIN_ROLE) {
-      if (getRoleMemberCount(DEFAULT_ADMIN_ROLE) <= 1) {
+      // Only check last admin protection if the caller actually has the role
+      if (hasRole(DEFAULT_ADMIN_ROLE, callerConfirmation) && getRoleMemberCount(DEFAULT_ADMIN_ROLE) <= 1) {
         revert IRewardRedistributorEventsAndErrors.CannotRemoveLastAdmin();
       }
     }
@@ -169,7 +170,8 @@ contract RewardRedistributor is
     address account
   ) public virtual override(AccessControl, IAccessControl) onlyRole(getRoleAdmin(role)) {
     if (role == DEFAULT_ADMIN_ROLE) {
-      if (getRoleMemberCount(DEFAULT_ADMIN_ROLE) <= 1) {
+      // Only check last admin protection if the account actually has the role
+      if (hasRole(DEFAULT_ADMIN_ROLE, account) && getRoleMemberCount(DEFAULT_ADMIN_ROLE) <= 1) {
         revert IRewardRedistributorEventsAndErrors.CannotRemoveLastAdmin();
       }
     }
