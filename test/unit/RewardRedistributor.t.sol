@@ -3,9 +3,12 @@ pragma solidity ^0.8.30;
 
 import '../../src/distributor/RewardRedistributor.sol';
 import '../../src/interfaces/distributor/IRewardRedistributorEventsAndErrors.sol';
+import '../mocks/MockERC20.sol';
 import '../mocks/MockERC4626Vault.sol';
 import '../mocks/MockEarnVault.sol';
 import '../mocks/MockExtension.sol';
+import '../mocks/MockInvalidContract.sol';
+import '../mocks/MockOnlyYieldToOne.sol';
 import '../mocks/MockUSDSC.sol';
 import 'forge-std/Test.sol';
 
@@ -1318,5 +1321,57 @@ contract RewardRedistributorTest is Test {
 
     // Verify distribution happened (treasury received something)
     assertGt(usdsc.balanceOf(startale), 0, 'Treasury should receive yield');
+  }
+
+  // ========== USDSC VALIDATION TESTS ==========
+
+  function testConstructor_RevertsOnZeroUSDSCAddress() public {
+    vm.expectRevert(abi.encodeWithSelector(IRewardRedistributorEventsAndErrors.ZeroAddress.selector, 'USDSC_ADDRESS'));
+    new RewardRedistributor(
+      address(0), // zero USDSC address
+      startale,
+      IEarnVault(address(earnV)),
+      IERC4626(address(sVault)),
+      admin,
+      operator
+    );
+  }
+
+  function testConstructor_RevertsOnEOA_NotContract() public {
+    // Use an EOA (Externally Owned Account) - not a contract
+    address eoa = makeAddr('eoa');
+
+    vm.expectRevert(abi.encodeWithSelector(IRewardRedistributorEventsAndErrors.InvalidUSDSC.selector, 'NOT_CONTRACT'));
+    new RewardRedistributor(eoa, startale, IEarnVault(address(earnV)), IERC4626(address(sVault)), admin, operator);
+  }
+
+  function testConstructor_RevertsOnInvalidUSDSC_MissingIERC20() public {
+    // Deploy a contract that implements IMYieldToOne but not IERC20
+    MockOnlyYieldToOne invalidUsdsc = new MockOnlyYieldToOne();
+
+    vm.expectRevert(abi.encodeWithSelector(IRewardRedistributorEventsAndErrors.InvalidUSDSC.selector, 'IERC20'));
+    new RewardRedistributor(
+      address(invalidUsdsc), startale, IEarnVault(address(earnV)), IERC4626(address(sVault)), admin, operator
+    );
+  }
+
+  function testConstructor_RevertsOnInvalidUSDSC_MissingIMYieldToOne() public {
+    // Deploy a contract that implements IERC20 but not IMYieldToOne
+    MockERC20 invalidUsdsc = new MockERC20('Invalid', 'INV', 18);
+
+    vm.expectRevert(abi.encodeWithSelector(IRewardRedistributorEventsAndErrors.InvalidUSDSC.selector, 'IMYieldToOne'));
+    new RewardRedistributor(
+      address(invalidUsdsc), startale, IEarnVault(address(earnV)), IERC4626(address(sVault)), admin, operator
+    );
+  }
+
+  function testConstructor_RevertsOnInvalidUSDSC_ImplementsNeither() public {
+    // Deploy a contract that implements neither interface
+    MockInvalidContract invalidUsdsc = new MockInvalidContract();
+
+    vm.expectRevert(abi.encodeWithSelector(IRewardRedistributorEventsAndErrors.InvalidUSDSC.selector, 'IERC20'));
+    new RewardRedistributor(
+      address(invalidUsdsc), startale, IEarnVault(address(earnV)), IERC4626(address(sVault)), admin, operator
+    );
   }
 }

@@ -81,9 +81,8 @@ contract RewardRedistributor is
     address admin,
     address keeper
   ) {
-    if (usdscAddress == address(0)) {
-      revert IRewardRedistributorEventsAndErrors.ZeroAddress('USDSC_ADDRESS');
-    }
+    _validateUsdscContract(usdscAddress);
+
     if (treasuryAddr == address(0)) revert IRewardRedistributorEventsAndErrors.ZeroAddress('treasury');
     if (address(earnV) == address(0)) revert IRewardRedistributorEventsAndErrors.ZeroAddress('earnVault');
     if (address(sVault) == address(0)) revert IRewardRedistributorEventsAndErrors.ZeroAddress('susdscVault');
@@ -97,6 +96,27 @@ contract RewardRedistributor is
 
     _grantRole(DEFAULT_ADMIN_ROLE, admin);
     _grantRole(OPERATOR_ROLE, keeper);
+  }
+
+  function _validateUsdscContract(address usdscAddress) internal view {
+    if (usdscAddress == address(0)) {
+      revert IRewardRedistributorEventsAndErrors.ZeroAddress('USDSC_ADDRESS');
+    }
+
+    // Check that the address is a contract
+    if (usdscAddress.code.length == 0) revert InvalidUSDSC('NOT_CONTRACT');
+
+    // Validate that the contract implements IERC20
+    try IERC20(usdscAddress).totalSupply() returns (uint256) {}
+    catch {
+      revert IRewardRedistributorEventsAndErrors.InvalidUSDSC('IERC20');
+    }
+
+    // Validate that the contract implements IMYieldToOne
+    try IMYieldToOne(usdscAddress).yield() returns (uint256) {}
+    catch {
+      revert IRewardRedistributorEventsAndErrors.InvalidUSDSC('IMYieldToOne');
+    }
   }
 
   /// @notice Updates Treasury address.
