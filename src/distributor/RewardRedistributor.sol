@@ -174,11 +174,13 @@ contract RewardRedistributor is
       }
     }
     super.revokeRole(role, account);
+  }
+
   /// @notice Validates that this contract is still the yield recipient on the extension.
   /// @dev    Reverts if the yield recipient has changed.
   function validateYieldRecipient() internal view {
     address currentRecipient = IMYieldToOne(USDSC_ADDRESS).yieldRecipient();
-    if(currentRecipient != address(this)) {
+    if (currentRecipient != address(this)) {
       revert IRewardRedistributorEventsAndErrors.YieldRecipientChanged(currentRecipient);
     }
   }
