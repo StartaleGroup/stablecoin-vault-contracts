@@ -26,6 +26,9 @@ docs/
 # NPM modules
 node_modules
 
+# Deployments
+deployments/
+
 # Soljson
 soljson-latest.js
 
