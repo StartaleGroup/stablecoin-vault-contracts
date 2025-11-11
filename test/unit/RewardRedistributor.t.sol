@@ -199,19 +199,43 @@ contract RewardRedistributorTest is Test {
     rr.distribute(); // Should still succeed
   }
 
-  function testRoleRenunciation_AdminRoleCannotBeRenounced() public {
+  function testRoleRenunciation_LastAdminCannotBeRenounced() public {
     bytes32 adminRole = rr.DEFAULT_ADMIN_ROLE();
 
-    // Verify admin has DEFAULT_ADMIN_ROLE
+    // Verify admin has DEFAULT_ADMIN_ROLE and is the only admin
     assertTrue(rr.hasRole(adminRole, admin), 'Admin should have DEFAULT_ADMIN_ROLE');
+    assertEq(rr.getRoleMemberCount(adminRole), 1, 'Should have exactly 1 admin');
 
-    // Admin attempts to renounce DEFAULT_ADMIN_ROLE - should revert
+    // Last admin attempts to renounce DEFAULT_ADMIN_ROLE - should revert
     vm.prank(admin);
-    vm.expectRevert(IRewardRedistributorEventsAndErrors.AdminRoleRenunciationDisabled.selector);
+    vm.expectRevert(IRewardRedistributorEventsAndErrors.CannotRemoveLastAdmin.selector);
     rr.renounceRole(adminRole, admin);
 
     // Verify admin still has the role after failed renunciation
     assertTrue(rr.hasRole(adminRole, admin), 'Admin should still have DEFAULT_ADMIN_ROLE');
+  }
+
+  function testRoleRenunciation_AdminCanRenounceWhenMultipleAdminsExist() public {
+    bytes32 adminRole = rr.DEFAULT_ADMIN_ROLE();
+
+    // Grant admin role to a second address
+    address secondAdmin = makeAddr('secondAdmin');
+    vm.prank(admin);
+    rr.grantRole(adminRole, secondAdmin);
+
+    // Verify both admins exist
+    assertEq(rr.getRoleMemberCount(adminRole), 2, 'Should have 2 admins');
+    assertTrue(rr.hasRole(adminRole, admin), 'First admin should have role');
+    assertTrue(rr.hasRole(adminRole, secondAdmin), 'Second admin should have role');
+
+    // First admin can now renounce since there's another admin
+    vm.prank(admin);
+    rr.renounceRole(adminRole, admin);
+
+    // Verify first admin renounced successfully
+    assertFalse(rr.hasRole(adminRole, admin), 'First admin should no longer have role');
+    assertTrue(rr.hasRole(adminRole, secondAdmin), 'Second admin should still have role');
+    assertEq(rr.getRoleMemberCount(adminRole), 1, 'Should have 1 admin remaining');
   }
 
   function testRoleRenunciation_OperatorRoleCanBeRenounced() public {

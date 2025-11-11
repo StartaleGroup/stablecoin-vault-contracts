@@ -139,9 +139,10 @@ contract RewardRedistributor is
     p ? _pause() : _unpause();
   }
 
-  /// @notice Prevents renunciation of DEFAULT_ADMIN_ROLE only.
-  /// @dev Overrides AccessControl's renounceRole to protect against accidental loss of admin privileges.
-  ///      Other roles (e.g., OPERATOR_ROLE) can still be renounced.
+  /// @notice Prevents renunciation of the last DEFAULT_ADMIN_ROLE only.
+  /// @dev Overrides AccessControl's renounceRole to ensure at least one admin remains.
+  ///      Other roles (e.g., OPERATOR_ROLE) can still be renounced freely.
+  ///      Admin can renounce their role only if there are other admins remaining.
   /// @param role The role to renounce.
   /// @param callerConfirmation The address of the caller confirming renunciation.
   function renounceRole(
@@ -149,7 +150,9 @@ contract RewardRedistributor is
     address callerConfirmation
   ) public virtual override(AccessControl, IAccessControl) {
     if (role == DEFAULT_ADMIN_ROLE) {
-      revert IRewardRedistributorEventsAndErrors.AdminRoleRenunciationDisabled();
+      if (getRoleMemberCount(DEFAULT_ADMIN_ROLE) <= 1) {
+        revert IRewardRedistributorEventsAndErrors.CannotRemoveLastAdmin();
+      }
     }
     super.renounceRole(role, callerConfirmation);
   }
