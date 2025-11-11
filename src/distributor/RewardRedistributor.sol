@@ -157,8 +157,11 @@ contract RewardRedistributor is
     super.renounceRole(role, callerConfirmation);
   }
 
-  /// @notice Prevents revocation of the last DEFAULT_ADMIN_ROLE only
+  /// @notice Prevents revocation of the last DEFAULT_ADMIN_ROLE only.
   /// @dev Overrides AccessControl's revokeRole to ensure at least one admin remains.
+  ///      Non-admin roles (e.g., OPERATOR_ROLE) can be revoked freely.
+  ///      Multiple admins can be revoked as long as at least one admin remains.
+  ///      Only an account with the admin role can revoke roles from others.
   /// @param role The role to revoke.
   /// @param account The account from which to revoke the role.
   function revokeRole(
