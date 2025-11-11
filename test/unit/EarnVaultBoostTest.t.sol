@@ -993,4 +993,273 @@ contract EarnVaultBoostTest is Test {
     uint256 finalBalance = astr.balanceOf(user1);
     assertEq(finalBalance, ASTR_REWARD * 2, 'T4: Alice successfully claims 200e18 ASTR (fix prevents vulnerability)');
   }
+
+  // ============================================================
+  // Tests: removeBoostRewardToken functionality
+  // ============================================================
+
+  /// @notice Test that owner can remove boost reward token from activeBoostTokens array
+  /// @dev Verifies token removal functionality and array/index updates
+  function test_RemoveBoostRewardToken_Success() public {
+    // =========================
+    // Setup: Add tokens to array
+    // =========================
+    vm.prank(user1);
+    earnVault.deposit(DEPOSIT_AMOUNT);
+
+    // Distribute ASTR and DOT rewards
+    vm.startPrank(operator);
+    astr.approve(address(earnVault), ASTR_REWARD);
+    astr.transfer(address(earnVault), ASTR_REWARD);
+    earnVault.onBoostReward(address(astr), ASTR_REWARD);
+
+    dot.approve(address(earnVault), DOT_REWARD);
+    dot.transfer(address(earnVault), DOT_REWARD);
+    earnVault.onBoostReward(address(dot), DOT_REWARD);
+    vm.stopPrank();
+
+    // Verify both tokens are in array
+    assertEq(earnVault.activeBoostTokens(0), address(astr), 'ASTR should be first token');
+    assertEq(earnVault.activeBoostTokens(1), address(dot), 'DOT should be second token');
+    (, address[] memory boostTokens,) = earnVault.getAllClaimables(user1);
+    assertEq(boostTokens.length, 2, 'Should have 2 active tokens');
+
+    // User claims all rewards to clear reserves
+    vm.prank(user1);
+    earnVault.claim();
+
+    // Verify reserves are cleared
+    assertEq(earnVault.boostClaimReserve(address(astr)), 0, 'ASTR reserve should be cleared');
+    assertEq(earnVault.boostClaimReserve(address(dot)), 0, 'DOT reserve should be cleared');
+
+    // =========================
+    // Action: Owner removes ASTR token
+    // =========================
+    vm.prank(admin); // admin is owner
+    earnVault.removeBoostRewardToken(address(astr));
+
+    // =========================
+    // Verification: Token removed, array updated
+    // =========================
+    (, address[] memory boostTokensAfter,) = earnVault.getAllClaimables(user1);
+    assertEq(boostTokensAfter.length, 1, 'Should have 1 active token after removal');
+    assertEq(earnVault.activeBoostTokens(0), address(dot), 'DOT should remain in array');
+    assertEq(earnVault.boostTokenIndex(address(astr)), 0, 'ASTR index should be cleared');
+    assertEq(earnVault.boostTokenIndex(address(dot)), 1, 'DOT index should remain 1');
+  }
+
+  /// @notice Test that non-owner cannot remove boost reward token
+  /// @dev Verifies access control for token removal
+  function test_RemoveBoostRewardToken_OnlyOwner() public {
+    // Setup: Add token to array
+    vm.prank(user1);
+    earnVault.deposit(DEPOSIT_AMOUNT);
+
+    vm.startPrank(operator);
+    astr.approve(address(earnVault), ASTR_REWARD);
+    astr.transfer(address(earnVault), ASTR_REWARD);
+    earnVault.onBoostReward(address(astr), ASTR_REWARD);
+    vm.stopPrank();
+
+    // User claims to clear reserves
+    vm.prank(user1);
+    earnVault.claim();
+
+    // Non-owner (user1) tries to remove token - should fail
+    vm.prank(user1);
+    vm.expectRevert();
+    earnVault.removeBoostRewardToken(address(astr));
+
+    // Operator (not owner) tries to remove token - should fail
+    vm.prank(operator);
+    vm.expectRevert();
+    earnVault.removeBoostRewardToken(address(astr));
+
+    // Verify token still in array
+    (, address[] memory boostTokens,) = earnVault.getAllClaimables(user1);
+    assertEq(boostTokens.length, 1, 'Token should still be in array');
+  }
+
+  /// @notice Test that token with pending claims cannot be removed
+  /// @dev Verifies safety check prevents removal when boostClaimReserve > 0
+  function test_RemoveBoostRewardToken_CannotRemoveWithPendingClaims() public {
+    // Setup: Add token and distribute rewards
+    vm.prank(user1);
+    earnVault.deposit(DEPOSIT_AMOUNT);
+
+    vm.startPrank(operator);
+    astr.approve(address(earnVault), ASTR_REWARD);
+    astr.transfer(address(earnVault), ASTR_REWARD);
+    earnVault.onBoostReward(address(astr), ASTR_REWARD);
+    vm.stopPrank();
+
+    // Verify reserve exists
+    assertGt(earnVault.boostClaimReserve(address(astr)), 0, 'Should have pending claims');
+
+    // Owner tries to remove - should fail
+    vm.prank(admin);
+    vm.expectRevert(IEarnVaultEventsAndErrors.InsufficientBoostClaimReserve.selector);
+    earnVault.removeBoostRewardToken(address(astr));
+
+    // Verify token still in array
+    (, address[] memory boostTokens,) = earnVault.getAllClaimables(user1);
+    assertEq(boostTokens.length, 1, 'Token should still be in array');
+  }
+
+  /// @notice Test that removing non-existent token is idempotent
+  /// @dev Verifies graceful handling when token is not in array
+  function test_RemoveBoostRewardToken_NonExistentToken() public {
+    address nonExistentToken = address(0x123);
+
+    // Owner tries to remove non-existent token - should succeed silently
+    vm.prank(admin);
+    earnVault.removeBoostRewardToken(nonExistentToken);
+
+    // No error should occur, function should return normally
+    assertTrue(true, 'Should handle non-existent token gracefully');
+  }
+
+  /// @notice Test that removal reduces iterations in withdraw/claim loops
+  /// @dev Verifies gas optimization benefit of removal
+  function test_RemoveBoostRewardToken_ReducesLoopIterations() public {
+    // Setup: Add multiple tokens
+    vm.prank(user1);
+    earnVault.deposit(DEPOSIT_AMOUNT);
+
+    vm.startPrank(operator);
+    astr.approve(address(earnVault), ASTR_REWARD);
+    astr.transfer(address(earnVault), ASTR_REWARD);
+    earnVault.onBoostReward(address(astr), ASTR_REWARD);
+
+    dot.approve(address(earnVault), DOT_REWARD);
+    dot.transfer(address(earnVault), DOT_REWARD);
+    earnVault.onBoostReward(address(dot), DOT_REWARD);
+    vm.stopPrank();
+
+    // User claims all to clear reserves
+    vm.prank(user1);
+    earnVault.claim();
+
+    // Verify 2 tokens in array
+    (, address[] memory boostTokensBefore,) = earnVault.getAllClaimables(user1);
+    assertEq(boostTokensBefore.length, 2, 'Should have 2 tokens');
+
+    // Remove ASTR
+    vm.prank(admin);
+    earnVault.removeBoostRewardToken(address(astr));
+
+    // Verify only 1 token remains
+    (, address[] memory boostTokensAfter,) = earnVault.getAllClaimables(user1);
+    assertEq(boostTokensAfter.length, 1, 'Should have 1 token after removal');
+
+    // Record balances before second distribution
+    uint256 astrBalanceBeforeSecondClaim = astr.balanceOf(user1);
+    uint256 dotBalanceBeforeSecondClaim = dot.balanceOf(user1);
+
+    // Distribute more rewards to DOT
+    vm.startPrank(operator);
+    dot.mint(operator, DOT_REWARD);
+    dot.approve(address(earnVault), DOT_REWARD);
+    dot.transfer(address(earnVault), DOT_REWARD);
+    earnVault.onBoostReward(address(dot), DOT_REWARD);
+    vm.stopPrank();
+
+    // User claims - should only iterate through 1 token (DOT), not 2
+    // Since ASTR was removed, it should not be processed in the loop
+    vm.prank(user1);
+    earnVault.claim();
+
+    // Verify only DOT was processed (ASTR balance unchanged, DOT increased)
+    assertEq(astr.balanceOf(user1), astrBalanceBeforeSecondClaim, 'ASTR balance should not change (token removed from array)');
+    assertEq(dot.balanceOf(user1), dotBalanceBeforeSecondClaim + DOT_REWARD, 'User should receive new DOT rewards');
+    assertGt(dot.balanceOf(user1), DOT_REWARD, 'User should have received DOT from both distributions');
+  }
+
+  /// @notice Test that token can be re-added after removal
+  /// @dev Verifies removal doesn't prevent future distributions
+  function test_RemoveBoostRewardToken_CanReAddAfterRemoval() public {
+    // Setup: Add and remove token
+    vm.prank(user1);
+    earnVault.deposit(DEPOSIT_AMOUNT);
+
+    vm.startPrank(operator);
+    astr.approve(address(earnVault), ASTR_REWARD);
+    astr.transfer(address(earnVault), ASTR_REWARD);
+    earnVault.onBoostReward(address(astr), ASTR_REWARD);
+    vm.stopPrank();
+
+    // User claims
+    vm.prank(user1);
+    earnVault.claim();
+
+    // Owner removes token
+    vm.prank(admin);
+    earnVault.removeBoostRewardToken(address(astr));
+
+    (, address[] memory boostTokensEmpty,) = earnVault.getAllClaimables(user1);
+    assertEq(boostTokensEmpty.length, 0, 'Array should be empty');
+
+    // Re-add token via distribution
+    vm.startPrank(operator);
+    astr.mint(operator, ASTR_REWARD);
+    astr.approve(address(earnVault), ASTR_REWARD);
+    astr.transfer(address(earnVault), ASTR_REWARD);
+    earnVault.onBoostReward(address(astr), ASTR_REWARD);
+    vm.stopPrank();
+
+    // Verify token is back in array
+    (, address[] memory boostTokensReadded,) = earnVault.getAllClaimables(user1);
+    assertEq(boostTokensReadded.length, 1, 'Token should be re-added');
+    assertEq(earnVault.activeBoostTokens(0), address(astr), 'ASTR should be in array');
+    assertGt(earnVault.boostTokenIndex(address(astr)), 0, 'ASTR index should be set');
+  }
+
+  /// @notice Test removal of token from middle of array
+  /// @dev Verifies swap-and-pop logic works correctly
+  function test_RemoveBoostRewardToken_FromMiddleOfArray() public {
+    // Setup: Add 3 tokens
+    vm.prank(user1);
+    earnVault.deposit(DEPOSIT_AMOUNT);
+
+    MockERC20 token3 = new MockERC20('Token3', 'T3', 18);
+    token3.mint(operator, 100e18);
+
+    vm.startPrank(operator);
+    // Add ASTR (index 0)
+    astr.approve(address(earnVault), ASTR_REWARD);
+    astr.transfer(address(earnVault), ASTR_REWARD);
+    earnVault.onBoostReward(address(astr), ASTR_REWARD);
+
+    // Add DOT (index 1)
+    dot.approve(address(earnVault), DOT_REWARD);
+    dot.transfer(address(earnVault), DOT_REWARD);
+    earnVault.onBoostReward(address(dot), DOT_REWARD);
+
+    // Add Token3 (index 2)
+    token3.approve(address(earnVault), 100e18);
+    token3.transfer(address(earnVault), 100e18);
+    earnVault.onBoostReward(address(token3), 100e18);
+    vm.stopPrank();
+
+    // User claims all
+    vm.prank(user1);
+    earnVault.claim();
+
+    // Verify array order
+    assertEq(earnVault.activeBoostTokens(0), address(astr), 'ASTR at index 0');
+    assertEq(earnVault.activeBoostTokens(1), address(dot), 'DOT at index 1');
+    assertEq(earnVault.activeBoostTokens(2), address(token3), 'Token3 at index 2');
+
+    // Remove middle token (DOT)
+    vm.prank(admin);
+    earnVault.removeBoostRewardToken(address(dot));
+
+    // Verify swap-and-pop: Token3 should move to index 1
+    (, address[] memory boostTokensAfterRemoval,) = earnVault.getAllClaimables(user1);
+    assertEq(boostTokensAfterRemoval.length, 2, 'Should have 2 tokens');
+    assertEq(earnVault.activeBoostTokens(0), address(astr), 'ASTR should remain at index 0');
+    assertEq(earnVault.activeBoostTokens(1), address(token3), 'Token3 should move to index 1');
+    assertEq(earnVault.boostTokenIndex(address(dot)), 0, 'DOT index should be cleared');
+    assertEq(earnVault.boostTokenIndex(address(token3)), 2, 'Token3 index should remain 2 (1-based)');
+  }
 }

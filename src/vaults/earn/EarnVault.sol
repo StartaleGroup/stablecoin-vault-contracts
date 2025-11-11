@@ -483,6 +483,33 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     emit NativeSwept(to, amount);
   }
 
+  /// @notice Remove a boost reward token from activeBoostTokens array (only owner)
+  /// @dev Can be used to clean up tokens that are frozen or no longer used
+  /// @dev Only allows removal if boostClaimReserve[token] == 0 (no pending claims)
+  /// @param token Token address to remove from activeBoostTokens array
+  function removeBoostRewardToken(address token) external onlyOwner nonReentrant {
+    if (token == address(0)) revert IEarnVaultEventsAndErrors.CanNotBeZeroAddress();
+    
+    uint256 index = boostTokenIndex[token];
+    if (index == 0) return;
+    
+    if (boostClaimReserve[token] > 0) {
+      revert IEarnVaultEventsAndErrors.InsufficientBoostClaimReserve();
+    }
+    
+    uint256 lastIndex = activeBoostTokens.length - 1;
+    if (index != lastIndex + 1) {
+      address lastToken = activeBoostTokens[lastIndex];
+      activeBoostTokens[index - 1] = lastToken;
+      boostTokenIndex[lastToken] = index;
+    }
+    
+    activeBoostTokens.pop();
+    delete boostTokenIndex[token];
+    
+    emit IEarnVaultEventsAndErrors.BoostRewardTokenRemoved(token);
+  }
+
   // ================================================================
   // EXTERNAL FUNCTIONS (VIEW)
   // ================================================================
