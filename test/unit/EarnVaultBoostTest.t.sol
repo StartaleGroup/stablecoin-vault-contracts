@@ -735,4 +735,262 @@ contract EarnVaultBoostTest is Test {
     assertEq(receivedSecondClaim, ASTR_REWARD, 'User should only receive new rewards, not old ones again');
     assertEq(astrBalanceAfterSecondClaim, ASTR_REWARD * 2, 'Total received should be exactly 2x ASTR_REWARD (first + second)');
   }
+
+  /// @notice Test that deposit() properly settles boost rewards, preventing retroactive accrual
+  /// @dev This test verifies the fix for the vulnerability where users could deposit new funds
+  ///      without updating their boost index, allowing them to retroactively earn boost rewards
+  ///      on their new principal from an old index position.
+  /// @dev This test demonstrates the CORRECT behavior after the fix is implemented.
+  function test_DepositSettlesBoostRewards_PreventsRetroactiveAccrual() public {
+    // ============================================================
+    // TIME T0 - Initial State
+    // ============================================================
+    // Alice deposits 1000 USDSC (first deposit)
+    vm.prank(user1);
+    earnVault.deposit(DEPOSIT_AMOUNT); // 1000 USDSC
+
+    // State at T0:
+    // principal[Alice] = 1000 USDSC
+    // userBoostIndex[Alice][TokenA] = 0 (default for new user, uninitialized)
+    // boostGlobalIndex[TokenA] = 0 (no distributions yet)
+    // totalPrincipal = 1000 USDSC
+    assertEq(earnVault.principal(user1), DEPOSIT_AMOUNT, 'T0: Alice should have 1000 USDSC principal');
+    assertEq(earnVault.userBoostIndex(user1, address(astr)), 0, 'T0: User boost index should be 0 (uninitialized)');
+    assertEq(earnVault.boostGlobalIndex(address(astr)), 0, 'T0: Global boost index should be 0 (no distributions)');
+    assertEq(earnVault.totalPrincipal(), DEPOSIT_AMOUNT, 'T0: Total principal should be 1000 USDSC');
+
+    // ============================================================
+    // TIME T1 - First Boost Distribution
+    // ============================================================
+    // Keeper distributes 1000 TokenA boost rewards to vault
+    vm.startPrank(operator);
+    astr.approve(address(earnVault), ASTR_REWARD);
+    bool success = astr.transfer(address(earnVault), ASTR_REWARD);
+    require(success, 'Transfer failed');
+    earnVault.onBoostReward(address(astr), ASTR_REWARD); // 1000 ASTR
+    vm.stopPrank();
+
+    // Calculation: boostGlobalIndex[TokenA] = 0 + (100e18 * 1e27) / 1000e6 = 1e38
+    // Formula: (ASTR_REWARD * RAY) / totalPrincipal = (100e18 * 1e27) / 1000e6 = 1e38
+    uint256 boostIndexAfterFirstDistribution = earnVault.boostGlobalIndex(address(astr));
+    assertEq(boostIndexAfterFirstDistribution, 1e38, 'T1: boostGlobalIndex should be 1e38 after first distribution');
+
+    // Alice's pending rewards calculation:
+    // owed = principal * (boostGlobalIndex - userBoostIndex) / RAY
+    // owed = 1000e6 * (1e38 - 0) / 1e27 = 100e18 ASTR ✅
+    uint256 claimableAfterFirstDistribution = earnVault.getClaimableBoostReward(user1, address(astr));
+    assertEq(claimableAfterFirstDistribution, ASTR_REWARD, 'T1: Alice should have 100e18 ASTR pending (100% as only user)');
+
+    // State at T1:
+    // principal[Alice] = 1000 USDSC (unchanged)
+    // userBoostIndex[Alice][TokenA] = 0 (STILL 0 - not updated yet, will be updated on next settlement)
+    // boostGlobalIndex[TokenA] = 1e38 (updated by distribution)
+    // userBoostAccrued[Alice][TokenA] = 0 (not settled yet, calculated on-demand)
+    uint256 userBoostIndexAtT1 = earnVault.userBoostIndex(user1, address(astr));
+    assertEq(userBoostIndexAtT1, 0, 'T1: User boost index should still be 0 (not settled yet)');
+
+    // ============================================================
+    // TIME T2 - Alice Deposits More WITH Settlement (FIXED BEHAVIOR)
+    // ============================================================
+    // Alice calls deposit(1000) to double her position
+    // ✅ FIX: deposit() now calls _settleBoost() BEFORE updating principal
+    vm.prank(user1);
+    earnVault.deposit(DEPOSIT_AMOUNT); // Additional 1000 USDSC
+
+    // State at T2 (AFTER FIX):
+    // 1. _settle() is called → USDSC yield settled ✅
+    // 2. _settleBoost() is called → Boost rewards settled ✅
+    //    - userBoostIndex[Alice][TokenA] = 0 → 1e38 (UPDATED!)
+    //    - userBoostAccrued[Alice][TokenA] = 0 + 100e18 = 100e18 ASTR (accrued)
+    // 3. principal[Alice] = 1000 → 2000 USDSC (updated AFTER settlement)
+    // 4. totalPrincipal = 1000 → 2000 USDSC
+
+    // Verify principal increased
+    assertEq(earnVault.principal(user1), DEPOSIT_AMOUNT * 2, 'T2: Alice should have 2000 USDSC principal (doubled)');
+    assertEq(earnVault.totalPrincipal(), DEPOSIT_AMOUNT * 2, 'T2: Total principal should be 2000 USDSC');
+
+    // ✅ CRITICAL: User's boost index should be updated to current global index during deposit
+    // This prevents retroactive accrual on the new principal
+    uint256 userBoostIndexAfterDeposit = earnVault.userBoostIndex(user1, address(astr));
+    assertEq(
+      userBoostIndexAfterDeposit,
+      boostIndexAfterFirstDistribution,
+      'T2: User boost index should be updated to 1e38 during deposit (prevents retroactive accrual)'
+    );
+
+    // Alice should still have the same claimable amount (100e18 ASTR from first distribution)
+    // The deposit should NOT retroactively accrue rewards on the new 1000 USDSC principal
+    // because userBoostIndex was updated BEFORE principal was increased
+    uint256 claimableAfterDeposit = earnVault.getClaimableBoostReward(user1, address(astr));
+    assertEq(claimableAfterDeposit, ASTR_REWARD, 'T2: Alice should still have 100e18 ASTR claimable (no retroactive accrual on new principal)');
+
+    // ============================================================
+    // TIME T3 - Second Boost Distribution
+    // ============================================================
+    // Keeper distributes another 1000 TokenA
+    // Total distributed: 2000 TokenA in the system
+    astr.mint(operator, ASTR_REWARD); // Mint more tokens for second distribution
+    vm.startPrank(operator);
+    astr.approve(address(earnVault), ASTR_REWARD);
+    success = astr.transfer(address(earnVault), ASTR_REWARD);
+    require(success, 'Transfer failed');
+    earnVault.onBoostReward(address(astr), ASTR_REWARD); // Another 1000 ASTR
+    vm.stopPrank();
+
+    // Calculation: boostGlobalIndex[TokenA] = 1e38 + (100e18 * 1e27) / 2000e6 = 1e38 + 0.5e38 = 1.5e38
+    // Formula: previousIndex + (ASTR_REWARD * RAY) / totalPrincipal = 1e38 + (100e18 * 1e27) / 2000e6 = 1.5e38
+    uint256 boostIndexAfterSecondDistribution = earnVault.boostGlobalIndex(address(astr));
+    assertEq(boostIndexAfterSecondDistribution, 1.5e38, 'T3: boostGlobalIndex should be 1.5e38 after second distribution');
+
+    // ============================================================
+    // TIME T4 - Alice Tries to Claim (CORRECT CALCULATION)
+    // ============================================================
+    // When Alice calls claim() or withdraw(), _settleBoost() is called again
+    // ✅ CORRECT Calculation (with fix):
+    // Alice's userBoostIndex = 1e38 (updated during deposit at T2)
+    // Alice's principal = 2000 USDSC
+    // 
+    // Rewards from T1→T3 (second distribution):
+    // owed = 2000e6 * (1.5e38 - 1e38) / 1e27 = 2000e6 * 0.5e38 / 1e27 = 100e18 ASTR
+    //
+    // Total rewards:
+    // - First distribution (T0→T1): 100e18 ASTR (already accrued at T2)
+    // - Second distribution (T2→T3): 100e18 ASTR (on full 2000 USDSC from updated index)
+    // Total: 200e18 ASTR ✅
+
+    uint256 claimableAfterSecondDistribution = earnVault.getClaimableBoostReward(user1, address(astr));
+    assertEq(claimableAfterSecondDistribution, ASTR_REWARD * 2, 'T4: Alice should have 200e18 ASTR claimable (100e18 from T1 + 100e18 from T3)');
+
+    // Verify the user's boost index is still at the first distribution level (1e38)
+    // This is because getClaimableBoostReward() doesn't update the index, only _settleBoost() does
+    uint256 userBoostIndexBeforeClaim = earnVault.userBoostIndex(user1, address(astr));
+    assertEq(userBoostIndexBeforeClaim, boostIndexAfterFirstDistribution, 'T4: User boost index should still be 1e38 (not updated by getClaimableBoostReward)');
+
+    // ============================================================
+    // TIME T5 - Alice Claims Rewards
+    // ============================================================
+    uint256 astrBalanceBeforeClaim = astr.balanceOf(user1);
+    vm.prank(user1);
+    earnVault.claim(); // This calls _settleBoost() then claimBoostReward()
+
+    uint256 astrBalanceAfterClaim = astr.balanceOf(user1);
+    uint256 received = astrBalanceAfterClaim - astrBalanceBeforeClaim;
+
+    // ✅ Alice should receive exactly 200e18 ASTR:
+    // - First distribution: 100e18 ASTR (on initial 1000 USDSC from T0→T1)
+    // - Second distribution: 100e18 ASTR (on total 2000 USDSC from T2→T3, using updated index)
+    assertEq(received, ASTR_REWARD * 2, 'T5: Alice should receive exactly 200e18 ASTR (correct calculation)');
+
+    // Verify user's boost index is now updated to the latest global index (1.5e38)
+    uint256 userBoostIndexAfterClaim = earnVault.userBoostIndex(user1, address(astr));
+    assertEq(
+      userBoostIndexAfterClaim,
+      boostIndexAfterSecondDistribution,
+      'T5: User boost index should be updated to 1.5e38 after claim'
+    );
+
+    // Verify no more rewards can be claimed
+    uint256 claimableAfterClaim = earnVault.getClaimableBoostReward(user1, address(astr));
+    assertEq(claimableAfterClaim, 0, 'T5: Alice should have no more claimable rewards');
+  }
+
+  /// @notice Test demonstrating what would happen WITHOUT the fix (negative test)
+  /// @dev This test shows the vulnerability: if deposit() didn't call _settleBoost(),
+  ///      users could retroactively earn boost rewards on new principal from old index.
+  /// @dev This test verifies that the fix prevents this attack by checking that
+  ///      userBoostIndex is updated during deposit, preventing retroactive accrual.
+  function test_DepositSettlesBoostRewards_NegativeTest_WithoutFixWouldFail() public {
+    // ============================================================
+    // TIME T0 - Initial State
+    // ============================================================
+    vm.prank(user1);
+    earnVault.deposit(DEPOSIT_AMOUNT); // 1000 USDSC
+
+    // State: principal[Alice] = 1000, userBoostIndex = 0, boostGlobalIndex = 0
+    assertEq(earnVault.principal(user1), DEPOSIT_AMOUNT, 'T0: Initial deposit');
+    assertEq(earnVault.userBoostIndex(user1, address(astr)), 0, 'T0: User index uninitialized');
+
+    // ============================================================
+    // TIME T1 - First Boost Distribution
+    // ============================================================
+    vm.startPrank(operator);
+    astr.approve(address(earnVault), ASTR_REWARD);
+    bool success = astr.transfer(address(earnVault), ASTR_REWARD);
+    require(success, 'Transfer failed');
+    earnVault.onBoostReward(address(astr), ASTR_REWARD);
+    vm.stopPrank();
+
+    // boostGlobalIndex = (100e18 * 1e27) / 1000e6 = 1e38
+    // Alice's pending: 1000e6 * (1e38 - 0) / 1e27 = 100e18 ASTR ✅
+    uint256 boostIndexT1 = earnVault.boostGlobalIndex(address(astr));
+    assertEq(boostIndexT1, 1e38, 'T1: Global index = 1e38');
+    
+    uint256 claimableT1 = earnVault.getClaimableBoostReward(user1, address(astr));
+    assertEq(claimableT1, ASTR_REWARD, 'T1: Alice has 100e18 ASTR pending');
+
+    // ============================================================
+    // TIME T2 - Alice Deposits More (WITH FIX - CORRECT BEHAVIOR)
+    // ============================================================
+    // ✅ WITH FIX: deposit() calls _settleBoost() BEFORE updating principal
+    vm.prank(user1);
+    earnVault.deposit(DEPOSIT_AMOUNT); // Additional 1000 USDSC
+
+    // ✅ CORRECT: userBoostIndex updated to 1e38 BEFORE principal is increased
+    uint256 userIndexAfterDeposit = earnVault.userBoostIndex(user1, address(astr));
+    assertEq(userIndexAfterDeposit, 1e38, 'T2: User index updated to 1e38 (fix working)');
+    assertEq(earnVault.principal(user1), DEPOSIT_AMOUNT * 2, 'T2: Principal = 2000 USDSC');
+
+    // ============================================================
+    // TIME T3 - Second Boost Distribution
+    // ============================================================
+    astr.mint(operator, ASTR_REWARD);
+    vm.startPrank(operator);
+    astr.approve(address(earnVault), ASTR_REWARD);
+    success = astr.transfer(address(earnVault), ASTR_REWARD);
+    require(success, 'Transfer failed');
+    earnVault.onBoostReward(address(astr), ASTR_REWARD);
+    vm.stopPrank();
+
+    // boostGlobalIndex = 1e38 + (100e18 * 1e27) / 2000e6 = 1.5e38
+    uint256 boostIndexT3 = earnVault.boostGlobalIndex(address(astr));
+    assertEq(boostIndexT3, 1.5e38, 'T3: Global index = 1.5e38');
+
+    // ============================================================
+    // TIME T4 - Verify Correct Calculation (NOT Vulnerable)
+    // ============================================================
+    // ✅ CORRECT Calculation (with fix):
+    // userBoostIndex = 1e38 (updated at T2)
+    // principal = 2000 USDSC
+    // Rewards from T2→T3: 2000e6 * (1.5e38 - 1e38) / 1e27 = 100e18 ASTR
+    // Total: 100e18 (from T1) + 100e18 (from T3) = 200e18 ASTR ✅
+
+    uint256 claimableT4 = earnVault.getClaimableBoostReward(user1, address(astr));
+    assertEq(claimableT4, ASTR_REWARD * 2, 'T4: Alice has 200e18 ASTR (correct, not vulnerable)');
+
+    // ============================================================
+    // NEGATIVE TEST: What would happen WITHOUT the fix
+    // ============================================================
+    // ❌ WITHOUT FIX (hypothetical):
+    // If deposit() didn't call _settleBoost():
+    // - userBoostIndex would still be 0 at T2
+    // - principal would be 2000 USDSC
+    // - At T4, calculation would be:
+    //   owed = 2000e6 * (1.5e38 - 0) / 1e27 = 300e18 ASTR ❌
+    // - Alice would try to claim 300e18 ASTR when only 200e18 exist
+    // - Transaction would REVERT with InsufficientBoostClaimReserve()
+    //
+    // ✅ WITH FIX (actual behavior):
+    // - userBoostIndex = 1e38 at T2 (updated during deposit)
+    // - At T4, calculation is:
+    //   owed = 2000e6 * (1.5e38 - 1e38) / 1e27 = 100e18 ASTR ✅
+    // - Total: 100e18 (from T1) + 100e18 (from T3) = 200e18 ASTR ✅
+    // - Alice can successfully claim 200e18 ASTR
+
+    // Verify the fix prevents the vulnerability
+    vm.prank(user1);
+    earnVault.claim(); // Should succeed, not revert
+
+    uint256 finalBalance = astr.balanceOf(user1);
+    assertEq(finalBalance, ASTR_REWARD * 2, 'T4: Alice successfully claims 200e18 ASTR (fix prevents vulnerability)');
+  }
 }
