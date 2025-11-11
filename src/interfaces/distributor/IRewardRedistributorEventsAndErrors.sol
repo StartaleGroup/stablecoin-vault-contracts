@@ -71,6 +71,10 @@ interface IRewardRedistributorEventsAndErrors {
   /// @param currentRecipient The current yield recipient address
   error YieldRecipientChanged(address currentRecipient);
 
+  /// @notice Thrown when USDSC address does not implement required interfaces
+  /// @param missingInterface Description of which interface is missing (e.g., "IERC20" or "IMYieldToOne")
+  error InvalidUSDSC(string missingInterface);
+
   /// @notice Thrown when attempting to distribute with zero yield
   error ZeroYield();
 }
