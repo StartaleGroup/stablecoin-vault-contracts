@@ -4,6 +4,10 @@ pragma solidity ^0.8.30;
 import {IRewardRedistributorEventsAndErrors} from '../interfaces/distributor/IRewardRedistributorEventsAndErrors.sol';
 import {IEarnVault} from '../interfaces/vaults/earn/IEarnVault.sol';
 import {AccessControl} from 'lib/openzeppelin-contracts/contracts/access/AccessControl.sol';
+import {IAccessControl} from 'lib/openzeppelin-contracts/contracts/access/IAccessControl.sol';
+import {
+  AccessControlEnumerable
+} from 'lib/openzeppelin-contracts/contracts/access/extensions/AccessControlEnumerable.sol';
 import {IERC4626} from 'lib/openzeppelin-contracts/contracts/interfaces/IERC4626.sol';
 import {IERC20} from 'lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol';
 import {SafeERC20} from 'lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol';
@@ -26,7 +30,12 @@ import {IMYieldToOne} from 'm-extensions/projects/yieldToOne/IMYieldToOne.sol';
 ///         - USDSC_ADDRESS: Single USDSC token address that implements both IERC20 and IMYieldToOne interfaces
 ///         - Cast to IERC20 for transfers and supply queries (totalSupply, safeTransfer)
 ///         - Cast to IMYieldToOne for yield operations (claimYield, yield)
-contract RewardRedistributor is IRewardRedistributorEventsAndErrors, AccessControl, Pausable, ReentrancyGuardTransient {
+contract RewardRedistributor is
+  IRewardRedistributorEventsAndErrors,
+  AccessControlEnumerable,
+  Pausable,
+  ReentrancyGuardTransient
+{
   using SafeERC20 for IERC20;
 
   /// Keeper allowed to call distribute()
@@ -135,11 +144,30 @@ contract RewardRedistributor is IRewardRedistributorEventsAndErrors, AccessContr
   ///      Other roles (e.g., OPERATOR_ROLE) can still be renounced.
   /// @param role The role to renounce.
   /// @param callerConfirmation The address of the caller confirming renunciation.
-  function renounceRole(bytes32 role, address callerConfirmation) public virtual override {
+  function renounceRole(
+    bytes32 role,
+    address callerConfirmation
+  ) public virtual override(AccessControl, IAccessControl) {
     if (role == DEFAULT_ADMIN_ROLE) {
       revert IRewardRedistributorEventsAndErrors.AdminRoleRenunciationDisabled();
     }
     super.renounceRole(role, callerConfirmation);
+  }
+
+  /// @notice Prevents revocation of the last DEFAULT_ADMIN_ROLE only
+  /// @dev Overrides AccessControl's revokeRole to ensure at least one admin remains.
+  /// @param role The role to revoke.
+  /// @param account The account from which to revoke the role.
+  function revokeRole(
+    bytes32 role,
+    address account
+  ) public virtual override(AccessControl, IAccessControl) onlyRole(getRoleAdmin(role)) {
+    if (role == DEFAULT_ADMIN_ROLE) {
+      if (getRoleMemberCount(DEFAULT_ADMIN_ROLE) <= 1) {
+        revert IRewardRedistributorEventsAndErrors.CannotRemoveLastAdmin();
+      }
+    }
+    super.revokeRole(role, account);
   }
 
   /// @notice Claims pending USDSC yield from the extension and distributes it per policy.

@@ -201,7 +201,7 @@ contract RewardRedistributorTest is Test {
 
   function testRoleRenunciation_AdminRoleCannotBeRenounced() public {
     bytes32 adminRole = rr.DEFAULT_ADMIN_ROLE();
-    
+
     // Verify admin has DEFAULT_ADMIN_ROLE
     assertTrue(rr.hasRole(adminRole, admin), 'Admin should have DEFAULT_ADMIN_ROLE');
 
@@ -232,6 +232,195 @@ contract RewardRedistributorTest is Test {
     vm.prank(operator);
     vm.expectRevert(); // Should fail - no longer has OPERATOR_ROLE
     rr.distribute();
+  }
+
+  // ========== ROLE REVOCATION TESTS ==========
+
+  function testRoleRevocation_CannotRevokeSingleAdmin() public {
+    bytes32 adminRole = rr.DEFAULT_ADMIN_ROLE();
+
+    // Verify there's only one admin
+    assertEq(rr.getRoleMemberCount(adminRole), 1, 'Should have exactly one admin');
+    assertTrue(rr.hasRole(adminRole, admin), 'Admin should have DEFAULT_ADMIN_ROLE');
+
+    // Admin attempts to revoke their own DEFAULT_ADMIN_ROLE - should revert
+    vm.prank(admin);
+    vm.expectRevert(IRewardRedistributorEventsAndErrors.CannotRemoveLastAdmin.selector);
+    rr.revokeRole(adminRole, admin);
+
+    // Verify admin still has the role after failed revocation
+    assertTrue(rr.hasRole(adminRole, admin), 'Admin should still have DEFAULT_ADMIN_ROLE');
+    assertEq(rr.getRoleMemberCount(adminRole), 1, 'Should still have exactly one admin');
+  }
+
+  function testRoleRevocation_CanRevokeAdminWhenMultipleExist() public {
+    bytes32 adminRole = rr.DEFAULT_ADMIN_ROLE();
+    address secondAdmin = address(0xADDD2222222222222222222222222222222222);
+
+    // Grant admin role to a second admin
+    vm.prank(admin);
+    rr.grantRole(adminRole, secondAdmin);
+
+    // Verify there are now two admins
+    assertEq(rr.getRoleMemberCount(adminRole), 2, 'Should have exactly two admins');
+    assertTrue(rr.hasRole(adminRole, admin), 'First admin should have DEFAULT_ADMIN_ROLE');
+    assertTrue(rr.hasRole(adminRole, secondAdmin), 'Second admin should have DEFAULT_ADMIN_ROLE');
+
+    // First admin can now revoke second admin - should succeed
+    vm.prank(admin);
+    rr.revokeRole(adminRole, secondAdmin);
+
+    // Verify second admin no longer has the role
+    assertFalse(rr.hasRole(adminRole, secondAdmin), 'Second admin should not have DEFAULT_ADMIN_ROLE');
+    assertEq(rr.getRoleMemberCount(adminRole), 1, 'Should have exactly one admin remaining');
+
+    // First admin still has the role
+    assertTrue(rr.hasRole(adminRole, admin), 'First admin should still have DEFAULT_ADMIN_ROLE');
+  }
+
+  function testRoleRevocation_CannotRevokeLastOfMultipleAdmins() public {
+    bytes32 adminRole = rr.DEFAULT_ADMIN_ROLE();
+    address secondAdmin = address(0xADDD2222222222222222222222222222222222);
+    address thirdAdmin = address(0xADDD3333333333333333333333333333333333);
+
+    // Grant admin role to second and third admins
+    vm.prank(admin);
+    rr.grantRole(adminRole, secondAdmin);
+    vm.prank(admin);
+    rr.grantRole(adminRole, thirdAdmin);
+
+    // Verify there are now three admins
+    assertEq(rr.getRoleMemberCount(adminRole), 3, 'Should have exactly three admins');
+
+    // Revoke two admins successfully
+    vm.prank(admin);
+    rr.revokeRole(adminRole, secondAdmin);
+    assertEq(rr.getRoleMemberCount(adminRole), 2, 'Should have two admins after first revocation');
+
+    vm.prank(admin);
+    rr.revokeRole(adminRole, thirdAdmin);
+    assertEq(rr.getRoleMemberCount(adminRole), 1, 'Should have one admin after second revocation');
+
+    // Attempt to revoke the last admin - should revert
+    vm.prank(admin);
+    vm.expectRevert(IRewardRedistributorEventsAndErrors.CannotRemoveLastAdmin.selector);
+    rr.revokeRole(adminRole, admin);
+
+    // Verify last admin still has the role
+    assertTrue(rr.hasRole(adminRole, admin), 'Last admin should still have DEFAULT_ADMIN_ROLE');
+    assertEq(rr.getRoleMemberCount(adminRole), 1, 'Should still have exactly one admin');
+  }
+
+  function testRoleRevocation_OperatorRoleCanBeRevoked() public {
+    bytes32 operatorRole = rr.OPERATOR_ROLE();
+
+    // Verify operator has OPERATOR_ROLE
+    assertTrue(rr.hasRole(operatorRole, operator), 'Operator should have OPERATOR_ROLE');
+
+    // Admin revokes operator's role - should succeed (no protection for non-admin roles)
+    vm.prank(admin);
+    rr.revokeRole(operatorRole, operator);
+
+    // Verify operator no longer has the role
+    assertFalse(rr.hasRole(operatorRole, operator), 'Operator should not have OPERATOR_ROLE after revocation');
+
+    // Verify operator can no longer call distribute()
+    ext.addPending(1000e6);
+    vm.prank(operator);
+    vm.expectRevert(); // Should fail - no longer has OPERATOR_ROLE
+    rr.distribute();
+  }
+
+  function testRoleRevocation_NonAdminCannotRevokeRoles() public {
+    bytes32 adminRole = rr.DEFAULT_ADMIN_ROLE();
+    bytes32 operatorRole = rr.OPERATOR_ROLE();
+    address nonAdmin = address(0xBaD0000000000000000000000000000000000001);
+
+    // Non-admin attempts to revoke operator role - should revert
+    vm.prank(nonAdmin);
+    vm.expectRevert(); // AccessControl: account is missing role
+    rr.revokeRole(operatorRole, operator);
+
+    // Non-admin attempts to revoke admin role - should revert
+    vm.prank(nonAdmin);
+    vm.expectRevert(); // AccessControl: account is missing role
+    rr.revokeRole(adminRole, admin);
+
+    // Verify roles are unchanged
+    assertTrue(rr.hasRole(operatorRole, operator), 'Operator should still have OPERATOR_ROLE');
+    assertTrue(rr.hasRole(adminRole, admin), 'Admin should still have DEFAULT_ADMIN_ROLE');
+  }
+
+  function testRoleRevocation_MultiAdminScenario() public {
+    bytes32 adminRole = rr.DEFAULT_ADMIN_ROLE();
+    address admin2 = address(0xADD22222222222222222222222222222222222);
+    address admin3 = address(0xADD33333333333333333333333333333333333);
+
+    // Setup: Create three admins
+    vm.prank(admin);
+    rr.grantRole(adminRole, admin2);
+    vm.prank(admin);
+    rr.grantRole(adminRole, admin3);
+
+    assertEq(rr.getRoleMemberCount(adminRole), 3, 'Should have three admins');
+
+    // Admin2 can revoke Admin3
+    vm.prank(admin2);
+    rr.revokeRole(adminRole, admin3);
+    assertEq(rr.getRoleMemberCount(adminRole), 2, 'Should have two admins');
+    assertFalse(rr.hasRole(adminRole, admin3), 'Admin3 should not have role');
+
+    // Admin can revoke Admin2
+    vm.prank(admin);
+    rr.revokeRole(adminRole, admin2);
+    assertEq(rr.getRoleMemberCount(adminRole), 1, 'Should have one admin');
+    assertFalse(rr.hasRole(adminRole, admin2), 'Admin2 should not have role');
+
+    // Cannot revoke the last admin
+    vm.prank(admin);
+    vm.expectRevert(IRewardRedistributorEventsAndErrors.CannotRemoveLastAdmin.selector);
+    rr.revokeRole(adminRole, admin);
+
+    assertTrue(rr.hasRole(adminRole, admin), 'Last admin should still have role');
+  }
+
+  function testRoleRevocation_LastAdminProtectionWithRegrant() public {
+    bytes32 adminRole = rr.DEFAULT_ADMIN_ROLE();
+    address admin2 = address(0xADD22222222222222222222222222222222222);
+
+    // Start with one admin
+    assertEq(rr.getRoleMemberCount(adminRole), 1, 'Should start with one admin');
+
+    // Grant to admin2
+    vm.prank(admin);
+    rr.grantRole(adminRole, admin2);
+    assertEq(rr.getRoleMemberCount(adminRole), 2, 'Should have two admins');
+
+    // Revoke admin
+    vm.prank(admin2);
+    rr.revokeRole(adminRole, admin);
+    assertEq(rr.getRoleMemberCount(adminRole), 1, 'Should have one admin');
+    assertFalse(rr.hasRole(adminRole, admin), 'Original admin should not have role');
+    assertTrue(rr.hasRole(adminRole, admin2), 'Admin2 should have role');
+
+    // Admin2 cannot revoke themselves (last admin)
+    vm.prank(admin2);
+    vm.expectRevert(IRewardRedistributorEventsAndErrors.CannotRemoveLastAdmin.selector);
+    rr.revokeRole(adminRole, admin2);
+
+    assertTrue(rr.hasRole(adminRole, admin2), 'Admin2 should still have role');
+    assertEq(rr.getRoleMemberCount(adminRole), 1, 'Should still have one admin');
+
+    // Admin2 can grant back to original admin
+    vm.prank(admin2);
+    rr.grantRole(adminRole, admin);
+    assertEq(rr.getRoleMemberCount(adminRole), 2, 'Should have two admins again');
+
+    // Now admin2 can be revoked
+    vm.prank(admin);
+    rr.revokeRole(adminRole, admin2);
+    assertEq(rr.getRoleMemberCount(adminRole), 1, 'Should have one admin');
+    assertTrue(rr.hasRole(adminRole, admin), 'Original admin should have role back');
   }
 
   // ========== CARRY AND PREVIEW TESTS ==========
