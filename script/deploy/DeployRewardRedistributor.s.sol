@@ -3,28 +3,13 @@ pragma solidity ^0.8.30;
 
 import {RewardRedistributor} from '../../src/distributor/RewardRedistributor.sol';
 import {IEarnVault} from '../../src/interfaces/vaults/earn/IEarnVault.sol';
-import {DeployHelpers} from './DeployHelpers.sol';
+import {DeployHelpers} from 'common/script/deploy/DeployHelpers.sol';
 import {IERC4626} from '@openzeppelin/contracts/interfaces/IERC4626.sol';
 import {Script, console} from 'forge-std/Script.sol';
 
 /**
  * @title DeployRewardRedistributor
  * @notice Deployment script for RewardRedistributor contract using CREATE3 for deterministic addresses
- * @dev Usage:
- *      forge script script/deploy/DeployRewardDistributor.s.sol:DeployRewardRedistributor \
- *          --rpc-url $SEP_RPC \
- *          --broadcast \
- *          --verify \
- *          -vvvv
- *
- * Environment variables required:
- * - USDSC_ADDRESS: Address of the USDSC token
- * - TREASURY_ADDRESS: Address of the treasury recipient
- * - EARN_VAULT_ADDRESS: Address of the EarnVault contract
- * - SUSDSC_VAULT_ADDRESS: Address of the sUSDSC (ERC4626) vault contract
- * - ADMIN_ADDRESS: Address of the admin (receives DEFAULT_ADMIN_ROLE)
- * - KEEPER_ADDRESS: Address of the keeper (receives OPERATOR_ROLE, can call distribute())
- * - DEPLOYER_PRIVATE_KEY: Private key for deployment
  */
 contract DeployRewardRedistributor is Script, DeployHelpers {
   // Environment variables
@@ -39,7 +24,7 @@ contract DeployRewardRedistributor is Script, DeployHelpers {
   RewardRedistributor public rewardRedistributor;
 
   // Salt for CREATE3 deployment
-  string public constant CONTRACT_NAME = 'RewardRedistributor';
+  string public constant CONTRACT_NAME = 'RewardRedistributor_112025';
 
   function setUp() public {
     // Load environment variables
@@ -65,7 +50,6 @@ contract DeployRewardRedistributor is Script, DeployHelpers {
     console.log('sUSDSC Vault Address:', susdscVaultAddress);
     console.log('Admin Address:', adminAddress);
     console.log('Keeper Address:', keeperAddress);
-    console.log('Deployer:', msg.sender);
   }
 
   function run() public {
@@ -79,10 +63,6 @@ contract DeployRewardRedistributor is Script, DeployHelpers {
     bytes32 salt = _computeSalt(deployer, CONTRACT_NAME);
     console.log('Computed salt:');
     console.logBytes32(salt);
-
-    // Predict the deployment address
-    address predictedAddress = _getCreate3Address(deployer, salt);
-    console.log('Predicted RewardRedistributor address:', predictedAddress);
 
     vm.startBroadcast(deployerPrivateKey);
 
@@ -105,10 +85,6 @@ contract DeployRewardRedistributor is Script, DeployHelpers {
     console.log('\n=== Deployment Successful ===');
     console.log('RewardRedistributor deployed at:', address(rewardRedistributor));
 
-    // Verify deployment matches prediction
-    require(deployedAddress == predictedAddress, 'Deployment address mismatch');
-    console.log('Address verification: PASSED');
-
     // Verify constructor parameters
     _verifyDeployment();
 
@@ -119,7 +95,7 @@ contract DeployRewardRedistributor is Script, DeployHelpers {
   }
 
   function _verifyDeployment() internal view {
-    console.log('\n=== Verifying Deployment ===');
+    console.log('\n=== Post-Deployment Verification ===');
 
     // Verify immutable USDSC address
     require(rewardRedistributor.USDSC_ADDRESS() == usdscAddress, 'USDSC_ADDRESS mismatch');
@@ -176,35 +152,5 @@ contract DeployRewardRedistributor is Script, DeployHelpers {
     console.log('3. Set RewardRedistributor as yieldRedistributor in EarnVault');
     console.log('4. Keeper already has OPERATOR_ROLE - ready to call distribute()');
     console.log('5. Test distribute() function with small amounts');
-  }
-
-  /**
-   * @notice Simulates a deployment without broadcasting
-   * @dev Useful for testing and gas estimation
-   */
-  function simulateDeploy() public {
-    setUp();
-
-    address deployer = msg.sender;
-    bytes32 salt = _computeSalt(deployer, CONTRACT_NAME);
-    address predictedAddress = _getCreate3Address(deployer, salt);
-
-    console.log('\n=== Deployment Simulation ===');
-    console.log('Predicted address:', predictedAddress);
-    console.log('Salt:');
-    console.logBytes32(salt);
-
-    // Estimate deployment by creating contract locally
-    RewardRedistributor simulated = new RewardRedistributor(
-      usdscAddress,
-      treasuryAddress,
-      IEarnVault(earnVaultAddress),
-      IERC4626(susdscVaultAddress),
-      adminAddress,
-      keeperAddress
-    );
-
-    console.log('Simulated deployment at:', address(simulated));
-    console.log('Simulation successful!');
   }
 }

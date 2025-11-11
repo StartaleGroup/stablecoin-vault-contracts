@@ -18,26 +18,18 @@ Deploy SUSDSCVault - Independent, no dependencies.
 
 ### Simulate
 ```bash
-forge script script/deploy/DeploySUSDSCUpgradable.sol:DeploySUSDSCVaultUpgradeable --sig "simulateDeploy()" --rpc-url $SEPOLIA_RPC_URL -vv
-```
-
-### Simulate2
-```bash
 forge script script/deploy/DeploySUSDSCUpgradable.sol:DeploySUSDSCVaultUpgradeable --rpc-url $SEPOLIA_RPC_URL -vv
 ```
 
 ### Deploy
 ```bash
 forge script script/deploy/DeploySUSDSCUpgradable.sol:DeploySUSDSCVaultUpgradeable \
-  --rpc-url $SEP_RPC \
+  --rpc-url $SEPOLIA_RPC_URL \
   --private-key $DEPLOYER_PRIVATE_KEY \
   --broadcast \
   --verify \
   -vvvv
 ```
-
-**Save proxy address as** `SUSDSC_VAULT_ADDRESS` in `.env`
-
 ---
 
 ## 2. DeployEarnVaultUpgradable.s.sol (Deploy SECOND)
@@ -46,26 +38,18 @@ Deploy EarnVault - Independent (use placeholder for YIELD_REDISTRIBUTOR).
 
 ### Simulate
 ```bash
-forge script script/deploy/DeployEarnVaultUpgradable.s.sol:DeployEarnVaultUpgradeable --sig "simulateDeploy()" --rpc-url $SEP_RPC -vv
-```
-
-### Simulate2
-```bash
-forge script script/deploy/DeployEarnVaultUpgradable.s.sol:DeployEarnVaultUpgradeable --rpc-url $SEP_RPC -vv
+forge script script/deploy/DeployEarnVaultUpgradable.s.sol:DeployEarnVaultUpgradeable --rpc-url $SEPOLIA_RPC_URL -vv
 ```
 
 ### Deploy
 ```bash
 forge script script/deploy/DeployEarnVaultUpgradable.s.sol:DeployEarnVaultUpgradeable \
-  --rpc-url $SEP_RPC \
+  --rpc-url $SEPOLIA_RPC_URL \
   --private-key $DEPLOYER_PRIVATE_KEY \
   --broadcast \
   --verify \
   -vvvv
 ```
-
-**Save proxy address as** `EARN_VAULT_ADDRESS` in `.env`
-
 ---
 
 ## 3. DeployRewardRedistributor.s.sol (Deploy LAST)
@@ -74,18 +58,13 @@ Deploy RewardRedistributor - Requires EARN_VAULT_ADDRESS and SUSDSC_VAULT_ADDRES
 
 ### Simulate
 ```bash
-forge script script/deploy/DeployRewardRedistributor.s.sol:DeployRewardRedistributor --sig "simulateDeploy()" --rpc-url $SEP_RPC -vv
-```
-
-### Simulate2
-```bash
-forge script script/deploy/DeployRewardRedistributor.s.sol:DeployRewardRedistributor --rpc-url $SEP_RPC -vv
+forge script script/deploy/DeployRewardRedistributor.s.sol:DeployRewardRedistributor --rpc-url $SEPOLIA_RPC_URL -vv
 ```
 
 ### Deploy
 ```bash
 forge script script/deploy/DeployRewardRedistributor.s.sol:DeployRewardRedistributor \
-  --rpc-url $SEP_RPC \
+  --rpc-url $SEPOLIA_RPC_URL \
   --private-key $DEPLOYER_PRIVATE_KEY \
   --broadcast \
   --verify \
@@ -94,39 +73,41 @@ forge script script/deploy/DeployRewardRedistributor.s.sol:DeployRewardRedistrib
 
 ---
 
-## Post-Deployment
-
-Update EarnVault's yieldRedistributor if placeholder was used:
-
-```bash
-cast send <EARN_VAULT_PROXY> "setYieldRedistributor(address)" <REWARD_REDISTRIBUTOR> --rpc-url $SEPOLIA_RPC_URL --private-key $PRIVATE_KEY
-cast send 0x5F022ebd58F9aD9E425E06Ce6DD3f7924cc0F722 "setYieldRedistributor(address)" 0x49A441D35d3305dE31398BA62fdeAD474c10b466 --rpc-url $SEP_RPC --private-key $PRIVATE_KEY
-```
-
----
-
 ## Sepolia deployment info
 
-✅ SUSDSCVault
+( Latest 07-11-2025)
 
-Implementation: 0x56bf6ed4689c3a2d0cE75aB1cC57EC080dBaB1B4
+✅ SUSDSCVaultUpgradeable
 
-Proxy: 0x97Bf9acfD3A4D0Fcee3bd86BCa1FdD5617925fd0
+  Implementation: 0xdE13186F7ff1173628Ed5e15173d9E78e10Ad6Bb
+
+  Proxy (SUSDSCVault): 0x938bca6c4281313Baa82154745E4d020E85E7340
 
 
-✅ EarnVault
+✅ EarnVault EarnVaultUpgradeable
 
-BoostRewardsLib: 0x5CB235474Bd0125a362A12B3922361eD42cb4843
 
-Implementation: 0x7043E917373Ce7a50A18885fD897D48D5686bd80
+  Implementation: 0x7dCA02767dfD57888CE087900f9cfDf3D9a2af6f
 
-Proxy: 0x5F022ebd58F9aD9E425E06Ce6DD3f7924cc0F722
-
-ProxyAdmin: 0xC0DF3EB4B7707907e73e8ba1245434F1Eb9FaE97
-
+  Proxy (EarnVault): 0xFdeB7e9F59cad080D9158ff850Ce79bCf6cdd5f0
 
 
 ✅ RewardRedistributor
 
-Contract: 0x49A441D35d3305dE31398BA62fdeAD474c10b466
+Contract: 0xFee1467934428Df54C696B36a4747c5Be86674CC
 
+---
+
+## Salt strings and calculated salt
+
+EarnVaultUpgradeable proxy salt 0x111d4f7f87754e05e66689be7d672d1299f3a8bb004e1cab70ac2568bcfa48b7
+
+RewardRedistributor calt 0x111d4f7f87754e05e66689be7d672d1299f3a8bb00eb96670b1b53534e05a7b0
+
+SUSDSCVaultUpgradeable proxy salt 0x111d4f7f87754e05e66689be7d672d1299f3a8bb00f7d9a433ec92de4cb6761a
+
+EarnVaultUpgradeable_Proxy_112025
+
+SUSDSCVaultUpgradeable_Proxy_112025
+
+RewardRedistributor_112025

@@ -236,6 +236,11 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
 
     _settle(msg.sender);
 
+    // Settle boost rewards for all active tokens BEFORE updating principal
+    for (uint256 i = 0; i < activeBoostTokens.length; i++) {
+      _settleBoost(msg.sender, activeBoostTokens[i]);
+    }
+
     USDSC.safeTransferFrom(msg.sender, address(this), amount);
     principal[msg.sender] += amount;
     totalPrincipal += amount;
@@ -270,6 +275,11 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
       revert IEarnVaultEventsAndErrors.PermitFailed();
     }
     _settle(msg.sender);
+
+    // Settle boost rewards for all active tokens BEFORE updating principal
+    for (uint256 i = 0; i < activeBoostTokens.length; i++) {
+      _settleBoost(msg.sender, activeBoostTokens[i]);
+    }
 
     USDSC.safeTransferFrom(msg.sender, address(this), amount);
     principal[msg.sender] += amount;
