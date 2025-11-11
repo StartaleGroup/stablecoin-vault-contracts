@@ -220,6 +220,13 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     _unpause();
   }
 
+  /// @notice Prevents renunciation of ownership.
+  /// @dev Overrides Ownable2Step's renounceOwnership to protect against accidental loss of ownership.
+  ///      Owner can still transfer ownership using the 2-step process (transferOwnership + acceptOwnership).
+  function renounceOwnership() public view override onlyOwner {
+    revert IEarnVaultEventsAndErrors.OwnershipRenunciationDisabled();
+  }
+
   /// @notice Deposit USDSC tokens to earn yield
   /// @dev Reserves principal 1:1 in claimReserve to ensure withdrawals are always possible
   /// @param amount Amount of USDSC tokens to deposit

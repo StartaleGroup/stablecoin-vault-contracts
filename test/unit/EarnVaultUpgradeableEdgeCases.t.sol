@@ -716,4 +716,48 @@ contract EarnVaultUpgradeableEdgeCasesTest is Test {
     vm.expectRevert(IEarnVaultEventsAndErrors.AddressBlacklisted.selector);
     vault.getAllClaimables(user);
   }
+
+  // ========== Ownership Tests ==========
+
+  /// @notice Test that owner cannot renounce ownership (STA-8 security fix)
+  function test_RenounceOwnership() public {
+    // Owner cannot renounce ownership (security fix)
+    vm.prank(owner);
+    vm.expectRevert(IEarnVaultEventsAndErrors.OwnershipRenunciationDisabled.selector);
+    vault.renounceOwnership();
+
+    // Verify ownership is NOT renounced
+    assertEq(vault.owner(), owner, 'Owner should remain unchanged');
+
+    // Owner should still be able to call owner functions
+    address newDistributor = makeAddr('newDistributor');
+    vm.prank(owner);
+    vault.setYieldRedistributor(newDistributor);
+    assertEq(vault.yieldRedistributor(), newDistributor, 'Owner functions should still work');
+  }
+
+  /// @notice Test that ownership can still be transferred via two-step process
+  function test_OwnershipCanBeTransferredViaTwoStepProcess() public {
+    address newOwner = makeAddr('newOwner');
+
+    // Step 1: Current owner initiates transfer
+    vm.prank(owner);
+    vault.transferOwnership(newOwner);
+
+    // Ownership hasn't changed yet
+    assertEq(vault.owner(), owner, 'Owner should not change until accepted');
+
+    // Step 2: New owner accepts ownership
+    vm.prank(newOwner);
+    vault.acceptOwnership();
+
+    // Ownership successfully transferred
+    assertEq(vault.owner(), newOwner, 'Ownership should be transferred to new owner');
+
+    // New owner can perform owner functions
+    address anotherDistributor = makeAddr('anotherDistributor');
+    vm.prank(newOwner);
+    vault.setYieldRedistributor(anotherDistributor);
+    assertEq(vault.yieldRedistributor(), anotherDistributor, 'New owner should have full control');
+  }
 }

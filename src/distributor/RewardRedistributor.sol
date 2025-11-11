@@ -130,6 +130,18 @@ contract RewardRedistributor is IRewardRedistributorEventsAndErrors, AccessContr
     p ? _pause() : _unpause();
   }
 
+  /// @notice Prevents renunciation of DEFAULT_ADMIN_ROLE only.
+  /// @dev Overrides AccessControl's renounceRole to protect against accidental loss of admin privileges.
+  ///      Other roles (e.g., OPERATOR_ROLE) can still be renounced.
+  /// @param role The role to renounce.
+  /// @param callerConfirmation The address of the caller confirming renunciation.
+  function renounceRole(bytes32 role, address callerConfirmation) public virtual override {
+    if (role == DEFAULT_ADMIN_ROLE) {
+      revert IRewardRedistributorEventsAndErrors.AdminRoleRenunciationDisabled();
+    }
+    super.renounceRole(role, callerConfirmation);
+  }
+
   /// @notice Claims pending USDSC yield from the extension and distributes it per policy.
   /// @dev    Sequence:
   ///         1) Record `balanceBefore = IERC20(USDSC_ADDRESS).balanceOf(address(this))`.

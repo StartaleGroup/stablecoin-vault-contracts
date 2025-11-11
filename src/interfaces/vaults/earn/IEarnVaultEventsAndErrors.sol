@@ -148,6 +148,9 @@ interface IEarnVaultEventsAndErrors {
   /// @notice Thrown when contract receives ETH but shouldn't accept it
   error EthNotAccepted();
 
+  /// @notice Thrown when attempting to renounce ownership (feature disabled).
+  error OwnershipRenunciationDisabled();
+
   /// @notice Thrown when native ETH sweep operation fails
   error SweepFailed();
 

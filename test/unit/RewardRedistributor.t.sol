@@ -199,6 +199,41 @@ contract RewardRedistributorTest is Test {
     rr.distribute(); // Should still succeed
   }
 
+  function testRoleRenunciation_AdminRoleCannotBeRenounced() public {
+    bytes32 adminRole = rr.DEFAULT_ADMIN_ROLE();
+    
+    // Verify admin has DEFAULT_ADMIN_ROLE
+    assertTrue(rr.hasRole(adminRole, admin), 'Admin should have DEFAULT_ADMIN_ROLE');
+
+    // Admin attempts to renounce DEFAULT_ADMIN_ROLE - should revert
+    vm.prank(admin);
+    vm.expectRevert(IRewardRedistributorEventsAndErrors.AdminRoleRenunciationDisabled.selector);
+    rr.renounceRole(adminRole, admin);
+
+    // Verify admin still has the role after failed renunciation
+    assertTrue(rr.hasRole(adminRole, admin), 'Admin should still have DEFAULT_ADMIN_ROLE');
+  }
+
+  function testRoleRenunciation_OperatorRoleCanBeRenounced() public {
+    bytes32 operatorRole = rr.OPERATOR_ROLE();
+
+    // Verify operator has OPERATOR_ROLE
+    assertTrue(rr.hasRole(operatorRole, operator), 'Operator should have OPERATOR_ROLE');
+
+    // Operator renounces their role - should succeed
+    vm.prank(operator);
+    rr.renounceRole(operatorRole, operator);
+
+    // Verify operator no longer has the role
+    assertFalse(rr.hasRole(operatorRole, operator), 'Operator should not have OPERATOR_ROLE after renunciation');
+
+    // Verify operator can no longer call distribute()
+    ext.addPending(1000e6);
+    vm.prank(operator);
+    vm.expectRevert(); // Should fail - no longer has OPERATOR_ROLE
+    rr.distribute();
+  }
+
   // ========== CARRY AND PREVIEW TESTS ==========
 
   function testCarryMathematicalFormulas() public {
