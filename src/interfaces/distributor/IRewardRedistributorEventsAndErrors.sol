@@ -55,10 +55,10 @@ interface IRewardRedistributorEventsAndErrors {
   // Errors
   // ========================================
 
-  /// @notice Thrown when an attempt is made to renounce the DEFAULT_ADMIN_ROLE.
-  error AdminRoleRenunciationDisabled();
+  /// @notice Thrown when an attempt is made to remove (via revoke or renounce) the last DEFAULT_ADMIN_ROLE.
+  error CannotRemoveLastAdmin();
 
-  /// @notice Thrown when a zero address is provided where non-zero is required
+  /// @notice Thrown when a parameter is set to zero
   /// @param parameterName Name of the parameter that is zero
   error ZeroAddress(string parameterName);
 

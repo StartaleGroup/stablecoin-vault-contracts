@@ -4,6 +4,10 @@ pragma solidity ^0.8.30;
 import {IRewardRedistributorEventsAndErrors} from '../interfaces/distributor/IRewardRedistributorEventsAndErrors.sol';
 import {IEarnVault} from '../interfaces/vaults/earn/IEarnVault.sol';
 import {AccessControl} from 'lib/openzeppelin-contracts/contracts/access/AccessControl.sol';
+import {IAccessControl} from 'lib/openzeppelin-contracts/contracts/access/IAccessControl.sol';
+import {
+  AccessControlEnumerable
+} from 'lib/openzeppelin-contracts/contracts/access/extensions/AccessControlEnumerable.sol';
 import {IERC4626} from 'lib/openzeppelin-contracts/contracts/interfaces/IERC4626.sol';
 import {IERC20} from 'lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol';
 import {SafeERC20} from 'lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol';
@@ -26,7 +30,12 @@ import {IMYieldToOne} from 'm-extensions/projects/yieldToOne/IMYieldToOne.sol';
 ///         - USDSC_ADDRESS: Single USDSC token address that implements both IERC20 and IMYieldToOne interfaces
 ///         - Cast to IERC20 for transfers and supply queries (totalSupply, safeTransfer)
 ///         - Cast to IMYieldToOne for yield operations (claimYield, yield)
-contract RewardRedistributor is IRewardRedistributorEventsAndErrors, AccessControl, Pausable, ReentrancyGuardTransient {
+contract RewardRedistributor is
+  IRewardRedistributorEventsAndErrors,
+  AccessControlEnumerable,
+  Pausable,
+  ReentrancyGuardTransient
+{
   using SafeERC20 for IERC20;
 
   /// Keeper allowed to call distribute()
@@ -130,23 +139,47 @@ contract RewardRedistributor is IRewardRedistributorEventsAndErrors, AccessContr
     p ? _pause() : _unpause();
   }
 
-  /// @notice Prevents renunciation of DEFAULT_ADMIN_ROLE only.
-  /// @dev Overrides AccessControl's renounceRole to protect against accidental loss of admin privileges.
-  ///      Other roles (e.g., OPERATOR_ROLE) can still be renounced.
+  /// @notice Prevents renunciation of the last DEFAULT_ADMIN_ROLE only.
+  /// @dev Overrides AccessControl's renounceRole to ensure at least one admin remains.
+  ///      Other roles (e.g., OPERATOR_ROLE) can still be renounced freely.
+  ///      Admin can renounce their role only if there are other admins remaining.
   /// @param role The role to renounce.
   /// @param callerConfirmation The address of the caller confirming renunciation.
-  function renounceRole(bytes32 role, address callerConfirmation) public virtual override {
+  function renounceRole(
+    bytes32 role,
+    address callerConfirmation
+  ) public virtual override(AccessControl, IAccessControl) {
     if (role == DEFAULT_ADMIN_ROLE) {
-      revert IRewardRedistributorEventsAndErrors.AdminRoleRenunciationDisabled();
+      // Only check last admin protection if the caller actually has the role
+      if (hasRole(DEFAULT_ADMIN_ROLE, callerConfirmation) && getRoleMemberCount(DEFAULT_ADMIN_ROLE) <= 1) {
+        revert IRewardRedistributorEventsAndErrors.CannotRemoveLastAdmin();
+      }
     }
     super.renounceRole(role, callerConfirmation);
+  }
+
+  /// @notice Prevents revocation of the last DEFAULT_ADMIN_ROLE only.
+  /// @dev Overrides AccessControl's revokeRole to ensure at least one admin remains.
+  ///      Non-admin roles (e.g., OPERATOR_ROLE) can be revoked freely.
+  ///      Multiple admins can be revoked as long as at least one admin remains.
+  ///      Only an account with the admin role can revoke roles from others.
+  /// @param role The role to revoke.
+  /// @param account The account from which to revoke the role.
+  function revokeRole(bytes32 role, address account) public virtual override(AccessControl, IAccessControl) {
+    if (role == DEFAULT_ADMIN_ROLE) {
+      // Only check last admin protection if the account actually has the role
+      if (hasRole(DEFAULT_ADMIN_ROLE, account) && getRoleMemberCount(DEFAULT_ADMIN_ROLE) <= 1) {
+        revert IRewardRedistributorEventsAndErrors.CannotRemoveLastAdmin();
+      }
+    }
+    super.revokeRole(role, account);
   }
 
   /// @notice Validates that this contract is still the yield recipient on the extension.
   /// @dev    Reverts if the yield recipient has changed.
   function validateYieldRecipient() internal view {
     address currentRecipient = IMYieldToOne(USDSC_ADDRESS).yieldRecipient();
-    if(currentRecipient != address(this)) {
+    if (currentRecipient != address(this)) {
       revert IRewardRedistributorEventsAndErrors.YieldRecipientChanged(currentRecipient);
     }
   }
