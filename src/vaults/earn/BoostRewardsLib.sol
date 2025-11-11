@@ -46,9 +46,18 @@ library BoostRewardsLib {
     if (totalPrincipal == 0) {
       // No deposits: transfer to treasury
       if (bal < amount) revert IEarnVaultEventsAndErrors.InsufficientBoostTokenBalance();
-      IERC20(token).safeTransfer(treasury, amount);
-      emit IEarnVaultEventsAndErrors.BoostRewardTransferredToTreasury(token, amount);
-      return;
+      
+      try IERC20(token).transfer(treasury, amount) returns (bool success) {
+        if (!success) {
+          revert IEarnVaultEventsAndErrors.InsufficientBoostTokenBalance();
+        }
+        emit IEarnVaultEventsAndErrors.BoostRewardTransferredToTreasury(token, amount);
+        return;
+      } catch {
+        // Transfer failed (token may be frozen, paused, etc.)
+        // Revert the operation - treasury transfer failure should be handled by keeper
+        revert IEarnVaultEventsAndErrors.InsufficientBoostTokenBalance();
+      }
     }
 
     // Deposits exist: distribute proportionally based on principal (same as USDSC yield)
@@ -112,10 +121,29 @@ library BoostRewardsLib {
 
     userBoostAccrued[user][token] = 0;
     boostClaimReserve[token] -= claimedAmount;
-    IERC20(token).safeTransfer(user, claimedAmount);
-    emit IEarnVaultEventsAndErrors.BoostRewardClaimed(user, token, claimedAmount);
-
-    return claimedAmount;
+    
+    try IERC20(token).transfer(user, claimedAmount) returns (bool success) {
+      if (!success) {
+        // Transfer returned false - revert accounting changes
+        userBoostAccrued[user][token] = claimedAmount;
+        boostClaimReserve[token] += claimedAmount;
+        emit IEarnVaultEventsAndErrors.BoostRewardTransferFailed(user, token, claimedAmount);
+        return 0;
+      }
+      emit IEarnVaultEventsAndErrors.BoostRewardClaimed(user, token, claimedAmount);
+      return claimedAmount;
+    } catch {
+      // Transfer failed (token may be frozen, paused, etc.)
+      // Revert accounting changes to maintain consistency
+      userBoostAccrued[user][token] = claimedAmount;
+      boostClaimReserve[token] += claimedAmount;
+      
+      // Emit failure event for monitoring
+      emit IEarnVaultEventsAndErrors.BoostRewardTransferFailed(user, token, claimedAmount);
+      
+      // Returning 0 to indicate failure, allowing other tokens to still be claimed
+      return 0;
+    }
   }
 
   /// @notice Get user's claimable boost rewards for a specific token
