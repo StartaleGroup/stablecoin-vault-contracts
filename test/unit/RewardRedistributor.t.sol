@@ -1288,7 +1288,7 @@ contract RewardRedistributorTest is Test {
 
   function testRevert_DistributeWhenYieldRecipientChangedMidOperation() public {
     // First distribution succeeds
-    ext.addPending(5000e6);
+    ext.addPending(5_000e6);
     vm.prank(operator);
     rr.distribute();
 
@@ -1297,7 +1297,7 @@ contract RewardRedistributorTest is Test {
     ext.setYieldRecipient(newRecipient);
 
     // Second distribution should fail
-    ext.addPending(5000e6);
+    ext.addPending(5_000e6);
     vm.prank(operator);
     vm.expectRevert(
       abi.encodeWithSelector(IRewardRedistributorEventsAndErrors.YieldRecipientChanged.selector, newRecipient)
