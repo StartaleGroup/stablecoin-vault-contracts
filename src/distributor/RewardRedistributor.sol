@@ -271,9 +271,7 @@ contract RewardRedistributor is
     }
     // Check maximum age (snapshot must not be too old)
     if (block.timestamp - lastSnapshotTimestamp > snapshotMaxAge) {
-      revert IRewardRedistributorEventsAndErrors.SnapshotTooOld(
-        lastSnapshotTimestamp, block.timestamp, snapshotMaxAge
-      );
+      revert IRewardRedistributorEventsAndErrors.SnapshotTooOld(lastSnapshotTimestamp, block.timestamp, snapshotMaxAge);
     }
   }
 

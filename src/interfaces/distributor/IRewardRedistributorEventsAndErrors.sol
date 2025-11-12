@@ -112,7 +112,5 @@ interface IRewardRedistributorEventsAndErrors {
   /// @param lastSnapshotTimestamp The timestamp of the last snapshot
   /// @param currentTimestamp The current block timestamp
   /// @param snapshotMaxAge The maximum allowed age
-  error SnapshotTooOld(
-    uint256 lastSnapshotTimestamp, uint256 currentTimestamp, uint256 snapshotMaxAge
-  );
+  error SnapshotTooOld(uint256 lastSnapshotTimestamp, uint256 currentTimestamp, uint256 snapshotMaxAge);
 }

@@ -1649,18 +1649,14 @@ contract RewardRedistributorTest is Test {
     // Try to set cooldown to 4 hours (equal to max age) - should revert
     vm.prank(admin);
     vm.expectRevert(
-      abi.encodeWithSelector(
-        IRewardRedistributorEventsAndErrors.InvalidSnapShotCutoffPeriod.selector, 4 hours
-      )
+      abi.encodeWithSelector(IRewardRedistributorEventsAndErrors.InvalidSnapShotCutoffPeriod.selector, 4 hours)
     );
     rr.setSnapShotCutoffPeriod(4 hours);
 
     // Try to set cooldown to 5 hours (greater than max age) - should revert
     vm.prank(admin);
     vm.expectRevert(
-      abi.encodeWithSelector(
-        IRewardRedistributorEventsAndErrors.InvalidSnapShotCutoffPeriod.selector, 5 hours
-      )
+      abi.encodeWithSelector(IRewardRedistributorEventsAndErrors.InvalidSnapShotCutoffPeriod.selector, 5 hours)
     );
     rr.setSnapShotCutoffPeriod(5 hours);
   }
@@ -1673,9 +1669,7 @@ contract RewardRedistributorTest is Test {
     // Now try to set cooldown to 1 hour (equal to max age) - should revert
     vm.prank(admin);
     vm.expectRevert(
-      abi.encodeWithSelector(
-        IRewardRedistributorEventsAndErrors.InvalidSnapShotCutoffPeriod.selector, 1 hours
-      )
+      abi.encodeWithSelector(IRewardRedistributorEventsAndErrors.InvalidSnapShotCutoffPeriod.selector, 1 hours)
     );
     rr.setSnapShotCutoffPeriod(1 hours);
 
@@ -1728,22 +1722,14 @@ contract RewardRedistributorTest is Test {
     // Cooldown is 15 minutes, so max age must be strictly greater
     vm.prank(admin);
     vm.expectRevert(
-      abi.encodeWithSelector(
-        IRewardRedistributorEventsAndErrors.InvalidSnapshotMaxAge.selector,
-        15 minutes,
-        15 minutes
-      )
+      abi.encodeWithSelector(IRewardRedistributorEventsAndErrors.InvalidSnapshotMaxAge.selector, 15 minutes, 15 minutes)
     );
     rr.setSnapshotMaxAge(15 minutes); // Equal to cooldown - should revert
 
     // Also test less than cooldown
     vm.prank(admin);
     vm.expectRevert(
-      abi.encodeWithSelector(
-        IRewardRedistributorEventsAndErrors.InvalidSnapshotMaxAge.selector,
-        10 minutes,
-        15 minutes
-      )
+      abi.encodeWithSelector(IRewardRedistributorEventsAndErrors.InvalidSnapshotMaxAge.selector, 10 minutes, 15 minutes)
     );
     rr.setSnapshotMaxAge(10 minutes); // Less than cooldown - should revert
   }
@@ -1752,9 +1738,7 @@ contract RewardRedistributorTest is Test {
     vm.prank(admin);
     vm.expectRevert(
       abi.encodeWithSelector(
-        IRewardRedistributorEventsAndErrors.InvalidSnapshotMaxAge.selector,
-        7 days + 1 seconds,
-        15 minutes
+        IRewardRedistributorEventsAndErrors.InvalidSnapshotMaxAge.selector, 7 days + 1 seconds, 15 minutes
       )
     );
     rr.setSnapshotMaxAge(7 days + 1 seconds);
@@ -1769,11 +1753,11 @@ contract RewardRedistributorTest is Test {
     // Increase cooldown to 30 minutes
     vm.prank(admin);
     rr.setSnapShotCutoffPeriod(30 minutes);
-    
+
     // Max age (2 hours) is still > cooldown (30 minutes), so should be valid
     assertEq(rr.snapshotMaxAge(), 2 hours, 'Max age should remain 2 hours');
     assertEq(rr.snapShotCutoffPeriod(), 30 minutes, 'Cooldown should be 30 minutes');
-    
+
     // Note: If cooldown increased to > max age, max age would need to be updated
     // But we don't enforce this on cooldown change (admin responsibility)
   }
@@ -1785,11 +1769,7 @@ contract RewardRedistributorTest is Test {
 
     Vm.Log[] memory logs = vm.getRecordedLogs();
     assertEq(logs.length, 1, 'Should emit one event');
-    assertEq(
-      logs[0].topics[0],
-      keccak256('SnapshotMaxAgeUpdated(uint256)'),
-      'Should emit SnapshotMaxAgeUpdated event'
-    );
+    assertEq(logs[0].topics[0], keccak256('SnapshotMaxAgeUpdated(uint256)'), 'Should emit SnapshotMaxAgeUpdated event');
   }
 
   function test_SetSnapshotMaxAge_OnlyAdmin() public {
