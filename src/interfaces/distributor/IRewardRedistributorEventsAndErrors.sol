@@ -60,6 +60,10 @@ interface IRewardRedistributorEventsAndErrors {
   /// @param newSnapShotCutoffPeriod New snapshot cutoff period value.
   event SnapShotCutoffPeriodUpdated(uint256 newSnapShotCutoffPeriod);
 
+  /// @notice Emitted when snapshot maximum age is updated.
+  /// @param newSnapshotMaxAge New snapshot maximum age value.
+  event SnapshotMaxAgeUpdated(uint256 newSnapshotMaxAge);
+
   // ========================================
   // Errors
   // ========================================
@@ -97,5 +101,18 @@ interface IRewardRedistributorEventsAndErrors {
   /// @param snapShotCutoffPeriod The required cutoff period
   error SnapShotCutoffPeriodNotElapsed(
     uint256 lastSnapshotTimestamp, uint256 currentTimestamp, uint256 snapShotCutoffPeriod
+  );
+
+  /// @notice Thrown when snapshot maximum age is invalid
+  /// @param newSnapshotMaxAge The invalid snapshot maximum age value
+  /// @param cooldownPeriod The current cooldown period (for context)
+  error InvalidSnapshotMaxAge(uint256 newSnapshotMaxAge, uint256 cooldownPeriod);
+
+  /// @notice Thrown when snapshot is too old
+  /// @param lastSnapshotTimestamp The timestamp of the last snapshot
+  /// @param currentTimestamp The current block timestamp
+  /// @param snapshotMaxAge The maximum allowed age
+  error SnapshotTooOld(
+    uint256 lastSnapshotTimestamp, uint256 currentTimestamp, uint256 snapshotMaxAge
   );
 }

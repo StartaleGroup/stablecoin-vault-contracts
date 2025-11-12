@@ -1644,6 +1644,47 @@ contract RewardRedistributorTest is Test {
     rr.setSnapShotCutoffPeriod(1 hours + 1 seconds);
   }
 
+  function test_SetSnapShotCutoffPeriod_RevertsWhenGreaterThanOrEqualMaxAge() public {
+    // Default max age is 4 hours
+    // Try to set cooldown to 4 hours (equal to max age) - should revert
+    vm.prank(admin);
+    vm.expectRevert(
+      abi.encodeWithSelector(
+        IRewardRedistributorEventsAndErrors.InvalidSnapShotCutoffPeriod.selector, 4 hours
+      )
+    );
+    rr.setSnapShotCutoffPeriod(4 hours);
+
+    // Try to set cooldown to 5 hours (greater than max age) - should revert
+    vm.prank(admin);
+    vm.expectRevert(
+      abi.encodeWithSelector(
+        IRewardRedistributorEventsAndErrors.InvalidSnapShotCutoffPeriod.selector, 5 hours
+      )
+    );
+    rr.setSnapShotCutoffPeriod(5 hours);
+  }
+
+  function test_SetSnapShotCutoffPeriod_RevertsWhenMaxAgeReducedAndCooldownTooHigh() public {
+    // Reduce max age to 1 hour
+    vm.prank(admin);
+    rr.setSnapshotMaxAge(1 hours);
+
+    // Now try to set cooldown to 1 hour (equal to max age) - should revert
+    vm.prank(admin);
+    vm.expectRevert(
+      abi.encodeWithSelector(
+        IRewardRedistributorEventsAndErrors.InvalidSnapShotCutoffPeriod.selector, 1 hours
+      )
+    );
+    rr.setSnapShotCutoffPeriod(1 hours);
+
+    // But should allow cooldown less than max age
+    vm.prank(admin);
+    rr.setSnapShotCutoffPeriod(30 minutes); // Less than 1 hour max age - should succeed
+    assertEq(rr.snapShotCutoffPeriod(), 30 minutes, 'Should accept cooldown less than max age');
+  }
+
   function test_SetSnapShotCutoffPeriod_CanUpdateMultipleTimes() public {
     vm.prank(admin);
     rr.setSnapShotCutoffPeriod(20 minutes);
@@ -1656,6 +1697,189 @@ contract RewardRedistributorTest is Test {
     vm.prank(admin);
     rr.setSnapShotCutoffPeriod(1 minutes);
     assertEq(rr.snapShotCutoffPeriod(), 1 minutes, 'Third update should work');
+  }
+
+  // ========== SNAPSHOT MAX AGE TESTS ==========
+
+  function test_SetSnapshotMaxAge_DefaultValue() public {
+    assertEq(rr.snapshotMaxAge(), 4 hours, 'Default should be 4 hours');
+  }
+
+  function test_SetSnapshotMaxAge_CanSetToMinimum() public {
+    // Minimum is just greater than cooldown period (15 minutes + 1 second)
+    vm.prank(admin);
+    rr.setSnapshotMaxAge(15 minutes + 1 seconds);
+    assertEq(rr.snapshotMaxAge(), 15 minutes + 1 seconds, 'Should accept value just greater than cooldown');
+  }
+
+  function test_SetSnapshotMaxAge_CanSetToMaximum() public {
+    vm.prank(admin);
+    rr.setSnapshotMaxAge(7 days);
+    assertEq(rr.snapshotMaxAge(), 7 days, 'Should accept 7 days');
+  }
+
+  function test_SetSnapshotMaxAge_CanSetToMiddleValue() public {
+    vm.prank(admin);
+    rr.setSnapshotMaxAge(2 hours);
+    assertEq(rr.snapshotMaxAge(), 2 hours, 'Should accept 2 hours');
+  }
+
+  function test_SetSnapshotMaxAge_RevertsWhenLessThanOrEqualCooldown() public {
+    // Cooldown is 15 minutes, so max age must be strictly greater
+    vm.prank(admin);
+    vm.expectRevert(
+      abi.encodeWithSelector(
+        IRewardRedistributorEventsAndErrors.InvalidSnapshotMaxAge.selector,
+        15 minutes,
+        15 minutes
+      )
+    );
+    rr.setSnapshotMaxAge(15 minutes); // Equal to cooldown - should revert
+
+    // Also test less than cooldown
+    vm.prank(admin);
+    vm.expectRevert(
+      abi.encodeWithSelector(
+        IRewardRedistributorEventsAndErrors.InvalidSnapshotMaxAge.selector,
+        10 minutes,
+        15 minutes
+      )
+    );
+    rr.setSnapshotMaxAge(10 minutes); // Less than cooldown - should revert
+  }
+
+  function test_SetSnapshotMaxAge_RevertsWhenMoreThan7Days() public {
+    vm.prank(admin);
+    vm.expectRevert(
+      abi.encodeWithSelector(
+        IRewardRedistributorEventsAndErrors.InvalidSnapshotMaxAge.selector,
+        7 days + 1 seconds,
+        15 minutes
+      )
+    );
+    rr.setSnapshotMaxAge(7 days + 1 seconds);
+  }
+
+  function test_SetSnapshotMaxAge_UpdatesWhenCooldownChanges() public {
+    // Set max age to 2 hours
+    vm.prank(admin);
+    rr.setSnapshotMaxAge(2 hours);
+    assertEq(rr.snapshotMaxAge(), 2 hours, 'Max age should be 2 hours');
+
+    // Increase cooldown to 30 minutes
+    vm.prank(admin);
+    rr.setSnapShotCutoffPeriod(30 minutes);
+    
+    // Max age (2 hours) is still > cooldown (30 minutes), so should be valid
+    assertEq(rr.snapshotMaxAge(), 2 hours, 'Max age should remain 2 hours');
+    assertEq(rr.snapShotCutoffPeriod(), 30 minutes, 'Cooldown should be 30 minutes');
+    
+    // Note: If cooldown increased to > max age, max age would need to be updated
+    // But we don't enforce this on cooldown change (admin responsibility)
+  }
+
+  function test_SetSnapshotMaxAge_EmitsEvent() public {
+    vm.recordLogs();
+    vm.prank(admin);
+    rr.setSnapshotMaxAge(6 hours);
+
+    Vm.Log[] memory logs = vm.getRecordedLogs();
+    assertEq(logs.length, 1, 'Should emit one event');
+    assertEq(
+      logs[0].topics[0],
+      keccak256('SnapshotMaxAgeUpdated(uint256)'),
+      'Should emit SnapshotMaxAgeUpdated event'
+    );
+  }
+
+  function test_SetSnapshotMaxAge_OnlyAdmin() public {
+    vm.prank(operator);
+    vm.expectRevert();
+    rr.setSnapshotMaxAge(6 hours);
+  }
+
+  function test_Distribute_RevertsWhenSnapshotTooOld() public {
+    // Take snapshot
+    vm.prank(operator);
+    rr.snapshotSusdscTVL();
+    uint256 snapshotTime = rr.lastSnapshotTimestamp();
+
+    // Advance time past max age (4 hours default)
+    vm.warp(snapshotTime + 4 hours + 1 seconds);
+
+    ext.addPending(100_000e6);
+
+    vm.expectRevert(
+      abi.encodeWithSelector(
+        IRewardRedistributorEventsAndErrors.SnapshotTooOld.selector,
+        snapshotTime,
+        snapshotTime + 4 hours + 1 seconds,
+        4 hours
+      )
+    );
+    vm.prank(operator);
+    rr.distribute();
+  }
+
+  function test_Distribute_SucceedsWhenSnapshotWithinValidRange() public {
+    // Take snapshot
+    vm.prank(operator);
+    rr.snapshotSusdscTVL();
+    uint256 snapshotTime = rr.lastSnapshotTimestamp();
+
+    // Advance time to middle of valid range (past cooldown, but before max age)
+    vm.warp(snapshotTime + 2 hours);
+
+    ext.addPending(100_000e6);
+
+    vm.prank(operator);
+    rr.distribute(); // Should succeed
+
+    assertGt(usdsc.balanceOf(startale), 0, 'Distribution should succeed');
+  }
+
+  function test_Distribute_SucceedsAtMaxAgeBoundary() public {
+    // Take snapshot
+    vm.prank(operator);
+    rr.snapshotSusdscTVL();
+    uint256 snapshotTime = rr.lastSnapshotTimestamp();
+
+    // Advance time to exactly max age
+    vm.warp(snapshotTime + 4 hours);
+
+    ext.addPending(100_000e6);
+
+    vm.prank(operator);
+    rr.distribute(); // Should succeed (at boundary)
+
+    assertGt(usdsc.balanceOf(startale), 0, 'Distribution should succeed at boundary');
+  }
+
+  function test_Distribute_RevertsWhenMaxAgeUpdatedAndSnapshotTooOld() public {
+    // Take snapshot
+    vm.prank(operator);
+    rr.snapshotSusdscTVL();
+    uint256 snapshotTime = rr.lastSnapshotTimestamp();
+
+    // Reduce max age to 1 hour
+    vm.prank(admin);
+    rr.setSnapshotMaxAge(1 hours);
+
+    // Advance time past new max age (1 hour) but within old max age (4 hours)
+    vm.warp(snapshotTime + 1 hours + 1 seconds);
+
+    ext.addPending(100_000e6);
+
+    vm.expectRevert(
+      abi.encodeWithSelector(
+        IRewardRedistributorEventsAndErrors.SnapshotTooOld.selector,
+        snapshotTime,
+        snapshotTime + 1 hours + 1 seconds,
+        1 hours
+      )
+    );
+    vm.prank(operator);
+    rr.distribute();
   }
 
   // ========== SNAPSHOT VALIDATION TESTS ==========
