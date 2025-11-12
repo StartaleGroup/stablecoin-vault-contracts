@@ -9,18 +9,20 @@ This document describes the standard operating procedures for the operator role 
 ### Normal Distribution Cycle
 
 1. **Take Snapshot** (`snapshotSusdscTVL()`)
-   - Call this first to capture the current sUSDSC vault TVL
+   - Call this first to capture the current sUSDSC vault TVL, timestamp, and block number
    - Must be called by operator with `OPERATOR_ROLE`
    - Contract must not be paused
-   - Emits `SusdscTVLSnapshotCaptured` event
+   - Emits `SusdscTVLSnapshotCaptured` event with TVL, timestamp, and block number
 
-2. **Wait for Cooldown Period**
-   - Minimum wait time: `snapShotCutoffPeriod` (default: 15 minutes)
+2. **Wait for Next Block**
+   - **Requirement**: Must be in a different block than the snapshot (block.number > lastSnapshotBlockNumber)
    - This prevents same-block TVL manipulation attacks
-   - You can check `lastSnapshotTimestamp()` to see when snapshot was taken
+   - You can check `lastSnapshotBlockNumber()` to see which block the snapshot was taken in
+   - Current block number must be `> lastSnapshotBlockNumber`
+   - **Note**: This is a block-based requirement, not a time-based wait
 
 3. **Distribute Yield** (`distribute()`)
-   - Call after cooldown period has elapsed
+   - Call after snapshot is in a previous block
    - Must be called by operator with `OPERATOR_ROLE`
    - Contract must not be paused
    - Automatically claims yield from extension and distributes to vaults
@@ -28,27 +30,26 @@ This document describes the standard operating procedures for the operator role 
 
 4. **Repeat for Next Cycle**
    - For each new distribution, take a fresh snapshot first
-   - Wait for cooldown, then distribute
+   - Wait for next block, then distribute
 
 ### Example Timeline
 
 ```
-T=0:    snapshotSusdscTVL()     [Snapshot taken]
-T=15m:  distribute()            [Cooldown elapsed, distribution succeeds]
-T=30m:  snapshotSusdscTVL()     [New snapshot for next distribution]
-T=45m:  distribute()            [Next distribution]
+Block N:   snapshotSusdscTVL()     [Snapshot taken in block N]
+Block N+1: distribute()            [Distribution succeeds in next block]
+Block M:   snapshotSusdscTVL()     [New snapshot for next distribution]
+Block M+1: distribute()            [Next distribution]
 ```
 
 ## Configuration Parameters
 
 ### Default Values
-- **Cooldown Period** (`snapShotCutoffPeriod`): 15 minutes
 - **Maximum Age** (`snapshotMaxAge`): 4 hours
 
 ### Valid Windows
-- Snapshot must be **at least** `snapShotCutoffPeriod` old (e.g., 15 minutes)
+- Snapshot must be in a **previous block** (block.number > lastSnapshotBlockNumber)
 - Snapshot must be **at most** `snapshotMaxAge` old (e.g., 4 hours)
-- Valid window: Between cooldown and max age
+- Valid window: Previous block and within max age
 
 ## Failure Scenarios & Recovery
 
@@ -56,43 +57,43 @@ T=45m:  distribute()            [Next distribution]
 
 **Symptom:**
 ```
-Error: SnapShotCutoffPeriodNotElapsed(0, <current_timestamp>, <cooldown_period>)
+Error: LastSnapshotInvalid()
 ```
 
 **Cause:**
 - Operator called `distribute()` without taking a snapshot first
-- `lastSnapshotTimestamp` is 0
+- `lastSnapshotTimestamp` is 0 or `lastSnapshotBlockNumber` is 0
 
 **Recovery:**
 1. Call `snapshotSusdscTVL()` immediately
-2. Wait for cooldown period (15 minutes default)
+2. Wait for next block (advance to block.number + 1)
 3. Call `distribute()`
 
 **Prevention:**
 - Always take snapshot before distributing
-- Use monitoring to alert if `lastSnapshotTimestamp == 0`
+- Use monitoring to alert if `lastSnapshotTimestamp == 0` or `lastSnapshotBlockNumber == 0`
 
 ---
 
-### Scenario 2: Snapshot Too Recent (Cooldown Not Elapsed)
+### Scenario 2: Snapshot in Same Block
 
 **Symptom:**
 ```
-Error: SnapShotCutoffPeriodNotElapsed(<snapshot_timestamp>, <current_timestamp>, <cooldown_period>)
+Error: MustSnapshotInPreviousBlocks(<lastSnapshotBlockNumber>, <currentBlockNumber>)
 ```
 
 **Cause:**
-- Operator called `distribute()` too soon after taking snapshot
-- Less than `snapShotCutoffPeriod` has elapsed
+- Operator called `distribute()` in the same block as the snapshot
+- `block.number == lastSnapshotBlockNumber`
 
 **Recovery:**
-1. Wait until `block.timestamp - lastSnapshotTimestamp >= snapShotCutoffPeriod`
+1. Wait for next block (advance to block.number + 1)
 2. Call `distribute()` again
 
 **Prevention:**
-- Always wait at least the cooldown period after snapshot
-- Check `lastSnapshotTimestamp()` before calling `distribute()`
-- Use monitoring to track time elapsed since snapshot
+- Always wait for next block after snapshot
+- Check `lastSnapshotBlockNumber()` before calling `distribute()`
+- Use monitoring to track block number difference
 
 ---
 
@@ -110,7 +111,7 @@ Error: SnapshotTooOld(<snapshot_timestamp>, <current_timestamp>, <max_age>)
 
 **Recovery:**
 1. Call `snapshotSusdscTVL()` to take a fresh snapshot
-2. Wait for cooldown period (15 minutes default)
+2. Wait for next block
 3. Call `distribute()`
 
 **Prevention:**
@@ -134,7 +135,7 @@ Error: EnforcedPause()
 **Recovery:**
 1. Contact admin to unpause: `pause(false)`
 2. After unpause, take fresh snapshot: `snapshotSusdscTVL()`
-3. Wait for cooldown period
+3. Wait for next block
 4. Call `distribute()`
 
 **Prevention:**
@@ -289,9 +290,10 @@ Error: YieldRecipientChanged(<current_recipient>)
 - Retry `distribute()` later
 
 **Prevention:**
-- Check `previewDistribute()` before calling `distribute()`
+- Check `previewDistribute()` before calling `distribute()` to see expected yield
 - Monitor extension's pending yield
 - Only call `distribute()` when yield is available
+- **Note**: `previewDistribute()` shows calculations but doesn't validate snapshot validity
 
 ---
 
@@ -310,7 +312,7 @@ Error: YieldRecipientChanged(<current_recipient>)
 **Recovery:**
 1. Admin unpauses: `pause(false)`
 2. Operator takes fresh snapshot: `snapshotSusdscTVL()`
-3. Wait for cooldown
+3. Wait for next block
 4. Distribute: `distribute()`
 
 **Prevention:**
@@ -320,29 +322,7 @@ Error: YieldRecipientChanged(<current_recipient>)
 
 ---
 
-#### State 2: Cooldown > Max Age (Configuration Error)
-
-**Situation:**
-- Admin misconfigured: `snapShotCutoffPeriod >= snapshotMaxAge`
-- No valid window exists
-- All distributions will fail
-
-**Recovery:**
-1. Admin fixes configuration:
-   - Reduce cooldown: `setSnapShotCutoffPeriod(<value < maxAge>)`
-   - OR increase max age: `setSnapshotMaxAge(<value > cooldown>)`
-2. Operator takes fresh snapshot
-3. Wait for cooldown
-4. Distribute
-
-**Prevention:**
-- Contract validates: `cooldown < maxAge` on both setters
-- Monitor configuration changes
-- Test configuration changes in staging first
-
----
-
-#### State 3: Operator Role Lost + No Backup
+#### State 2: Operator Role Lost + No Backup
 
 **Situation:**
 - Operator's role was revoked
@@ -352,7 +332,7 @@ Error: YieldRecipientChanged(<current_recipient>)
 **Recovery:**
 1. Admin grants role to new operator: `grantRole(OPERATOR_ROLE, <new_operator>)`
 2. New operator takes fresh snapshot
-3. Wait for cooldown
+3. Wait for next block
 4. Distribute
 
 **Prevention:**
@@ -370,22 +350,26 @@ Error: YieldRecipientChanged(<current_recipient>)
    - Alert when: `block.timestamp - lastSnapshotTimestamp > snapshotMaxAge * 0.75`
    - Critical when: `block.timestamp - lastSnapshotTimestamp > snapshotMaxAge`
 
-2. **Time Since Last Distribution**
+2. **Block Number Difference**
+   - Alert if: `block.number == lastSnapshotBlockNumber` (same block)
+   - Verify: `block.number > lastSnapshotBlockNumber` before distributing
+
+3. **Time Since Last Distribution**
    - Alert if no distribution in 24 hours (configurable)
 
-3. **Contract State**
+4. **Contract State**
    - Monitor pause status
    - Monitor operator role status
    - Monitor yield recipient address
 
-4. **Configuration**
-   - Alert on cooldown/max age changes
-   - Verify: `cooldown < maxAge` after any change
+5. **Configuration**
+   - Alert on max age changes
+   - Verify max age is reasonable (1 minute to 7 days)
 
 ### Key Metrics to Track
 
 - `lastSnapshotTimestamp` - When was last snapshot taken?
-- `snapShotCutoffPeriod` - What's the cooldown requirement?
+- `lastSnapshotBlockNumber` - Which block was snapshot taken in?
 - `snapshotMaxAge` - What's the maximum age?
 - `paused()` - Is contract paused?
 - `hasRole(OPERATOR_ROLE, <operator>)` - Does operator have role?
@@ -395,7 +379,7 @@ Error: YieldRecipientChanged(<current_recipient>)
 ### ✅ DO
 
 - Always take snapshot before distributing
-- Wait for cooldown period before distributing
+- Wait for next block before distributing
 - Take fresh snapshot for each distribution cycle
 - Monitor snapshot age and contract state
 - Have backup operator configured
@@ -405,7 +389,7 @@ Error: YieldRecipientChanged(<current_recipient>)
 ### ❌ DON'T
 
 - Don't call `distribute()` without snapshot
-- Don't call `distribute()` before cooldown elapses
+- Don't call `distribute()` in same block as snapshot
 - Don't use stale snapshots (older than max age)
 - Don't assume snapshot is still valid after long pause
 - Don't operate without monitoring/alerting
@@ -423,15 +407,17 @@ Error: YieldRecipientChanged(<current_recipient>)
    - Check if paused: `paused()`
    - Check operator role: `hasRole(OPERATOR_ROLE, <operator>)`
    - Check snapshot timestamp: `lastSnapshotTimestamp()`
-   - Check configuration: `snapShotCutoffPeriod()`, `snapshotMaxAge()`
+   - Check snapshot block: `lastSnapshotBlockNumber()`
+   - Check configuration: `snapshotMaxAge()`
 
 3. **Take Corrective Action**
    - Follow recovery steps for identified scenario
    - If unclear, contact admin
 
 4. **Verify Fix**
-   - Use `previewDistribute()` to verify before actual distribution
-   - Check that all validations would pass
+   - Use `previewDistribute()` to verify calculations before actual distribution
+   - **Note**: `previewDistribute()` doesn't validate snapshot, so verify snapshot validity separately
+   - Check that `block.number > lastSnapshotBlockNumber` and snapshot is not too old
 
 ### If System Needs to be Paused
 
@@ -446,7 +432,7 @@ Error: YieldRecipientChanged(<current_recipient>)
 
 3. **After Unpause:**
    - Take fresh snapshot immediately
-   - Wait for cooldown
+   - Wait for next block
    - Resume distributions
 
 ## Preview Functions (Before Distributing)
@@ -458,7 +444,9 @@ Before calling `distribute()`, you can preview what will happen:
 **`previewDistribute()`** - Preview the exact distribution that would occur
 - Returns: `(couldBeMinted, feeToStartale, toEarn, toOn, toStartaleExtra, S_base, T_earn, T_yield)`
 - Shows what would be distributed without actually executing
-- Requires valid snapshot (same validation as `distribute()`)
+- Uses snapshot TVL (`lastSusdscTVL`) for calculations
+- **Note**: Does NOT validate snapshot age/block number (unlike `distribute()`)
+- Safe to call even if snapshot is stale - it will show what distribution would look like with current snapshot
 
 **`previewSplitCurrent()`** - Preview split with current carries
 - Returns same values but includes carry calculations
@@ -471,28 +459,36 @@ Before calling `distribute()`, you can preview what will happen:
 
 // Verify values look reasonable
 if (minted > 0) {
-    // Proceed with distribution
+    // IMPORTANT: Ensure snapshot is valid before distributing
+    // - block.number > lastSnapshotBlockNumber
+    // - block.timestamp - lastSnapshotTimestamp <= snapshotMaxAge
+    // Then proceed with distribution
     rr.distribute();
 }
 ```
+
+**Important Notes:**
+- `previewDistribute()` uses the snapshot TVL for calculations, so it reflects what distribution would look like with the current snapshot
+- However, `previewDistribute()` does NOT validate snapshot age or block number
+- Always verify snapshot validity separately before calling `distribute()`
 
 ## Quick Reference
 
 ### Function Call Order
 ```
-1. snapshotSusdscTVL()  [Wait cooldown]  2. distribute()
+1. snapshotSusdscTVL()  [Wait for next block]  2. distribute()
 ```
 
-### Time Requirements
-- **Minimum wait**: `snapShotCutoffPeriod` (default: 15 minutes)
-- **Maximum age**: `snapshotMaxAge` (default: 4 hours)
-- **Valid window**: Between minimum and maximum
+### Block Requirements
+- **Block requirement**: Must be in different block (block.number > lastSnapshotBlockNumber)
+- **Maximum age**: `snapshotMaxAge` (default: 4 hours) - time-based limit to prevent stale snapshots
+- **Valid window**: Previous block (block-based) AND within max age (time-based)
 
 ### Common Errors
 | Error | Cause | Fix |
 |-------|-------|-----|
-| `SnapShotCutoffPeriodNotElapsed(0, ...)` | No snapshot | Take snapshot |
-| `SnapShotCutoffPeriodNotElapsed(t, ...)` | Too recent | Wait for cooldown |
+| `LastSnapshotInvalid()` | No snapshot | Take snapshot |
+| `MustSnapshotInPreviousBlocks(...)` | Same block | Wait for next block |
 | `SnapshotTooOld(...)` | Too old | Take fresh snapshot |
 | `EnforcedPause()` | Contract paused | Admin unpause |
 | `AccessControlUnauthorizedAccount(...)` | No role | Admin grant role |
@@ -502,30 +498,30 @@ if (minted > 0) {
 ### Missed Snapshot Before Distribution
 
 **If operator forgets to take snapshot:**
-- `distribute()` will revert with `SnapShotCutoffPeriodNotElapsed(0, ...)`
-- **Recovery**: Take snapshot, wait cooldown, then distribute
-- **Impact**: Distribution delayed by cooldown period (~15 minutes)
+- `distribute()` will revert with `LastSnapshotInvalid()`
+- **Recovery**: Take snapshot, wait for next block, then distribute
+- **Impact**: Distribution delayed by one block (block time depends on network, typically 12 seconds on Ethereum)
 
 ### Missed Distribution
 
 **If operator forgets to distribute:**
 - Yield accumulates in extension
 - No immediate impact (yield is safe)
-- **Recovery**: Take fresh snapshot (if old one expired), wait cooldown, distribute
+- **Recovery**: Take fresh snapshot (if old one expired), wait for next block, distribute
 - **Impact**: Users don't receive yield until next distribution
 
 ### Missed Snapshot Refresh (Snapshot Expired)
 
 **If operator forgets to take new snapshot and old one expires:**
 - `distribute()` will revert with `SnapshotTooOld(...)`
-- **Recovery**: Take fresh snapshot, wait cooldown, then distribute
-- **Impact**: Distribution delayed by cooldown period (~15 minutes)
+- **Recovery**: Take fresh snapshot, wait for next block, then distribute
+- **Impact**: Distribution delayed by one block (block time depends on network, typically 12 seconds on Ethereum)
 
 ### Multiple Missed Cycles
 
 **If operator misses multiple distributions:**
 - Yield continues accumulating in extension
-- Each missed cycle requires: fresh snapshot → wait cooldown → distribute
+- Each missed cycle requires: fresh snapshot → wait for next block → distribute
 - **Recovery**: Resume normal workflow (one cycle at a time)
 - **Impact**: Users receive accumulated yield when distribution resumes
 
@@ -541,4 +537,3 @@ For operational issues:
 - Verify contract state
 - Review recent transactions
 - Check monitoring/alerting
-

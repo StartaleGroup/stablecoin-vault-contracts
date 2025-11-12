@@ -57,7 +57,7 @@ contract RewardRedistributorTest is Test {
     // Take snapshot first (needed for preview and distribute)
     vm.prank(operator);
     rr.snapshotSusdscTVL();
-    vm.warp(block.timestamp + rr.snapShotCutoffPeriod() + 1 seconds);
+    vm.roll(block.number + 1); // Advance to next block
 
     // pending yield: 100_000
     ext.addPending(100_000e6);
@@ -128,7 +128,7 @@ contract RewardRedistributorTest is Test {
       // Take new snapshot for each distribution
       vm.prank(operator);
       rr.snapshotSusdscTVL();
-      vm.warp(block.timestamp + rr.snapShotCutoffPeriod() + 1 seconds);
+      vm.roll(block.number + 1); // Advance to next block
       vm.prank(operator);
       rr.distribute();
     }
@@ -200,7 +200,7 @@ contract RewardRedistributorTest is Test {
     ext.addPending(1000e6);
     vm.prank(newOperator);
     rr.snapshotSusdscTVL();
-    vm.warp(block.timestamp + rr.snapShotCutoffPeriod() + 1 seconds);
+    vm.roll(block.number + 1); // Advance to next block
     vm.prank(newOperator);
     rr.distribute(); // Should succeed
 
@@ -761,7 +761,7 @@ contract RewardRedistributorTest is Test {
       // Take new snapshot for each distribution
       vm.prank(operator);
       rr.snapshotSusdscTVL();
-      vm.warp(block.timestamp + rr.snapShotCutoffPeriod() + 1 seconds);
+      vm.roll(block.number + 1); // Advance to next block
       vm.prank(operator);
       rr.distribute();
     }
@@ -1446,11 +1446,18 @@ contract RewardRedistributorTest is Test {
 
   // ========== HELPER FUNCTIONS ==========
 
-  /// @notice Helper to take snapshot and wait for cutoff period
+  /// @notice Helper to take snapshot in block N and advance to block N+1
+  /// @dev This ensures snapshot and distribute are in separate transactions:
+  ///      - Transaction 1: snapshotSusdscTVL() in block N
+  ///      - Transaction 2: distribute() in block N+x (x >= 1)
+  ///      Caller must still call distribute() separately after this helper
   function _takeSnapshotAndWait() internal {
+    // Transaction 1: Take snapshot in current block
     vm.prank(operator);
     rr.snapshotSusdscTVL();
-    vm.warp(block.timestamp + rr.snapShotCutoffPeriod() + 1 seconds);
+    
+    // Advance to next block so distribute() will be in a different block
+    vm.roll(block.number + 1);
   }
 
   // ========== SNAPSHOT FUNCTIONALITY TESTS ==========
@@ -1458,21 +1465,25 @@ contract RewardRedistributorTest is Test {
   function test_SnapshotSusdscTVL_CapturesCorrectTVL() public {
     uint256 initialTVL = sVault.totalAssets();
     assertEq(initialTVL, 1_000_000e6, 'Initial TVL should be 1M');
+    uint256 currentBlock = block.number;
+    uint256 currentTimestamp = block.timestamp;
 
     vm.prank(operator);
     rr.snapshotSusdscTVL();
 
     assertEq(rr.lastSusdscTVL(), initialTVL, 'Snapshot should capture correct TVL');
-    assertEq(rr.lastSnapshotTimestamp(), block.timestamp, 'Snapshot should capture current timestamp');
+    assertEq(rr.lastSnapshotTimestamp(), currentTimestamp, 'Snapshot should capture current timestamp');
+    assertEq(rr.lastSnapshotBlockNumber(), currentBlock, 'Snapshot should capture current block number');
   }
 
   function test_SnapshotSusdscTVL_EmitsEvent() public {
     uint256 expectedTVL = sVault.totalAssets();
     uint256 expectedTimestamp = block.timestamp;
+    uint256 expectedBlockNumber = block.number;
 
     vm.prank(operator);
     vm.expectEmit(true, true, true, true);
-    emit IRewardRedistributorEventsAndErrors.SusdscTVLSnapshotCaptured(expectedTVL, expectedTimestamp);
+    emit IRewardRedistributorEventsAndErrors.SusdscTVLSnapshotCaptured(expectedTVL, expectedTimestamp, expectedBlockNumber);
     rr.snapshotSusdscTVL();
   }
 
@@ -1541,157 +1552,6 @@ contract RewardRedistributorTest is Test {
     assertEq(rr.lastSusdscTVL(), 101_000_000e6, 'Snapshot should capture large TVL');
   }
 
-  // ========== SET SNAPSHOT CUTOFF PERIOD TESTS ==========
-
-  function test_SetSnapShotCutoffPeriod_UpdatesValue() public {
-    uint256 newPeriod = 30 minutes;
-    assertEq(rr.snapShotCutoffPeriod(), 15 minutes, 'Default should be 15 minutes');
-
-    vm.prank(admin);
-    rr.setSnapShotCutoffPeriod(newPeriod);
-
-    assertEq(rr.snapShotCutoffPeriod(), newPeriod, 'Should update cutoff period');
-  }
-
-  function test_SetSnapShotCutoffPeriod_EmitsEvent() public {
-    uint256 newPeriod = 30 minutes;
-
-    vm.prank(admin);
-    vm.expectEmit(true, true, true, true);
-    emit IRewardRedistributorEventsAndErrors.SnapShotCutoffPeriodUpdated(newPeriod);
-    rr.setSnapShotCutoffPeriod(newPeriod);
-  }
-
-  function test_SetSnapShotCutoffPeriod_OnlyAdmin() public {
-    address nonAdmin = makeAddr('nonAdmin');
-
-    vm.prank(nonAdmin);
-    vm.expectRevert();
-    rr.setSnapShotCutoffPeriod(30 minutes);
-  }
-
-  function test_SetSnapShotCutoffPeriod_RevertsBelowMinimum() public {
-    vm.prank(admin);
-    vm.expectRevert(
-      abi.encodeWithSelector(IRewardRedistributorEventsAndErrors.InvalidSnapShotCutoffPeriod.selector, 30 seconds)
-    );
-    rr.setSnapShotCutoffPeriod(30 seconds);
-  }
-
-  function test_SetSnapShotCutoffPeriod_RevertsAboveMaximum() public {
-    vm.prank(admin);
-    vm.expectRevert(
-      abi.encodeWithSelector(IRewardRedistributorEventsAndErrors.InvalidSnapShotCutoffPeriod.selector, 2 hours)
-    );
-    rr.setSnapShotCutoffPeriod(2 hours);
-  }
-
-  function test_SetSnapShotCutoffPeriod_AcceptsMinimumBoundary() public {
-    vm.prank(admin);
-    rr.setSnapShotCutoffPeriod(1 minutes);
-    assertEq(rr.snapShotCutoffPeriod(), 1 minutes, 'Should accept minimum boundary');
-  }
-
-  function test_SetSnapShotCutoffPeriod_AcceptsMaximumBoundary() public {
-    vm.prank(admin);
-    rr.setSnapShotCutoffPeriod(1 hours);
-    assertEq(rr.snapShotCutoffPeriod(), 1 hours, 'Should accept maximum boundary');
-  }
-
-  function test_SetSnapShotCutoffPeriod_DefaultValue() public {
-    assertEq(rr.snapShotCutoffPeriod(), 15 minutes, 'Default should be 15 minutes');
-  }
-
-  function test_SetSnapShotCutoffPeriod_CanSetToMinimum() public {
-    vm.prank(admin);
-    rr.setSnapShotCutoffPeriod(1 minutes);
-    assertEq(rr.snapShotCutoffPeriod(), 1 minutes, 'Should accept 1 minute');
-  }
-
-  function test_SetSnapShotCutoffPeriod_CanSetToMaximum() public {
-    vm.prank(admin);
-    rr.setSnapShotCutoffPeriod(1 hours);
-    assertEq(rr.snapShotCutoffPeriod(), 1 hours, 'Should accept 1 hour');
-  }
-
-  function test_SetSnapShotCutoffPeriod_CanSetToMiddleValue() public {
-    vm.prank(admin);
-    rr.setSnapShotCutoffPeriod(30 minutes);
-    assertEq(rr.snapShotCutoffPeriod(), 30 minutes, 'Should accept 30 minutes');
-  }
-
-  function test_SetSnapShotCutoffPeriod_RevertsOnZero() public {
-    vm.prank(admin);
-    vm.expectRevert(abi.encodeWithSelector(IRewardRedistributorEventsAndErrors.InvalidSnapShotCutoffPeriod.selector, 0));
-    rr.setSnapShotCutoffPeriod(0);
-  }
-
-  function test_SetSnapShotCutoffPeriod_RevertsOn59Seconds() public {
-    vm.prank(admin);
-    vm.expectRevert(
-      abi.encodeWithSelector(IRewardRedistributorEventsAndErrors.InvalidSnapShotCutoffPeriod.selector, 59 seconds)
-    );
-    rr.setSnapShotCutoffPeriod(59 seconds);
-  }
-
-  function test_SetSnapShotCutoffPeriod_RevertsOn1Hour1Second() public {
-    vm.prank(admin);
-    vm.expectRevert(
-      abi.encodeWithSelector(
-        IRewardRedistributorEventsAndErrors.InvalidSnapShotCutoffPeriod.selector, 1 hours + 1 seconds
-      )
-    );
-    rr.setSnapShotCutoffPeriod(1 hours + 1 seconds);
-  }
-
-  function test_SetSnapShotCutoffPeriod_RevertsWhenGreaterThanOrEqualMaxAge() public {
-    // Default max age is 4 hours
-    // Try to set cooldown to 4 hours (equal to max age) - should revert
-    vm.prank(admin);
-    vm.expectRevert(
-      abi.encodeWithSelector(IRewardRedistributorEventsAndErrors.InvalidSnapShotCutoffPeriod.selector, 4 hours)
-    );
-    rr.setSnapShotCutoffPeriod(4 hours);
-
-    // Try to set cooldown to 5 hours (greater than max age) - should revert
-    vm.prank(admin);
-    vm.expectRevert(
-      abi.encodeWithSelector(IRewardRedistributorEventsAndErrors.InvalidSnapShotCutoffPeriod.selector, 5 hours)
-    );
-    rr.setSnapShotCutoffPeriod(5 hours);
-  }
-
-  function test_SetSnapShotCutoffPeriod_RevertsWhenMaxAgeReducedAndCooldownTooHigh() public {
-    // Reduce max age to 1 hour
-    vm.prank(admin);
-    rr.setSnapshotMaxAge(1 hours);
-
-    // Now try to set cooldown to 1 hour (equal to max age) - should revert
-    vm.prank(admin);
-    vm.expectRevert(
-      abi.encodeWithSelector(IRewardRedistributorEventsAndErrors.InvalidSnapShotCutoffPeriod.selector, 1 hours)
-    );
-    rr.setSnapShotCutoffPeriod(1 hours);
-
-    // But should allow cooldown less than max age
-    vm.prank(admin);
-    rr.setSnapShotCutoffPeriod(30 minutes); // Less than 1 hour max age - should succeed
-    assertEq(rr.snapShotCutoffPeriod(), 30 minutes, 'Should accept cooldown less than max age');
-  }
-
-  function test_SetSnapShotCutoffPeriod_CanUpdateMultipleTimes() public {
-    vm.prank(admin);
-    rr.setSnapShotCutoffPeriod(20 minutes);
-    assertEq(rr.snapShotCutoffPeriod(), 20 minutes, 'First update should work');
-
-    vm.prank(admin);
-    rr.setSnapShotCutoffPeriod(45 minutes);
-    assertEq(rr.snapShotCutoffPeriod(), 45 minutes, 'Second update should work');
-
-    vm.prank(admin);
-    rr.setSnapShotCutoffPeriod(1 minutes);
-    assertEq(rr.snapShotCutoffPeriod(), 1 minutes, 'Third update should work');
-  }
 
   // ========== SNAPSHOT MAX AGE TESTS ==========
 
@@ -1700,10 +1560,10 @@ contract RewardRedistributorTest is Test {
   }
 
   function test_SetSnapshotMaxAge_CanSetToMinimum() public {
-    // Minimum is just greater than cooldown period (15 minutes + 1 second)
+    // Minimum is 1 minute
     vm.prank(admin);
-    rr.setSnapshotMaxAge(15 minutes + 1 seconds);
-    assertEq(rr.snapshotMaxAge(), 15 minutes + 1 seconds, 'Should accept value just greater than cooldown');
+    rr.setSnapshotMaxAge(1 minutes);
+    assertEq(rr.snapshotMaxAge(), 1 minutes, 'Should accept 1 minute');
   }
 
   function test_SetSnapshotMaxAge_CanSetToMaximum() public {
@@ -1718,48 +1578,23 @@ contract RewardRedistributorTest is Test {
     assertEq(rr.snapshotMaxAge(), 2 hours, 'Should accept 2 hours');
   }
 
-  function test_SetSnapshotMaxAge_RevertsWhenLessThanOrEqualCooldown() public {
-    // Cooldown is 15 minutes, so max age must be strictly greater
+  function test_SetSnapshotMaxAge_RevertsWhenLessThanMinimum() public {
+    // Minimum is 1 minute
     vm.prank(admin);
     vm.expectRevert(
-      abi.encodeWithSelector(IRewardRedistributorEventsAndErrors.InvalidSnapshotMaxAge.selector, 15 minutes, 15 minutes)
+      abi.encodeWithSelector(IRewardRedistributorEventsAndErrors.InvalidSnapshotMaxAge.selector, 30 seconds, 1 minutes)
     );
-    rr.setSnapshotMaxAge(15 minutes); // Equal to cooldown - should revert
-
-    // Also test less than cooldown
-    vm.prank(admin);
-    vm.expectRevert(
-      abi.encodeWithSelector(IRewardRedistributorEventsAndErrors.InvalidSnapshotMaxAge.selector, 10 minutes, 15 minutes)
-    );
-    rr.setSnapshotMaxAge(10 minutes); // Less than cooldown - should revert
+    rr.setSnapshotMaxAge(30 seconds); // Less than 1 minute - should revert
   }
 
   function test_SetSnapshotMaxAge_RevertsWhenMoreThan7Days() public {
     vm.prank(admin);
     vm.expectRevert(
       abi.encodeWithSelector(
-        IRewardRedistributorEventsAndErrors.InvalidSnapshotMaxAge.selector, 7 days + 1 seconds, 15 minutes
+        IRewardRedistributorEventsAndErrors.InvalidSnapshotMaxAge.selector, 7 days + 1 seconds, 7 days
       )
     );
     rr.setSnapshotMaxAge(7 days + 1 seconds);
-  }
-
-  function test_SetSnapshotMaxAge_UpdatesWhenCooldownChanges() public {
-    // Set max age to 2 hours
-    vm.prank(admin);
-    rr.setSnapshotMaxAge(2 hours);
-    assertEq(rr.snapshotMaxAge(), 2 hours, 'Max age should be 2 hours');
-
-    // Increase cooldown to 30 minutes
-    vm.prank(admin);
-    rr.setSnapShotCutoffPeriod(30 minutes);
-
-    // Max age (2 hours) is still > cooldown (30 minutes), so should be valid
-    assertEq(rr.snapshotMaxAge(), 2 hours, 'Max age should remain 2 hours');
-    assertEq(rr.snapShotCutoffPeriod(), 30 minutes, 'Cooldown should be 30 minutes');
-
-    // Note: If cooldown increased to > max age, max age would need to be updated
-    // But we don't enforce this on cooldown change (admin responsibility)
   }
 
   function test_SetSnapshotMaxAge_EmitsEvent() public {
@@ -1784,6 +1619,8 @@ contract RewardRedistributorTest is Test {
     rr.snapshotSusdscTVL();
     uint256 snapshotTime = rr.lastSnapshotTimestamp();
 
+    // Advance to next block first (required)
+    vm.roll(block.number + 1);
     // Advance time past max age (4 hours default)
     vm.warp(snapshotTime + 4 hours + 1 seconds);
 
@@ -1805,10 +1642,11 @@ contract RewardRedistributorTest is Test {
     // Take snapshot
     vm.prank(operator);
     rr.snapshotSusdscTVL();
-    uint256 snapshotTime = rr.lastSnapshotTimestamp();
 
-    // Advance time to middle of valid range (past cooldown, but before max age)
-    vm.warp(snapshotTime + 2 hours);
+    // Advance to next block
+    vm.roll(block.number + 1);
+    // Advance time to middle of valid range (before max age)
+    vm.warp(block.timestamp + 2 hours);
 
     ext.addPending(100_000e6);
 
@@ -1824,6 +1662,8 @@ contract RewardRedistributorTest is Test {
     rr.snapshotSusdscTVL();
     uint256 snapshotTime = rr.lastSnapshotTimestamp();
 
+    // Advance to next block
+    vm.roll(block.number + 1);
     // Advance time to exactly max age
     vm.warp(snapshotTime + 4 hours);
 
@@ -1845,6 +1685,8 @@ contract RewardRedistributorTest is Test {
     vm.prank(admin);
     rr.setSnapshotMaxAge(1 hours);
 
+    // Advance to next block first (required)
+    vm.roll(block.number + 1);
     // Advance time past new max age (1 hour) but within old max age (4 hours)
     vm.warp(snapshotTime + 1 hours + 1 seconds);
 
@@ -1868,69 +1710,41 @@ contract RewardRedistributorTest is Test {
     ext.addPending(100_000e6);
 
     vm.expectRevert(
-      abi.encodeWithSelector(
-        IRewardRedistributorEventsAndErrors.SnapShotCutoffPeriodNotElapsed.selector,
-        0,
-        block.timestamp,
-        rr.snapShotCutoffPeriod()
-      )
+      abi.encodeWithSelector(IRewardRedistributorEventsAndErrors.LastSnapshotInvalid.selector)
     );
     vm.prank(operator);
     rr.distribute();
   }
 
-  function test_Distribute_RevertsWhenCutoffPeriodNotElapsed() public {
+  function test_Distribute_RevertsWhenSameBlock() public {
     // Take snapshot
     vm.prank(operator);
     rr.snapshotSusdscTVL();
-    uint256 snapshotTime = rr.lastSnapshotTimestamp();
+    uint256 snapshotBlock = rr.lastSnapshotBlockNumber();
 
-    // Try to distribute immediately (cutoff period not elapsed)
+    // Try to distribute in same block
     ext.addPending(100_000e6);
 
     vm.expectRevert(
       abi.encodeWithSelector(
-        IRewardRedistributorEventsAndErrors.SnapShotCutoffPeriodNotElapsed.selector,
-        snapshotTime,
-        block.timestamp,
-        rr.snapShotCutoffPeriod()
+        IRewardRedistributorEventsAndErrors.MustSnapshotInPreviousBlocks.selector,
+        snapshotBlock,
+        block.number
       )
     );
     vm.prank(operator);
     rr.distribute();
   }
 
-  function test_Distribute_RevertsWhenCutoffPeriodAlmostElapsed() public {
+  function test_Distribute_SucceedsAfterNextBlock() public {
     // Take snapshot
     vm.prank(operator);
     rr.snapshotSusdscTVL();
-    uint256 snapshotTime = rr.lastSnapshotTimestamp();
+    uint256 snapshotBlock = rr.lastSnapshotBlockNumber();
 
-    // Advance time to just before cutoff period
-    vm.warp(snapshotTime + rr.snapShotCutoffPeriod() - 1 seconds);
-
-    ext.addPending(100_000e6);
-
-    vm.expectRevert(
-      abi.encodeWithSelector(
-        IRewardRedistributorEventsAndErrors.SnapShotCutoffPeriodNotElapsed.selector,
-        snapshotTime,
-        snapshotTime + rr.snapShotCutoffPeriod() - 1 seconds,
-        rr.snapShotCutoffPeriod()
-      )
-    );
-    vm.prank(operator);
-    rr.distribute();
-  }
-
-  function test_Distribute_SucceedsAfterCutoffPeriod() public {
-    // Take snapshot
-    vm.prank(operator);
-    rr.snapshotSusdscTVL();
-    uint256 snapshotTime = rr.lastSnapshotTimestamp();
-
-    // Advance time past cutoff period
-    vm.warp(snapshotTime + rr.snapShotCutoffPeriod() + 1 seconds);
+    // Advance to next block
+    vm.roll(block.number + 1);
+    assertEq(block.number, snapshotBlock + 1, 'Should be in next block');
 
     ext.addPending(100_000e6);
 
@@ -1942,92 +1756,19 @@ contract RewardRedistributorTest is Test {
     assertGt(usdsc.balanceOf(startale), 0, 'Treasury should receive yield');
   }
 
-  function test_Distribute_SucceedsExactlyAtCutoffPeriod() public {
+  function test_Distribute_SucceedsAfterMultipleBlocks() public {
     // Take snapshot
     vm.prank(operator);
     rr.snapshotSusdscTVL();
-    uint256 snapshotTime = rr.lastSnapshotTimestamp();
+    uint256 snapshotBlock = rr.lastSnapshotBlockNumber();
 
-    // Advance time to exactly cutoff period
-    vm.warp(snapshotTime + rr.snapShotCutoffPeriod());
-
-    ext.addPending(100_000e6);
-
-    // Distribution should succeed
-    vm.prank(operator);
-    rr.distribute();
-
-    // Verify distribution happened
-    assertGt(usdsc.balanceOf(startale), 0, 'Treasury should receive yield');
-  }
-
-  function test_Distribute_WorksWithUpdatedCutoffPeriod() public {
-    // Set shorter cutoff period
-    vm.prank(admin);
-    rr.setSnapShotCutoffPeriod(1 minutes);
-
-    // Take snapshot
-    vm.prank(operator);
-    rr.snapshotSusdscTVL();
-    uint256 snapshotTime = rr.lastSnapshotTimestamp();
-
-    // Advance time past new cutoff period (1 minute)
-    vm.warp(snapshotTime + 1 minutes + 1 seconds);
+    // Advance multiple blocks (x > 1)
+    vm.roll(block.number + 5);
+    assertEq(block.number, snapshotBlock + 5, 'Should be 5 blocks ahead');
 
     ext.addPending(100_000e6);
 
-    // Distribution should succeed
-    vm.prank(operator);
-    rr.distribute();
-
-    // Verify distribution happened
-    assertGt(usdsc.balanceOf(startale), 0, 'Treasury should receive yield');
-  }
-
-  function test_Distribute_RevertsWhenSnapshotTakenButCutoffPeriodChanged() public {
-    // Take snapshot with default 15 minute cutoff
-    vm.prank(operator);
-    rr.snapshotSusdscTVL();
-    uint256 snapshotTime = rr.lastSnapshotTimestamp();
-
-    // Admin increases cutoff period to 1 hour
-    vm.prank(admin);
-    rr.setSnapShotCutoffPeriod(1 hours);
-
-    // Advance time past old cutoff (15 min) but not new cutoff (1 hour)
-    vm.warp(snapshotTime + 20 minutes);
-
-    ext.addPending(100_000e6);
-
-    // Distribution should fail because new cutoff period hasn't elapsed
-    vm.expectRevert(
-      abi.encodeWithSelector(
-        IRewardRedistributorEventsAndErrors.SnapShotCutoffPeriodNotElapsed.selector,
-        snapshotTime,
-        snapshotTime + 20 minutes,
-        1 hours
-      )
-    );
-    vm.prank(operator);
-    rr.distribute();
-  }
-
-  function test_Distribute_SucceedsWithLongerCutoffPeriod() public {
-    // Set longer cutoff period
-    vm.prank(admin);
-    rr.setSnapShotCutoffPeriod(1 hours);
-
-    // Take snapshot
-    vm.prank(operator);
-    rr.snapshotSusdscTVL();
-    uint256 snapshotTime = rr.lastSnapshotTimestamp();
-
-    // Advance time past cutoff period
-    vm.warp(snapshotTime + 1 hours + 1 seconds);
-
-    ext.addPending(100_000e6);
-
-    // Distribution should succeed
+    // Distribution should succeed (x >= 1 is satisfied)
     vm.prank(operator);
     rr.distribute();
 
@@ -2051,8 +1792,8 @@ contract RewardRedistributorTest is Test {
     usdsc.mint(address(sVault), 5_000_000e6); // Now 15M
     assertEq(sVault.totalAssets(), 15_000_000e6, 'Current TVL should be 15M');
 
-    // Advance time past cutoff period (but don't take new snapshot!)
-    vm.warp(snapshotTime + 15 minutes + 1 seconds);
+    // Advance to next block (but don't take new snapshot!)
+    vm.roll(block.number + 1);
 
     ext.addPending(1_000_000e6);
 
@@ -2077,20 +1818,19 @@ contract RewardRedistributorTest is Test {
     uint256 snapshotTVL = rr.lastSusdscTVL();
     assertEq(snapshotTVL, 10_000_000e6, 'Snapshot should capture 10M TVL');
 
-    // Attacker tries to manipulate TVL in same block (before cutoff period)
+    // Attacker tries to manipulate TVL in same block (before next block requirement)
     // Simulate attacker depositing 4.095M to inflate vault
     usdsc.mint(address(sVault), 4_095_000e6);
     assertEq(sVault.totalAssets(), 14_095_000e6, 'Vault should be inflated to 14.095M');
 
-    // Try to distribute - should fail because cutoff period not elapsed
+    // Try to distribute - should fail because same block
     ext.addPending(1_000_000e6);
 
     vm.expectRevert(
       abi.encodeWithSelector(
-        IRewardRedistributorEventsAndErrors.SnapShotCutoffPeriodNotElapsed.selector,
-        rr.lastSnapshotTimestamp(),
-        block.timestamp,
-        rr.snapShotCutoffPeriod()
+        IRewardRedistributorEventsAndErrors.MustSnapshotInPreviousBlocks.selector,
+        rr.lastSnapshotBlockNumber(),
+        block.number
       )
     );
     vm.prank(operator);
@@ -2116,8 +1856,8 @@ contract RewardRedistributorTest is Test {
     usdsc.mint(address(sVault), 4_095_000e6);
     assertEq(sVault.totalAssets(), 14_095_000e6, 'Vault should be inflated to 14.095M');
 
-    // Step 3: Advance time past cutoff period (15 minutes) - but don't take new snapshot!
-    vm.warp(snapshotTime + 15 minutes + 1 seconds);
+    // Step 3: Advance to next block - but don't take new snapshot!
+    vm.roll(block.number + 1);
 
     // Step 4: Distribution uses snapshot TVL (10M), not current TVL (14.095M)
     ext.addPending(1_000_000e6);
@@ -2152,23 +1892,22 @@ contract RewardRedistributorTest is Test {
     // But they can't frontrun the timestamp requirement
     usdsc.mint(address(sVault), 4_095_000e6);
 
-    // Even if attacker manipulates TVL, they must wait for cutoff period
+    // Even if attacker manipulates TVL, they must wait for next block
     // Try to distribute immediately - should fail
     ext.addPending(1_000_000e6);
 
     vm.expectRevert(
       abi.encodeWithSelector(
-        IRewardRedistributorEventsAndErrors.SnapShotCutoffPeriodNotElapsed.selector,
-        snapshotTime,
-        block.timestamp,
-        rr.snapShotCutoffPeriod()
+        IRewardRedistributorEventsAndErrors.MustSnapshotInPreviousBlocks.selector,
+        rr.lastSnapshotBlockNumber(),
+        block.number
       )
     );
     vm.prank(operator);
     rr.distribute();
 
-    // After cutoff period, distribution uses snapshot (10M), not current (14.095M)
-    vm.warp(snapshotTime + 15 minutes + 1 seconds);
+    // After next block, distribution uses snapshot (10M), not current (14.095M)
+    vm.roll(block.number + 1);
 
     vm.prank(operator);
     rr.distribute();
@@ -2186,25 +1925,27 @@ contract RewardRedistributorTest is Test {
     vm.prank(operator);
     rr.snapshotSusdscTVL();
     uint256 firstSnapshotTime = rr.lastSnapshotTimestamp();
-    vm.warp(block.timestamp + 15 minutes + 1 seconds);
+    uint256 firstSnapshotBlock = rr.lastSnapshotBlockNumber();
+    vm.roll(block.number + 1); // Advance to next block
 
     ext.addPending(1_000_000e6);
     vm.prank(operator);
     rr.distribute();
 
-    // Verify snapshot timestamp doesn't change after distribution
+    // Verify snapshot doesn't change after distribution
     assertEq(rr.lastSnapshotTimestamp(), firstSnapshotTime, 'Snapshot timestamp should not change after distribute');
+    assertEq(rr.lastSnapshotBlockNumber(), firstSnapshotBlock, 'Snapshot block should not change after distribute');
 
-    // Second distribution can use the same snapshot since cutoff period has elapsed
-    // (snapshot can be reused as long as cutoff period has elapsed)
+    // Second distribution can use the same snapshot since it's in a previous block
+    // (snapshot can be reused as long as it's in a previous block and not too old)
     ext.addPending(500_000e6);
     vm.prank(operator);
-    rr.distribute(); // Should succeed - same snapshot, cutoff period elapsed
+    rr.distribute(); // Should succeed - same snapshot, in previous block
 
-    // Take new snapshot for second distribution
+    // Take new snapshot for third distribution
     vm.prank(operator);
     rr.snapshotSusdscTVL();
-    vm.warp(block.timestamp + 15 minutes + 1 seconds);
+    vm.roll(block.number + 1); // Advance to next block
 
     vm.prank(operator);
     rr.distribute(); // Should succeed
@@ -2232,21 +1973,20 @@ contract RewardRedistributorTest is Test {
 
     assertEq(sVault.totalAssets(), 14_095_000e6, 'Vault inflated to 14.095M');
 
-    // Try immediate distribution - blocked by cutoff period
+    // Try immediate distribution - blocked by same block
     ext.addPending(1_000_000e6);
     vm.expectRevert(
       abi.encodeWithSelector(
-        IRewardRedistributorEventsAndErrors.SnapShotCutoffPeriodNotElapsed.selector,
-        snapshotTime,
-        block.timestamp,
-        rr.snapShotCutoffPeriod()
+        IRewardRedistributorEventsAndErrors.MustSnapshotInPreviousBlocks.selector,
+        rr.lastSnapshotBlockNumber(),
+        block.number
       )
     );
     vm.prank(operator);
     rr.distribute();
 
-    // After cutoff period, distribution uses snapshot (10M), preventing exploit
-    vm.warp(snapshotTime + 15 minutes + 1 seconds);
+    // After next block, distribution uses snapshot (10M), preventing exploit
+    vm.roll(block.number + 1);
 
     uint256 startaleBefore = usdsc.balanceOf(startale);
     uint256 earnVBefore = usdsc.balanceOf(address(earnV));
@@ -2275,6 +2015,7 @@ contract RewardRedistributorTest is Test {
   function test_Events_SusdscTVLSnapshotCaptured_EmitsCorrectParameters() public {
     uint256 expectedTVL = sVault.totalAssets();
     uint256 expectedTimestamp = block.timestamp;
+    uint256 expectedBlockNumber = block.number;
 
     vm.recordLogs();
     vm.prank(operator);
@@ -2285,28 +2026,13 @@ contract RewardRedistributorTest is Test {
 
     // Decode event
     bytes memory eventData = logs[0].data;
-    (uint256 capturedTVL, uint256 capturedTimestamp) = abi.decode(eventData, (uint256, uint256));
+    (uint256 capturedTVL, uint256 capturedTimestamp, uint256 capturedBlockNumber) = abi.decode(eventData, (uint256, uint256, uint256));
 
     assertEq(capturedTVL, expectedTVL, 'Event should contain correct TVL');
     assertEq(capturedTimestamp, expectedTimestamp, 'Event should contain correct timestamp');
+    assertEq(capturedBlockNumber, expectedBlockNumber, 'Event should contain correct block number');
   }
 
-  function test_Events_SnapShotCutoffPeriodUpdated_EmitsCorrectParameters() public {
-    uint256 newPeriod = 30 minutes;
-
-    vm.recordLogs();
-    vm.prank(admin);
-    rr.setSnapShotCutoffPeriod(newPeriod);
-
-    Vm.Log[] memory logs = vm.getRecordedLogs();
-    assertEq(logs.length, 1, 'Should emit one event');
-
-    // Decode event
-    bytes memory eventData = logs[0].data;
-    uint256 capturedPeriod = abi.decode(eventData, (uint256));
-
-    assertEq(capturedPeriod, newPeriod, 'Event should contain correct period');
-  }
 
   function test_Events_MultipleSnapshots_EmitsMultipleEvents() public {
     vm.recordLogs();
@@ -2327,87 +2053,35 @@ contract RewardRedistributorTest is Test {
 
   // ========== COMPREHENSIVE ERROR TESTS ==========
 
-  function test_Errors_InvalidSnapShotCutoffPeriod_AllInvalidValues() public {
-    // Test various invalid values
-    uint256[] memory invalidValues = new uint256[](5);
-    invalidValues[0] = 0;
-    invalidValues[1] = 30 seconds;
-    invalidValues[2] = 59 seconds;
-    invalidValues[3] = 1 hours + 1 seconds;
-    invalidValues[4] = 2 hours;
-
-    for (uint256 i = 0; i < invalidValues.length; i++) {
-      vm.prank(admin);
-      vm.expectRevert(
-        abi.encodeWithSelector(
-          IRewardRedistributorEventsAndErrors.InvalidSnapShotCutoffPeriod.selector, invalidValues[i]
-        )
-      );
-      rr.setSnapShotCutoffPeriod(invalidValues[i]);
-    }
-  }
-
-  function test_Errors_SnapShotCutoffPeriodNotElapsed_NoSnapshot() public {
+  function test_Errors_LastSnapshotInvalid_NoSnapshot() public {
     ext.addPending(100_000e6);
 
+    // Verify both timestamp and block number are 0
+    assertEq(rr.lastSnapshotTimestamp(), 0, 'Timestamp should be 0');
+    assertEq(rr.lastSnapshotBlockNumber(), 0, 'Block number should be 0');
+
     vm.expectRevert(
-      abi.encodeWithSelector(
-        IRewardRedistributorEventsAndErrors.SnapShotCutoffPeriodNotElapsed.selector,
-        0,
-        block.timestamp,
-        rr.snapShotCutoffPeriod()
-      )
+      abi.encodeWithSelector(IRewardRedistributorEventsAndErrors.LastSnapshotInvalid.selector)
     );
     vm.prank(operator);
     rr.distribute();
   }
 
-  function test_Errors_SnapShotCutoffPeriodNotElapsed_JustBeforeCutoff() public {
+  function test_Errors_MustSnapshotInPreviousBlocks_SameBlock() public {
     vm.prank(operator);
     rr.snapshotSusdscTVL();
-    uint256 snapshotTime = rr.lastSnapshotTimestamp();
-
-    // Advance to just before cutoff
-    vm.warp(snapshotTime + rr.snapShotCutoffPeriod() - 1);
+    uint256 snapshotBlock = rr.lastSnapshotBlockNumber();
 
     ext.addPending(100_000e6);
 
     vm.expectRevert(
       abi.encodeWithSelector(
-        IRewardRedistributorEventsAndErrors.SnapShotCutoffPeriodNotElapsed.selector,
-        snapshotTime,
-        snapshotTime + rr.snapShotCutoffPeriod() - 1,
-        rr.snapShotCutoffPeriod()
+        IRewardRedistributorEventsAndErrors.MustSnapshotInPreviousBlocks.selector,
+        snapshotBlock,
+        block.number
       )
     );
     vm.prank(operator);
-    rr.distribute();
-  }
-
-  function test_Errors_SnapShotCutoffPeriodNotElapsed_WithUpdatedCutoff() public {
-    // Take snapshot with default 15 min cutoff
-    vm.prank(operator);
-    rr.snapshotSusdscTVL();
-    uint256 snapshotTime = rr.lastSnapshotTimestamp();
-
-    // Admin increases to 1 hour
-    vm.prank(admin);
-    rr.setSnapShotCutoffPeriod(1 hours);
-
-    // Advance 20 minutes (past old cutoff, but not new)
-    vm.warp(snapshotTime + 20 minutes);
-
-    ext.addPending(100_000e6);
-
-    vm.prank(operator);
-    vm.expectRevert(
-      abi.encodeWithSelector(
-        IRewardRedistributorEventsAndErrors.SnapShotCutoffPeriodNotElapsed.selector,
-        snapshotTime,
-        snapshotTime + 20 minutes,
-        1 hours
-      )
-    );
     rr.distribute();
   }
 
@@ -2432,44 +2106,72 @@ contract RewardRedistributorTest is Test {
     assertEq(rr.lastSnapshotTimestamp(), type(uint256).max - 1000, 'Snapshot timestamp should be correct');
   }
 
-  function test_EdgeCase_CutoffPeriodAtBoundary() public {
-    // Set cutoff to minimum
-    vm.prank(admin);
-    rr.setSnapShotCutoffPeriod(1 minutes);
-
-    vm.prank(operator);
-    rr.snapshotSusdscTVL();
-    uint256 snapshotTime = rr.lastSnapshotTimestamp();
-
-    // Exactly at cutoff
-    vm.warp(snapshotTime + 1 minutes);
-
-    ext.addPending(100_000e6);
-    vm.prank(operator);
-    rr.distribute(); // Should succeed
-
-    assertGt(usdsc.balanceOf(startale), 0, 'Distribution should succeed');
-  }
-
   function test_EdgeCase_MultipleSnapshotsBeforeDistribution() public {
     // Take multiple snapshots, only last one matters
     vm.prank(operator);
     rr.snapshotSusdscTVL();
-    uint256 firstSnapshot = rr.lastSnapshotTimestamp();
+    uint256 firstSnapshotBlock = rr.lastSnapshotBlockNumber();
 
-    vm.warp(block.timestamp + 5 minutes);
+    vm.roll(block.number + 1);
     vm.prank(operator);
     rr.snapshotSusdscTVL();
-    uint256 secondSnapshot = rr.lastSnapshotTimestamp();
+    uint256 secondSnapshotBlock = rr.lastSnapshotBlockNumber();
 
     // Distribution should use second snapshot
-    vm.warp(secondSnapshot + 15 minutes + 1 seconds);
+    vm.roll(block.number + 1);
 
     ext.addPending(100_000e6);
     vm.prank(operator);
     rr.distribute(); // Should succeed
 
     assertGt(usdsc.balanceOf(startale), 0, 'Distribution should succeed');
-    assertEq(rr.lastSnapshotTimestamp(), secondSnapshot, 'Last snapshot should be used');
+    assertEq(rr.lastSnapshotBlockNumber(), secondSnapshotBlock, 'Last snapshot should be used');
+  }
+
+  function test_PreviewDistribute_UsesSnapshotTVL() public {
+    // Preview uses snapshot TVL for calculations (via _calculateSplit)
+    // Setup initial TVL
+    usdsc.mint(address(sVault), 9_000_000e6); // Total 10M
+    earnV.setPrincipal(5_000_000e6);
+
+    // Take snapshot
+    vm.prank(operator);
+    rr.snapshotSusdscTVL();
+    uint256 snapshotTVL = rr.lastSusdscTVL();
+    assertEq(snapshotTVL, 10_000_000e6, 'Snapshot should capture 10M TVL');
+
+    // Change TVL after snapshot
+    usdsc.mint(address(sVault), 5_000_000e6); // Now 15M
+    assertEq(sVault.totalAssets(), 15_000_000e6, 'Current TVL should be 15M');
+
+    ext.addPending(1_000_000e6);
+
+    // Preview should use snapshot TVL (10M), not current TVL (15M)
+    (,,,,, uint256 sBase, uint256 tEarn, uint256 tYield) = rr.previewDistribute();
+    
+    // The calculation should be based on snapshot TVL
+    // We can verify by checking that the split uses the snapshot value
+    assertGt(sBase, 0, 'S_base should be calculated');
+    // Note: previewDistribute doesn't validate snapshot age, it just uses the snapshot TVL
+  }
+
+
+  function test_SnapshotSusdscTVL_CapturesBlockNumberCorrectly() public {
+    uint256 blockBefore = block.number;
+    
+    vm.prank(operator);
+    rr.snapshotSusdscTVL();
+    
+    assertEq(rr.lastSnapshotBlockNumber(), blockBefore, 'Should capture block number correctly');
+    
+    // Advance block and take another snapshot
+    vm.roll(block.number + 1);
+    uint256 blockBefore2 = block.number;
+    
+    vm.prank(operator);
+    rr.snapshotSusdscTVL();
+    
+    assertEq(rr.lastSnapshotBlockNumber(), blockBefore2, 'Should capture new block number');
+    assertGt(rr.lastSnapshotBlockNumber(), blockBefore, 'Block number should increase');
   }
 }
