@@ -51,6 +51,15 @@ interface IRewardRedistributorEventsAndErrors {
   /// @param fee_on_yield_bps  New fee on yield (bps).
   event FeeUpdated(uint16 fee_on_yield_bps);
 
+  /// @notice Emitted when sUSDSC TVL snapshot is captured.
+  /// @param lastSusdscTVL         Latest sUSDSC vault TVL snapshot.
+  /// @param lastSnapshotTimestamp Timestamp when the snapshot was captured.
+  event SusdscTVLSnapshotCaptured(uint256 lastSusdscTVL, uint256 lastSnapshotTimestamp);
+
+  /// @notice Emitted when snapshot cutoff period is updated.
+  /// @param newSnapShotCutoffPeriod New snapshot cutoff period value.
+  event SnapShotCutoffPeriodUpdated(uint256 newSnapShotCutoffPeriod);
+
   // ========================================
   // Errors
   // ========================================
@@ -77,4 +86,14 @@ interface IRewardRedistributorEventsAndErrors {
 
   /// @notice Thrown when attempting to distribute with zero yield
   error ZeroYield();
+
+  /// @notice Thrown when snapshot cutoff period is outside valid range
+  /// @param newSnapShotCutoffPeriod The invalid snapshot cutoff period value
+  error InvalidSnapShotCutoffPeriod(uint256 newSnapShotCutoffPeriod);
+
+  /// @notice Thrown when snapshot cutoff period has not elapsed or snapshot not taken
+  /// @param lastSnapshotTimestamp The timestamp of the last snapshot
+  /// @param currentTimestamp The current block timestamp
+  /// @param snapShotCutoffPeriod The required cutoff period
+  error SnapShotCutoffPeriodNotElapsed(uint256 lastSnapshotTimestamp, uint256 currentTimestamp, uint256 snapShotCutoffPeriod);
 }
