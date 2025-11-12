@@ -16,7 +16,7 @@ contract RewardRedistributorTest is Test {
   MockUSDSC usdsc;
   MockExtension ext;
   MockEarnVault earnV;
-  MockERC4626Vault sVault; // yield vault Ton
+  MockERC4626Vault sVault; // yield vault
   RewardRedistributor rr;
 
   address admin = address(0xA11Ce00000000000000000000000000000000000);
