@@ -204,7 +204,7 @@ contract RewardRedistributorIntegrationTest is Test {
   function testIntegration_ProportionalAllocationWithRealTVLs() public {
     // Take snapshot first (needed for preview and distribute)
     _takeSnapshotAndWait();
-    
+
     ext.addPending(120_000e6);
 
     // Get real TVLs
@@ -302,7 +302,7 @@ contract RewardRedistributorIntegrationTest is Test {
 
       // Add yield and distribute
       ext.addPending(yields[i]);
-    _takeSnapshotAndWait();
+      _takeSnapshotAndWait();
       vm.prank(operator);
       rr.distribute();
 
@@ -752,7 +752,7 @@ contract RewardRedistributorIntegrationTest is Test {
     // Test carry mechanism with multiple small distributions
     for (uint256 i = 0; i < 10; i++) {
       ext.addPending(100); // 100 wei each time
-    _takeSnapshotAndWait();
+      _takeSnapshotAndWait();
       vm.prank(operator);
       rr.distribute();
     }
@@ -776,7 +776,7 @@ contract RewardRedistributorIntegrationTest is Test {
       uint256 earnBalanceBefore = usdsc.balanceOf(address(earnVault));
 
       ext.addPending(yieldPerIteration);
-    _takeSnapshotAndWait();
+      _takeSnapshotAndWait();
       vm.prank(operator);
       rr.distribute();
 
@@ -945,7 +945,7 @@ contract RewardRedistributorIntegrationTest is Test {
     // Multiple rapid distributions
     for (uint256 i = 0; i < 20; i++) {
       ext.addPending((i + 1) * 1000e6); // Increasing amounts
-    _takeSnapshotAndWait();
+      _takeSnapshotAndWait();
       vm.prank(operator);
       rr.distribute();
 
@@ -964,7 +964,7 @@ contract RewardRedistributorIntegrationTest is Test {
     for (uint256 i = 0; i < 10; i++) {
       // Random distribution
       ext.addPending(((i * 123 + 456) % 5000e6) + 1000e6);
-    _takeSnapshotAndWait();
+      _takeSnapshotAndWait();
       vm.prank(operator);
       rr.distribute();
 
@@ -1035,7 +1035,7 @@ contract RewardRedistributorIntegrationTest is Test {
 
     for (uint256 i = 0; i < distributions.length; i++) {
       ext.addPending(distributions[i]);
-    _takeSnapshotAndWait();
+      _takeSnapshotAndWait();
       vm.prank(operator);
       rr.distribute();
 

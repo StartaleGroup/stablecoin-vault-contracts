@@ -2,8 +2,8 @@
 pragma solidity ^0.8.30;
 
 import {EarnVaultUpgradeable} from '../../src/vaults/earn/EarnVaultUpgradeable.sol';
-import {DeployHelpers} from 'common/script/deploy/DeployHelpers.sol';
 import {TransparentUpgradeableProxy} from '@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol';
+import {DeployHelpers} from 'common/script/deploy/DeployHelpers.sol';
 import {Script, console} from 'forge-std/Script.sol';
 
 /**
@@ -37,7 +37,6 @@ contract DeployEarnVaultUpgradeable is Script, DeployHelpers {
     treasuryAddress = vm.envAddress('TREASURY_ADDRESS');
     pauserAddress = vm.envAddress('PAUSER_ADDRESS');
     boostRewardKeeperAddress = vm.envAddress('BOOST_REWARD_KEEPER_ADDRESS');
-
 
     // ProxyAdmin owner - defaults to owner if not set
     proxyAdminOwner = vm.envOr('PROXY_ADMIN_OWNER', ownerAddress);

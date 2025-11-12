@@ -157,7 +157,7 @@ contract RewardRedistributorTest is Test {
 
     // Take snapshot before pausing (snapshot requires not paused)
     _takeSnapshotAndWait();
-    
+
     vm.prank(admin);
     rr.pause(true);
     vm.prank(operator);
@@ -883,7 +883,7 @@ contract RewardRedistributorTest is Test {
   function testInvariant9_EdgeCohorts() public {
     // Take snapshot first (needed for preview)
     _takeSnapshotAndWait();
-    
+
     // Test T_earn == 0
     earnV.setPrincipal(0);
     ext.addPending(20_000e6);
@@ -897,7 +897,7 @@ contract RewardRedistributorTest is Test {
     // Reset and test T_on == 0
     earnV.setPrincipal(1_000_000e6);
     usdsc.burn(address(sVault), usdsc.balanceOf(address(sVault)));
-    
+
     // Take new snapshot after burning (needed for preview to use updated TVL)
     vm.prank(operator);
     rr.snapshotSusdscTVL();
@@ -912,7 +912,7 @@ contract RewardRedistributorTest is Test {
   function testInvariant10_EventCorrectness() public {
     // Take snapshot first (needed for preview and distribute)
     _takeSnapshotAndWait();
-    
+
     ext.addPending(40_000e6);
 
     (uint256 expectedMinted,,,,,, uint256 expectedTEarn, uint256 expectedTYield) = rr.previewDistribute();
@@ -1358,7 +1358,7 @@ contract RewardRedistributorTest is Test {
 
   function testRevert_DistributeWhenYieldRecipientChangedMidOperation() public {
     // First distribution succeeds
-    ext.addPending(5_000e6);
+    ext.addPending(5000e6);
     _takeSnapshotAndWait();
     vm.prank(operator);
     rr.distribute();
@@ -1368,7 +1368,7 @@ contract RewardRedistributorTest is Test {
     ext.setYieldRecipient(newRecipient);
 
     // Second distribution should fail
-    ext.addPending(5_000e6);
+    ext.addPending(5000e6);
     vm.prank(operator);
     vm.expectRevert(
       abi.encodeWithSelector(IRewardRedistributorEventsAndErrors.YieldRecipientChanged.selector, newRecipient)
@@ -1573,9 +1573,7 @@ contract RewardRedistributorTest is Test {
   function test_SetSnapShotCutoffPeriod_RevertsBelowMinimum() public {
     vm.prank(admin);
     vm.expectRevert(
-      abi.encodeWithSelector(
-        IRewardRedistributorEventsAndErrors.InvalidSnapShotCutoffPeriod.selector, 30 seconds
-      )
+      abi.encodeWithSelector(IRewardRedistributorEventsAndErrors.InvalidSnapShotCutoffPeriod.selector, 30 seconds)
     );
     rr.setSnapShotCutoffPeriod(30 seconds);
   }
@@ -1583,9 +1581,7 @@ contract RewardRedistributorTest is Test {
   function test_SetSnapShotCutoffPeriod_RevertsAboveMaximum() public {
     vm.prank(admin);
     vm.expectRevert(
-      abi.encodeWithSelector(
-        IRewardRedistributorEventsAndErrors.InvalidSnapShotCutoffPeriod.selector, 2 hours
-      )
+      abi.encodeWithSelector(IRewardRedistributorEventsAndErrors.InvalidSnapShotCutoffPeriod.selector, 2 hours)
     );
     rr.setSnapShotCutoffPeriod(2 hours);
   }
@@ -1626,20 +1622,14 @@ contract RewardRedistributorTest is Test {
 
   function test_SetSnapShotCutoffPeriod_RevertsOnZero() public {
     vm.prank(admin);
-    vm.expectRevert(
-      abi.encodeWithSelector(
-        IRewardRedistributorEventsAndErrors.InvalidSnapShotCutoffPeriod.selector, 0
-      )
-    );
+    vm.expectRevert(abi.encodeWithSelector(IRewardRedistributorEventsAndErrors.InvalidSnapShotCutoffPeriod.selector, 0));
     rr.setSnapShotCutoffPeriod(0);
   }
 
   function test_SetSnapShotCutoffPeriod_RevertsOn59Seconds() public {
     vm.prank(admin);
     vm.expectRevert(
-      abi.encodeWithSelector(
-        IRewardRedistributorEventsAndErrors.InvalidSnapShotCutoffPeriod.selector, 59 seconds
-      )
+      abi.encodeWithSelector(IRewardRedistributorEventsAndErrors.InvalidSnapShotCutoffPeriod.selector, 59 seconds)
     );
     rr.setSnapShotCutoffPeriod(59 seconds);
   }
@@ -2000,7 +1990,7 @@ contract RewardRedistributorTest is Test {
 
     // Verify snapshot timestamp doesn't change after distribution
     assertEq(rr.lastSnapshotTimestamp(), firstSnapshotTime, 'Snapshot timestamp should not change after distribute');
-    
+
     // Second distribution can use the same snapshot since cutoff period has elapsed
     // (snapshot can be reused as long as cutoff period has elapsed)
     ext.addPending(500_000e6);

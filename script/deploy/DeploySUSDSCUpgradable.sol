@@ -2,9 +2,9 @@
 pragma solidity ^0.8.30;
 
 import {SUSDSCVaultUpgradable} from '../../src/vaults/4626/SUSDSCVaultUpgradable.sol';
-import {DeployHelpers} from 'common/script/deploy/DeployHelpers.sol';
 import {TransparentUpgradeableProxy} from '@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol';
 import {IERC20} from '@openzeppelin/contracts/token/ERC20/IERC20.sol';
+import {DeployHelpers} from 'common/script/deploy/DeployHelpers.sol';
 import {Script, console} from 'forge-std/Script.sol';
 
 /**
@@ -72,7 +72,6 @@ contract DeploySUSDSCVaultUpgradeable is Script, DeployHelpers {
     address deployedImplAddress = _deployCreate3(implCreationCode, implSalt);
     implementation = SUSDSCVaultUpgradable(payable(deployedImplAddress));
 
-
     // Step 2: Prepare initialization data
     bytes memory initData = abi.encodeWithSelector(
       SUSDSCVaultUpgradable.initialize.selector, IERC20(usdscAddress), adminAddress, pauserAddress
@@ -95,12 +94,12 @@ contract DeploySUSDSCVaultUpgradeable is Script, DeployHelpers {
     _logPostDeploymentState();
   }
 
-    // Post-deployment verification
-    function _logPostDeploymentState() internal view {
-      console.log('\n=== Post-Deployment Verification ===');
-      console.log('Vault Name:', susdscVault.name());
-      console.log('Vault Symbol:', susdscVault.symbol());
-      // console.log('Total Assets:', susdscVault.totalAssets());
-      // console.log('Total Supply:', susdscVault.totalSupply());
-      }
+  // Post-deployment verification
+  function _logPostDeploymentState() internal view {
+    console.log('\n=== Post-Deployment Verification ===');
+    console.log('Vault Name:', susdscVault.name());
+    console.log('Vault Symbol:', susdscVault.symbol());
+    // console.log('Total Assets:', susdscVault.totalAssets());
+    // console.log('Total Supply:', susdscVault.totalSupply());
+  }
 }

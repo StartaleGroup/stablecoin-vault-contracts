@@ -167,20 +167,21 @@ contract RewardRedistributor is
   function setSnapShotCutoffPeriod(uint256 newSnapShotCutoffPeriod) external onlyRole(DEFAULT_ADMIN_ROLE) {
     // Note: We could lower bound even more low like 15 seconds or 30 seconds
     // Note: We could set higher bound up to like 4 hours.
-    if(newSnapShotCutoffPeriod < 1 minutes || newSnapShotCutoffPeriod > 1 hours) revert IRewardRedistributorEventsAndErrors.InvalidSnapShotCutoffPeriod(newSnapShotCutoffPeriod);
+    if (newSnapShotCutoffPeriod < 1 minutes || newSnapShotCutoffPeriod > 1 hours) {
+      revert IRewardRedistributorEventsAndErrors.InvalidSnapShotCutoffPeriod(newSnapShotCutoffPeriod);
+    }
     snapShotCutoffPeriod = newSnapShotCutoffPeriod;
     emit IRewardRedistributorEventsAndErrors.SnapShotCutoffPeriodUpdated(newSnapShotCutoffPeriod);
   }
 
   /// @notice Capture sUSDSC vault TVL for next distribution
-  /// @dev Must be called in block N before distribute() in block N+x (a few blocks apart/ couple of minutes apart) 
+  /// @dev Must be called in block N before distribute() in block N+x (a few blocks apart/ couple of minutes apart)
   /// @custom:security Prevents same-block TVL manipulation attacks
   function snapshotSusdscTVL() external onlyRole(OPERATOR_ROLE) whenNotPaused {
     lastSusdscTVL = susdscVault.totalAssets();
     lastSnapshotTimestamp = block.timestamp;
     emit IRewardRedistributorEventsAndErrors.SusdscTVLSnapshotCaptured(lastSusdscTVL, lastSnapshotTimestamp);
   }
-
 
   function pause(bool p) external onlyRole(DEFAULT_ADMIN_ROLE) {
     p ? _pause() : _unpause();
@@ -235,10 +236,14 @@ contract RewardRedistributor is
   /// @dev    Reverts if no snapshot has been taken or if the cutoff period has not elapsed.
   function _validateSnapShotCutoffPeriod() internal view {
     if (lastSnapshotTimestamp == 0) {
-      revert IRewardRedistributorEventsAndErrors.SnapShotCutoffPeriodNotElapsed(0, block.timestamp, snapShotCutoffPeriod);
+      revert IRewardRedistributorEventsAndErrors.SnapShotCutoffPeriodNotElapsed(
+        0, block.timestamp, snapShotCutoffPeriod
+      );
     }
     if (block.timestamp - lastSnapshotTimestamp < snapShotCutoffPeriod) {
-      revert IRewardRedistributorEventsAndErrors.SnapShotCutoffPeriodNotElapsed(lastSnapshotTimestamp, block.timestamp, snapShotCutoffPeriod);
+      revert IRewardRedistributorEventsAndErrors.SnapShotCutoffPeriodNotElapsed(
+        lastSnapshotTimestamp, block.timestamp, snapShotCutoffPeriod
+      );
     }
   }
 
@@ -249,7 +254,7 @@ contract RewardRedistributor is
   ///         3) Calculate `gross = balanceBefore + minted` to handle both normal flow and external claimYield() calls.
   ///         4) `feeToStartale = gross * fee_on_yield_bps / 10_000`.
   ///         5) Compute `S_base = IERC20(USDSC_ADDRESS).totalSupply() - minted` (supply **before** this mint).
-    ///         6) Read TVLs: `T_earn = earnVault.totalPrincipal()`, `T_yield = lastSusdscTVL` (snapshot TVL).
+  ///         6) Read TVLs: `T_earn = earnVault.totalPrincipal()`, `T_yield = lastSusdscTVL` (snapshot TVL).
   ///         7) Allocate net using carries:
   ///            `toEarn = floor((net*T_earn + carryEarn)/S_base)`, `carryEarn = (net*T_earn + carryEarn) % S_base`
   ///            `toOn   = floor((net*T_yield   + carryOn)/S_base)`,   `carryOn   = (net*T_yield   + carryOn)   % S_base`

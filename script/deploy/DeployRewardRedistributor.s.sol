@@ -3,8 +3,8 @@ pragma solidity ^0.8.30;
 
 import {RewardRedistributor} from '../../src/distributor/RewardRedistributor.sol';
 import {IEarnVault} from '../../src/interfaces/vaults/earn/IEarnVault.sol';
-import {DeployHelpers} from 'common/script/deploy/DeployHelpers.sol';
 import {IERC4626} from '@openzeppelin/contracts/interfaces/IERC4626.sol';
+import {DeployHelpers} from 'common/script/deploy/DeployHelpers.sol';
 import {Script, console} from 'forge-std/Script.sol';
 
 /**
