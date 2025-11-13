@@ -69,11 +69,11 @@ contract RewardRedistributor is
   /// @dev Latest sUSDSC TVL snapshot.
   uint256 public lastSusdscTVL;
 
+  /// @dev Latest snapshot block number.
+  uint256 public lastSnapshotBlockNumber;
+
   /// @dev Latest snapshot timestamp.
   uint256 public lastSnapshotTimestamp;
-
-  /// @dev Snapshot cutoff period.
-  uint256 public snapShotCutoffPeriod = 15 minutes;
 
   /// @dev Maximum age for snapshot validity (e.g., 4 hours).
   uint256 public snapshotMaxAge = 4 hours;
@@ -167,32 +167,11 @@ contract RewardRedistributor is
     emit IRewardRedistributorEventsAndErrors.FeeUpdated(newFeeBps);
   }
 
-  function setSnapShotCutoffPeriod(uint256 newSnapShotCutoffPeriod) external onlyRole(DEFAULT_ADMIN_ROLE) {
-    // Note: We could lower bound even more low like 15 seconds or 30 seconds
-    // Note: We could set higher bound up to like 4 hours.
-    if (newSnapShotCutoffPeriod < 1 minutes || newSnapShotCutoffPeriod > 1 hours) {
-      revert IRewardRedistributorEventsAndErrors.InvalidSnapShotCutoffPeriod(newSnapShotCutoffPeriod);
-    }
-    // Ensure cooldown is strictly less than max age to maintain valid window
-    if (newSnapShotCutoffPeriod >= snapshotMaxAge) {
-      revert IRewardRedistributorEventsAndErrors.InvalidSnapShotCutoffPeriod(newSnapShotCutoffPeriod);
-    }
-    snapShotCutoffPeriod = newSnapShotCutoffPeriod;
-    emit IRewardRedistributorEventsAndErrors.SnapShotCutoffPeriodUpdated(newSnapShotCutoffPeriod);
-  }
-
   /// @notice Updates the maximum age for snapshot validity.
-  /// @dev    Max age must be greater than cooldown period to ensure valid window exists.
   /// @param newSnapshotMaxAge New snapshot maximum age value.
   function setSnapshotMaxAge(uint256 newSnapshotMaxAge) external onlyRole(DEFAULT_ADMIN_ROLE) {
-    // Max age must be strictly greater than cooldown to ensure valid window exists
-    if (newSnapshotMaxAge <= snapShotCutoffPeriod) {
-      revert IRewardRedistributorEventsAndErrors.InvalidSnapshotMaxAge(newSnapshotMaxAge, snapShotCutoffPeriod);
-    }
-    // Reasonable upper bound (e.g., 7 days)
-    if (newSnapshotMaxAge > 7 days) {
-      revert IRewardRedistributorEventsAndErrors.InvalidSnapshotMaxAge(newSnapshotMaxAge, snapShotCutoffPeriod);
-    }
+    if (newSnapshotMaxAge < 1 minutes) revert IRewardRedistributorEventsAndErrors.InvalidSnapshotMaxAge(newSnapshotMaxAge, 1 minutes);
+    if (newSnapshotMaxAge > 7 days) revert IRewardRedistributorEventsAndErrors.InvalidSnapshotMaxAge(newSnapshotMaxAge, 7 days);
     snapshotMaxAge = newSnapshotMaxAge;
     emit IRewardRedistributorEventsAndErrors.SnapshotMaxAgeUpdated(newSnapshotMaxAge);
   }
@@ -203,7 +182,8 @@ contract RewardRedistributor is
   function snapshotSusdscTVL() external onlyRole(OPERATOR_ROLE) whenNotPaused {
     lastSusdscTVL = susdscVault.totalAssets();
     lastSnapshotTimestamp = block.timestamp;
-    emit IRewardRedistributorEventsAndErrors.SusdscTVLSnapshotCaptured(lastSusdscTVL, lastSnapshotTimestamp);
+    lastSnapshotBlockNumber = block.number;
+    emit IRewardRedistributorEventsAndErrors.SusdscTVLSnapshotCaptured(lastSusdscTVL, lastSnapshotTimestamp, lastSnapshotBlockNumber);
   }
 
   function pause(bool p) external onlyRole(DEFAULT_ADMIN_ROLE) {
@@ -255,20 +235,27 @@ contract RewardRedistributor is
     }
   }
 
-  /// @notice Validates that the snapshot cutoff period has elapsed since the last snapshot.
-  /// @dev    Reverts if no snapshot has been taken, if the cutoff period has not elapsed, or if snapshot is too old.
-  function _validateSnapShotCutoffPeriod() internal view {
+  /**
+   * @notice Validates that the snapshot is valid.
+   * @dev Performs the following checks:
+   *      - Ensures a snapshot has been taken (timestamp and block number are non-zero).
+   *      - Verifies the snapshot is from a previous block (prevents same-block manipulation).
+   *      - Ensures the snapshot is not too old (must be within `snapshotMaxAge`).
+   *      Reverts with appropriate errors if any check fails.
+   */
+  function _validateSnapShotAge() internal view {
     if (lastSnapshotTimestamp == 0) {
-      revert IRewardRedistributorEventsAndErrors.SnapShotCutoffPeriodNotElapsed(
-        0, block.timestamp, snapShotCutoffPeriod
-      );
+      revert IRewardRedistributorEventsAndErrors.LastSnapshotInvalid();
     }
-    // Check minimum delay (snapshot must be old enough)
-    if (block.timestamp - lastSnapshotTimestamp < snapShotCutoffPeriod) {
-      revert IRewardRedistributorEventsAndErrors.SnapShotCutoffPeriodNotElapsed(
-        lastSnapshotTimestamp, block.timestamp, snapShotCutoffPeriod
-      );
+
+    if(lastSnapshotBlockNumber == 0) { 
+      revert IRewardRedistributorEventsAndErrors.LastSnapshotInvalid();
     }
+
+    if (block.number - lastSnapshotBlockNumber < 1) {
+      revert IRewardRedistributorEventsAndErrors.MustSnapshotInPreviousBlocks(lastSnapshotBlockNumber, block.number);
+    }
+
     // Check maximum age (snapshot must not be too old)
     if (block.timestamp - lastSnapshotTimestamp > snapshotMaxAge) {
       revert IRewardRedistributorEventsAndErrors.SnapshotTooOld(lastSnapshotTimestamp, block.timestamp, snapshotMaxAge);
@@ -294,7 +281,7 @@ contract RewardRedistributor is
   /// @custom:security nonReentrant and Pausable.
   function distribute() external whenNotPaused onlyRole(OPERATOR_ROLE) nonReentrant {
     _validateYieldRecipient();
-    _validateSnapShotCutoffPeriod();
+    _validateSnapShotAge();
     uint256 balanceBefore = IERC20(USDSC_ADDRESS).balanceOf(address(this));
     uint256 minted = IMYieldToOne(USDSC_ADDRESS).claimYield();
     uint256 gross = balanceBefore + minted;

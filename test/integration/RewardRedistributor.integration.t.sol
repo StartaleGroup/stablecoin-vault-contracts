@@ -115,11 +115,11 @@ contract RewardRedistributorIntegrationTest is Test {
 
   // ========== HELPER FUNCTIONS ==========
 
-  /// @notice Helper to take snapshot and wait for cutoff period
+  /// @notice Helper to take snapshot and wait for next block
   function _takeSnapshotAndWait() internal {
     vm.prank(operator);
     rr.snapshotSusdscTVL();
-    vm.warp(block.timestamp + rr.snapShotCutoffPeriod() + 1 seconds);
+    vm.roll(block.number + 1); // Advance to next block
   }
 
   // ========== INTEGRATION INVARIANT TESTS ==========
@@ -655,7 +655,7 @@ contract RewardRedistributorIntegrationTest is Test {
     // Take snapshot for the new redistributor
     vm.prank(operator);
     rrEmpty.snapshotSusdscTVL();
-    vm.warp(block.timestamp + rrEmpty.snapShotCutoffPeriod() + 1 seconds);
+    vm.roll(block.number + 1); // Advance to next block
 
     uint256 startaleBalanceBefore = usdsc.balanceOf(startale);
 

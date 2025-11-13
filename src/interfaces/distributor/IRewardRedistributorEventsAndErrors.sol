@@ -54,11 +54,8 @@ interface IRewardRedistributorEventsAndErrors {
   /// @notice Emitted when sUSDSC TVL snapshot is captured.
   /// @param lastSusdscTVL         Latest sUSDSC vault TVL snapshot.
   /// @param lastSnapshotTimestamp Timestamp when the snapshot was captured.
-  event SusdscTVLSnapshotCaptured(uint256 lastSusdscTVL, uint256 lastSnapshotTimestamp);
-
-  /// @notice Emitted when snapshot cutoff period is updated.
-  /// @param newSnapShotCutoffPeriod New snapshot cutoff period value.
-  event SnapShotCutoffPeriodUpdated(uint256 newSnapShotCutoffPeriod);
+  /// @param lastSnapshotBlockNumber Block number when the snapshot was captured.
+  event SusdscTVLSnapshotCaptured(uint256 lastSusdscTVL, uint256 lastSnapshotTimestamp, uint256 lastSnapshotBlockNumber);
 
   /// @notice Emitted when snapshot maximum age is updated.
   /// @param newSnapshotMaxAge New snapshot maximum age value.
@@ -91,22 +88,19 @@ interface IRewardRedistributorEventsAndErrors {
   /// @notice Thrown when attempting to distribute with zero yield
   error ZeroYield();
 
-  /// @notice Thrown when snapshot cutoff period is outside valid range
-  /// @param newSnapShotCutoffPeriod The invalid snapshot cutoff period value
-  error InvalidSnapShotCutoffPeriod(uint256 newSnapShotCutoffPeriod);
-
-  /// @notice Thrown when snapshot cutoff period has not elapsed or snapshot not taken
-  /// @param lastSnapshotTimestamp The timestamp of the last snapshot
-  /// @param currentTimestamp The current block timestamp
-  /// @param snapShotCutoffPeriod The required cutoff period
-  error SnapShotCutoffPeriodNotElapsed(
-    uint256 lastSnapshotTimestamp, uint256 currentTimestamp, uint256 snapShotCutoffPeriod
-  );
+  /// @notice Thrown when the last snapshot is invalid
+  error LastSnapshotInvalid();
 
   /// @notice Thrown when snapshot maximum age is invalid
   /// @param newSnapshotMaxAge The invalid snapshot maximum age value
-  /// @param cooldownPeriod The current cooldown period (for context)
-  error InvalidSnapshotMaxAge(uint256 newSnapshotMaxAge, uint256 cooldownPeriod);
+  /// @param limit The limit that was violated (minimum or maximum)
+  error InvalidSnapshotMaxAge(uint256 newSnapshotMaxAge, uint256 limit);
+
+
+  /// @notice Thrown when attempting to distribute in the same block as the snapshot
+  /// @param lastSnapshotBlockNumber The block number of the last snapshot
+  /// @param currentBlockNumber The current block number
+  error MustSnapshotInPreviousBlocks(uint256 lastSnapshotBlockNumber, uint256 currentBlockNumber);
 
   /// @notice Thrown when snapshot is too old
   /// @param lastSnapshotTimestamp The timestamp of the last snapshot
