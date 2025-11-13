@@ -97,7 +97,7 @@ interface IRewardRedistributorEventsAndErrors {
   error InvalidSnapshotMaxAge(uint256 newSnapshotMaxAge, uint256 limit);
 
 
-  /// @notice Thrown when must snapshot in previous blocks
+  /// @notice Thrown when attempting to distribute in the same block as the snapshot
   /// @param lastSnapshotBlockNumber The block number of the last snapshot
   /// @param currentBlockNumber The current block number
   error MustSnapshotInPreviousBlocks(uint256 lastSnapshotBlockNumber, uint256 currentBlockNumber);
