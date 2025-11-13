@@ -170,8 +170,12 @@ contract RewardRedistributor is
   /// @notice Updates the maximum age for snapshot validity.
   /// @param newSnapshotMaxAge New snapshot maximum age value.
   function setSnapshotMaxAge(uint256 newSnapshotMaxAge) external onlyRole(DEFAULT_ADMIN_ROLE) {
-    if (newSnapshotMaxAge < 1 minutes) revert IRewardRedistributorEventsAndErrors.InvalidSnapshotMaxAge(newSnapshotMaxAge, 1 minutes);
-    if (newSnapshotMaxAge > 7 days) revert IRewardRedistributorEventsAndErrors.InvalidSnapshotMaxAge(newSnapshotMaxAge, 7 days);
+    if (newSnapshotMaxAge < 1 minutes) {
+      revert IRewardRedistributorEventsAndErrors.InvalidSnapshotMaxAge(newSnapshotMaxAge, 1 minutes);
+    }
+    if (newSnapshotMaxAge > 7 days) {
+      revert IRewardRedistributorEventsAndErrors.InvalidSnapshotMaxAge(newSnapshotMaxAge, 7 days);
+    }
     snapshotMaxAge = newSnapshotMaxAge;
     emit IRewardRedistributorEventsAndErrors.SnapshotMaxAgeUpdated(newSnapshotMaxAge);
   }
@@ -183,7 +187,9 @@ contract RewardRedistributor is
     lastSusdscTVL = susdscVault.totalAssets();
     lastSnapshotTimestamp = block.timestamp;
     lastSnapshotBlockNumber = block.number;
-    emit IRewardRedistributorEventsAndErrors.SusdscTVLSnapshotCaptured(lastSusdscTVL, lastSnapshotTimestamp, lastSnapshotBlockNumber);
+    emit IRewardRedistributorEventsAndErrors.SusdscTVLSnapshotCaptured(
+      lastSusdscTVL, lastSnapshotTimestamp, lastSnapshotBlockNumber
+    );
   }
 
   function pause(bool p) external onlyRole(DEFAULT_ADMIN_ROLE) {
@@ -248,7 +254,7 @@ contract RewardRedistributor is
       revert IRewardRedistributorEventsAndErrors.LastSnapshotInvalid();
     }
 
-    if(lastSnapshotBlockNumber == 0) { 
+    if (lastSnapshotBlockNumber == 0) {
       revert IRewardRedistributorEventsAndErrors.LastSnapshotInvalid();
     }
 

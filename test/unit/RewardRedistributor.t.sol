@@ -1455,7 +1455,7 @@ contract RewardRedistributorTest is Test {
     // Transaction 1: Take snapshot in current block
     vm.prank(operator);
     rr.snapshotSusdscTVL();
-    
+
     // Advance to next block so distribute() will be in a different block
     vm.roll(block.number + 1);
   }
@@ -1483,7 +1483,9 @@ contract RewardRedistributorTest is Test {
 
     vm.prank(operator);
     vm.expectEmit(true, true, true, true);
-    emit IRewardRedistributorEventsAndErrors.SusdscTVLSnapshotCaptured(expectedTVL, expectedTimestamp, expectedBlockNumber);
+    emit IRewardRedistributorEventsAndErrors.SusdscTVLSnapshotCaptured(
+      expectedTVL, expectedTimestamp, expectedBlockNumber
+    );
     rr.snapshotSusdscTVL();
   }
 
@@ -1551,7 +1553,6 @@ contract RewardRedistributorTest is Test {
 
     assertEq(rr.lastSusdscTVL(), 101_000_000e6, 'Snapshot should capture large TVL');
   }
-
 
   // ========== SNAPSHOT MAX AGE TESTS ==========
 
@@ -1709,9 +1710,7 @@ contract RewardRedistributorTest is Test {
   function test_Distribute_RevertsWhenNoSnapshotTaken() public {
     ext.addPending(100_000e6);
 
-    vm.expectRevert(
-      abi.encodeWithSelector(IRewardRedistributorEventsAndErrors.LastSnapshotInvalid.selector)
-    );
+    vm.expectRevert(abi.encodeWithSelector(IRewardRedistributorEventsAndErrors.LastSnapshotInvalid.selector));
     vm.prank(operator);
     rr.distribute();
   }
@@ -1727,9 +1726,7 @@ contract RewardRedistributorTest is Test {
 
     vm.expectRevert(
       abi.encodeWithSelector(
-        IRewardRedistributorEventsAndErrors.MustSnapshotInPreviousBlocks.selector,
-        snapshotBlock,
-        block.number
+        IRewardRedistributorEventsAndErrors.MustSnapshotInPreviousBlocks.selector, snapshotBlock, block.number
       )
     );
     vm.prank(operator);
@@ -2026,13 +2023,13 @@ contract RewardRedistributorTest is Test {
 
     // Decode event
     bytes memory eventData = logs[0].data;
-    (uint256 capturedTVL, uint256 capturedTimestamp, uint256 capturedBlockNumber) = abi.decode(eventData, (uint256, uint256, uint256));
+    (uint256 capturedTVL, uint256 capturedTimestamp, uint256 capturedBlockNumber) =
+      abi.decode(eventData, (uint256, uint256, uint256));
 
     assertEq(capturedTVL, expectedTVL, 'Event should contain correct TVL');
     assertEq(capturedTimestamp, expectedTimestamp, 'Event should contain correct timestamp');
     assertEq(capturedBlockNumber, expectedBlockNumber, 'Event should contain correct block number');
   }
-
 
   function test_Events_MultipleSnapshots_EmitsMultipleEvents() public {
     vm.recordLogs();
@@ -2060,9 +2057,7 @@ contract RewardRedistributorTest is Test {
     assertEq(rr.lastSnapshotTimestamp(), 0, 'Timestamp should be 0');
     assertEq(rr.lastSnapshotBlockNumber(), 0, 'Block number should be 0');
 
-    vm.expectRevert(
-      abi.encodeWithSelector(IRewardRedistributorEventsAndErrors.LastSnapshotInvalid.selector)
-    );
+    vm.expectRevert(abi.encodeWithSelector(IRewardRedistributorEventsAndErrors.LastSnapshotInvalid.selector));
     vm.prank(operator);
     rr.distribute();
   }
@@ -2076,9 +2071,7 @@ contract RewardRedistributorTest is Test {
 
     vm.expectRevert(
       abi.encodeWithSelector(
-        IRewardRedistributorEventsAndErrors.MustSnapshotInPreviousBlocks.selector,
-        snapshotBlock,
-        block.number
+        IRewardRedistributorEventsAndErrors.MustSnapshotInPreviousBlocks.selector, snapshotBlock, block.number
       )
     );
     vm.prank(operator);
@@ -2148,29 +2141,28 @@ contract RewardRedistributorTest is Test {
 
     // Preview should use snapshot TVL (10M), not current TVL (15M)
     (,,,,, uint256 sBase, uint256 tEarn, uint256 tYield) = rr.previewDistribute();
-    
+
     // The calculation should be based on snapshot TVL
     // We can verify by checking that the split uses the snapshot value
     assertGt(sBase, 0, 'S_base should be calculated');
     // Note: previewDistribute doesn't validate snapshot age, it just uses the snapshot TVL
   }
 
-
   function test_SnapshotSusdscTVL_CapturesBlockNumberCorrectly() public {
     uint256 blockBefore = block.number;
-    
+
     vm.prank(operator);
     rr.snapshotSusdscTVL();
-    
+
     assertEq(rr.lastSnapshotBlockNumber(), blockBefore, 'Should capture block number correctly');
-    
+
     // Advance block and take another snapshot
     vm.roll(block.number + 1);
     uint256 blockBefore2 = block.number;
-    
+
     vm.prank(operator);
     rr.snapshotSusdscTVL();
-    
+
     assertEq(rr.lastSnapshotBlockNumber(), blockBefore2, 'Should capture new block number');
     assertGt(rr.lastSnapshotBlockNumber(), blockBefore, 'Block number should increase');
   }

@@ -55,7 +55,9 @@ interface IRewardRedistributorEventsAndErrors {
   /// @param lastSusdscTVL         Latest sUSDSC vault TVL snapshot.
   /// @param lastSnapshotTimestamp Timestamp when the snapshot was captured.
   /// @param lastSnapshotBlockNumber Block number when the snapshot was captured.
-  event SusdscTVLSnapshotCaptured(uint256 lastSusdscTVL, uint256 lastSnapshotTimestamp, uint256 lastSnapshotBlockNumber);
+  event SusdscTVLSnapshotCaptured(
+    uint256 lastSusdscTVL, uint256 lastSnapshotTimestamp, uint256 lastSnapshotBlockNumber
+  );
 
   /// @notice Emitted when snapshot maximum age is updated.
   /// @param newSnapshotMaxAge New snapshot maximum age value.
@@ -95,7 +97,6 @@ interface IRewardRedistributorEventsAndErrors {
   /// @param newSnapshotMaxAge The invalid snapshot maximum age value
   /// @param limit The limit that was violated (minimum or maximum)
   error InvalidSnapshotMaxAge(uint256 newSnapshotMaxAge, uint256 limit);
-
 
   /// @notice Thrown when attempting to distribute in the same block as the snapshot
   /// @param lastSnapshotBlockNumber The block number of the last snapshot
