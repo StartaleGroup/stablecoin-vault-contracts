@@ -219,14 +219,17 @@ contract EarnVaultUpgradeable is
   }
 
   /// @notice Deposit USDSC tokens using permit (gasless approval)
-  /// @dev Same as deposit() but uses permit for approval in same transaction
+  /// @dev Allows token owner to deposit via permit signature, with optional relayer execution
+  /// @dev Token owner signs permit, relayer (msg.sender) pays gas and executes
   /// @dev Safely handles tokens that may not implement IERC20Permit
+  /// @param tokenOwner Address of token owner (who signs permit and receives deposit credit)
   /// @param amount Amount of USDSC tokens to deposit
   /// @param deadline Permit deadline timestamp
   /// @param v Permit signature parameter v
   /// @param r Permit signature parameter r
   /// @param s Permit signature parameter s
   function depositWithPermit(
+    address tokenOwner,
     uint256 amount,
     uint256 deadline,
     uint8 v,
@@ -234,29 +237,32 @@ contract EarnVaultUpgradeable is
     bytes32 s
   ) external whenNotPaused nonReentrant {
     EarnVaultStorage storage $ = _getStorage();
-    _checkNotBlacklisted(msg.sender);
+    if (tokenOwner == address(0)) revert IEarnVaultEventsAndErrors.CanNotBeZeroAddress();
+    _checkNotBlacklisted(tokenOwner);
     if (amount == 0) revert IEarnVaultEventsAndErrors.ZeroAmount();
 
-    // Safely attempt permit - revert with clear error if not supported
-    try IERC20Permit(address($.USDSC)).permit(msg.sender, address(this), amount, deadline, v, r, s) {
+    // Permit is signed by tokenOwner, allowing this contract to transfer tokens
+    try IERC20Permit(address($.USDSC)).permit(tokenOwner, address(this), amount, deadline, v, r, s) {
     // Permit succeeded, continue with deposit
     }
     catch {
       revert IEarnVaultEventsAndErrors.PermitFailed();
     }
-    _settle(msg.sender);
+    _settle(tokenOwner);
 
     // Settle boost rewards for all active tokens BEFORE updating principal
     for (uint256 i = 0; i < $.activeBoostTokens.length; i++) {
-      _settleBoost(msg.sender, $.activeBoostTokens[i]);
+      _settleBoost(tokenOwner, $.activeBoostTokens[i]);
     }
 
-    $.USDSC.safeTransferFrom(msg.sender, address(this), amount);
-    $.principal[msg.sender] += amount;
+    // Transfer tokens from tokenOwner (permit allows this contract to transfer)
+    $.USDSC.safeTransferFrom(tokenOwner, address(this), amount);
+    
+    $.principal[tokenOwner] += amount;
     $.totalPrincipal += amount;
     $.claimReserve += amount; // reserve principal 1:1
 
-    emit Deposit(msg.sender, amount);
+    emit Deposit(tokenOwner, amount);
   }
 
   /// @notice Withdraw any amount up to principal amount

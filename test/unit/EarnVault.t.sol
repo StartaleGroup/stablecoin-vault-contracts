@@ -841,7 +841,7 @@ contract EarnVaultTest is Test {
     // Alice cannot use depositWithPermit when blacklisted
     vm.prank(alice);
     vm.expectRevert(IEarnVaultEventsAndErrors.AddressBlacklisted.selector);
-    vault.depositWithPermit(1000e6, block.timestamp + 1 hours, 0, bytes32(0), bytes32(0));
+    vault.depositWithPermit(alice, 1000e6, block.timestamp + 1 hours, 0, bytes32(0), bytes32(0));
   }
 
   /// @notice Test depositWithPermit handles non-permit tokens gracefully
@@ -849,7 +849,7 @@ contract EarnVaultTest is Test {
     // Our MockERC20 doesn't implement permit, so this should fail gracefully
     vm.prank(alice);
     vm.expectRevert(IEarnVaultEventsAndErrors.PermitFailed.selector);
-    vault.depositWithPermit(1000e6, block.timestamp + 1 hours, 0, bytes32(0), bytes32(0));
+    vault.depositWithPermit(alice, 1000e6, block.timestamp + 1 hours, 0, bytes32(0), bytes32(0));
   }
 
   /// @notice Test depositWithPermit triggers _settle when user has existing principal

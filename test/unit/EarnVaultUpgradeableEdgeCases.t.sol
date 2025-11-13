@@ -4,6 +4,8 @@ pragma solidity ^0.8.30;
 import {IEarnVaultEventsAndErrors} from '../../src/interfaces/vaults/earn/IEarnVaultEventsAndErrors.sol';
 import {EarnVaultUpgradeable} from '../../src/vaults/earn/EarnVaultUpgradeable.sol';
 import {MockUSDSC} from '../mocks/MockUSDSC.sol';
+import {MockERC20Permit} from '../mocks/MockERC20Permit.sol';
+import {IERC20Permit} from '@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol';
 import {ERC1967Proxy} from '@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol';
 import {Test} from 'forge-std/Test.sol';
 
@@ -19,6 +21,11 @@ contract EarnVaultUpgradeableEdgeCasesTest is Test {
   address pauser = address(0x9A);
   address operator = address(0x0C3A); // boost reward keeper
   address user = address(0x5E4);
+  address relayer = address(0x5678); // relayer who pays gas
+  address tokenOwner = vm.addr(0x1234); // token owner who signs permit
+
+  // Private keys for signing permits
+  uint256 tokenOwnerPrivateKey = 0x1234;
 
   function setUp() public {
     usdsc = new MockUSDSC();
@@ -388,6 +395,223 @@ contract EarnVaultUpgradeableEdgeCasesTest is Test {
 
   // ========== depositWithPermit Tests ==========
 
+  /// @notice Helper function to create a valid permit signature
+  /// @param token The ERC20Permit token
+  /// @param tokenOwnerAddr The token owner who signs the permit
+  /// @param spender The spender (vault address)
+  /// @param value The amount to approve
+  /// @param deadline The permit deadline
+  /// @param privateKey The private key of the owner
+  /// @return v The v component of the signature
+  /// @return r The r component of the signature
+  /// @return s The s component of the signature
+  function _getPermitSignature(
+    IERC20Permit token,
+    address tokenOwnerAddr,
+    address spender,
+    uint256 value,
+    uint256 deadline,
+    uint256 privateKey
+  ) internal view returns (uint8 v, bytes32 r, bytes32 s) {
+    bytes32 typeHash = keccak256('Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)');
+    bytes32 domainSeparator = token.DOMAIN_SEPARATOR();
+    uint256 nonce = token.nonces(tokenOwnerAddr);
+
+    bytes32 structHash = keccak256(abi.encode(typeHash, tokenOwnerAddr, spender, value, nonce, deadline));
+    bytes32 hash = keccak256(abi.encodePacked('\x19\x01', domainSeparator, structHash));
+
+    return vm.sign(privateKey, hash);
+  }
+
+  /// @notice Test depositWithPermit with valid permit signature
+  /// @dev Verifies that a valid permit signature allows deposit
+  function test_DepositWithPermit_ValidSignature() public {
+    // Deploy a token with permit support
+    MockERC20Permit permitToken = new MockERC20Permit('Permit Token', 'PERMIT');
+    
+    // Create a new vault with the permit token
+    EarnVaultUpgradeable implementation = new EarnVaultUpgradeable();
+    bytes memory initData = abi.encodeWithSelector(
+      EarnVaultUpgradeable.initialize.selector,
+      address(permitToken),
+      owner,
+      redistributor,
+      treasury,
+      pauser,
+      operator
+    );
+    ERC1967Proxy proxy = new ERC1967Proxy(address(implementation), initData);
+    EarnVaultUpgradeable permitVault = EarnVaultUpgradeable(payable(address(proxy)));
+
+    uint256 depositAmount = 5000e6;
+    permitToken.mint(tokenOwner, depositAmount);
+
+    // Create valid permit signature
+    uint256 deadline = block.timestamp + 1 hours;
+    (uint8 v, bytes32 r, bytes32 s) = _getPermitSignature(
+      IERC20Permit(address(permitToken)),
+      tokenOwner,
+      address(permitVault),
+      depositAmount,
+      deadline,
+      tokenOwnerPrivateKey
+    );
+
+    // Execute depositWithPermit as relayer (different from tokenOwner)
+    vm.prank(relayer);
+    permitVault.depositWithPermit(tokenOwner, depositAmount, deadline, v, r, s);
+
+    // Verify deposit was credited to tokenOwner (not relayer)
+    assertEq(permitVault.principal(tokenOwner), depositAmount, 'Deposit should be credited to tokenOwner');
+    assertEq(permitVault.principal(relayer), 0, 'Relayer should not receive deposit credit');
+  }
+
+  /// @notice Test depositWithPermit with relayer functionality
+  /// @dev Verifies that relayer can execute on behalf of tokenOwner
+  function test_DepositWithPermit_RelayerFunctionality() public {
+    MockERC20Permit permitToken = new MockERC20Permit('Permit Token', 'PERMIT');
+    
+    EarnVaultUpgradeable implementation = new EarnVaultUpgradeable();
+    bytes memory initData = abi.encodeWithSelector(
+      EarnVaultUpgradeable.initialize.selector,
+      address(permitToken),
+      owner,
+      redistributor,
+      treasury,
+      pauser,
+      operator
+    );
+    ERC1967Proxy proxy = new ERC1967Proxy(address(implementation), initData);
+    EarnVaultUpgradeable permitVault = EarnVaultUpgradeable(payable(address(proxy)));
+
+    uint256 depositAmount = 5000e6;
+    permitToken.mint(tokenOwner, depositAmount);
+
+    // Token owner signs permit (off-chain, no gas needed)
+    uint256 deadline = block.timestamp + 1 hours;
+    (uint8 v, bytes32 r, bytes32 s) = _getPermitSignature(
+      IERC20Permit(address(permitToken)),
+      tokenOwner,
+      address(permitVault),
+      depositAmount,
+      deadline,
+      tokenOwnerPrivateKey
+    );
+
+    // Relayer executes the transaction (pays gas)
+    vm.prank(relayer);
+    permitVault.depositWithPermit(tokenOwner, depositAmount, deadline, v, r, s);
+
+    // Verify tokenOwner received the deposit credit
+    assertEq(permitVault.principal(tokenOwner), depositAmount, 'TokenOwner should receive deposit credit');
+    assertEq(permitToken.balanceOf(tokenOwner), 0, 'TokenOwner tokens should be transferred');
+    assertEq(permitToken.balanceOf(address(permitVault)), depositAmount, 'Vault should receive tokens');
+  }
+
+  /// @notice Test depositWithPermit reverts when tokenOwner doesn't match signature
+  /// @dev Verifies signature validation - signature must be from tokenOwner
+  function test_Revert_DepositWithPermit_WrongTokenOwner() public {
+    MockERC20Permit permitToken = new MockERC20Permit('Permit Token', 'PERMIT');
+    
+    EarnVaultUpgradeable implementation = new EarnVaultUpgradeable();
+    bytes memory initData = abi.encodeWithSelector(
+      EarnVaultUpgradeable.initialize.selector,
+      address(permitToken),
+      owner,
+      redistributor,
+      treasury,
+      pauser,
+      operator
+    );
+    ERC1967Proxy proxy = new ERC1967Proxy(address(implementation), initData);
+    EarnVaultUpgradeable permitVault = EarnVaultUpgradeable(payable(address(proxy)));
+
+    uint256 depositAmount = 5000e6;
+    permitToken.mint(tokenOwner, depositAmount);
+
+    // Create signature from tokenOwner
+    uint256 deadline = block.timestamp + 1 hours;
+    (uint8 v, bytes32 r, bytes32 s) = _getPermitSignature(
+      IERC20Permit(address(permitToken)),
+      tokenOwner,
+      address(permitVault),
+      depositAmount,
+      deadline,
+      tokenOwnerPrivateKey
+    );
+
+    // Try to use signature with wrong tokenOwner address
+    address wrongOwner = address(0x9999);
+    vm.prank(relayer);
+    vm.expectRevert(); // Permit will fail because signature doesn't match wrongOwner
+    permitVault.depositWithPermit(wrongOwner, depositAmount, deadline, v, r, s);
+  }
+
+  /// @notice Test depositWithPermit reverts with expired deadline
+  /// @dev Verifies deadline validation
+  function test_Revert_DepositWithPermit_ExpiredDeadline() public {
+    MockERC20Permit permitToken = new MockERC20Permit('Permit Token', 'PERMIT');
+    
+    EarnVaultUpgradeable implementation = new EarnVaultUpgradeable();
+    bytes memory initData = abi.encodeWithSelector(
+      EarnVaultUpgradeable.initialize.selector,
+      address(permitToken),
+      owner,
+      redistributor,
+      treasury,
+      pauser,
+      operator
+    );
+    ERC1967Proxy proxy = new ERC1967Proxy(address(implementation), initData);
+    EarnVaultUpgradeable permitVault = EarnVaultUpgradeable(payable(address(proxy)));
+
+    uint256 depositAmount = 5000e6;
+    permitToken.mint(tokenOwner, depositAmount);
+
+    // Create signature with expired deadline
+    uint256 expiredDeadline = block.timestamp - 1;
+    (uint8 v, bytes32 r, bytes32 s) = _getPermitSignature(
+      IERC20Permit(address(permitToken)),
+      tokenOwner,
+      address(permitVault),
+      depositAmount,
+      expiredDeadline,
+      tokenOwnerPrivateKey
+    );
+
+    vm.prank(relayer);
+    vm.expectRevert(); // Permit will fail due to expired deadline
+    permitVault.depositWithPermit(tokenOwner, depositAmount, expiredDeadline, v, r, s);
+  }
+
+  /// @notice Test depositWithPermit reverts with invalid signature
+  /// @dev Verifies that invalid signature components are rejected
+  function test_Revert_DepositWithPermit_InvalidSignature() public {
+    MockERC20Permit permitToken = new MockERC20Permit('Permit Token', 'PERMIT');
+    
+    EarnVaultUpgradeable implementation = new EarnVaultUpgradeable();
+    bytes memory initData = abi.encodeWithSelector(
+      EarnVaultUpgradeable.initialize.selector,
+      address(permitToken),
+      owner,
+      redistributor,
+      treasury,
+      pauser,
+      operator
+    );
+    ERC1967Proxy proxy = new ERC1967Proxy(address(implementation), initData);
+    EarnVaultUpgradeable permitVault = EarnVaultUpgradeable(payable(address(proxy)));
+
+    uint256 depositAmount = 5000e6;
+    permitToken.mint(tokenOwner, depositAmount);
+
+    // Use invalid signature (wrong v, r, s)
+    uint256 deadline = block.timestamp + 1 hours;
+    vm.prank(relayer);
+    vm.expectRevert(IEarnVaultEventsAndErrors.PermitFailed.selector);
+    permitVault.depositWithPermit(tokenOwner, depositAmount, deadline, 27, bytes32(0), bytes32(0));
+  }
+
   function test_Revert_DepositWithPermit_PermitFailed() public {
     // MockUSDSC doesn't implement permit, so it will fail
     uint256 depositAmount = 5000e6;
@@ -396,13 +620,198 @@ contract EarnVaultUpgradeableEdgeCasesTest is Test {
     // Try to use permit with MockUSDSC (which doesn't support it)
     vm.prank(user);
     vm.expectRevert(IEarnVaultEventsAndErrors.PermitFailed.selector);
-    vault.depositWithPermit(depositAmount, block.timestamp + 1 hours, 27, bytes32(0), bytes32(0));
+    vault.depositWithPermit(user, depositAmount, block.timestamp + 1 hours, 27, bytes32(0), bytes32(0));
   }
 
   function test_Revert_DepositWithPermit_ZeroAmount() public {
     vm.prank(user);
     vm.expectRevert(IEarnVaultEventsAndErrors.ZeroAmount.selector);
-    vault.depositWithPermit(0, block.timestamp + 1 hours, 27, bytes32(0), bytes32(0));
+    vault.depositWithPermit(user, 0, block.timestamp + 1 hours, 27, bytes32(0), bytes32(0));
+  }
+
+  /// @notice Test depositWithPermit reverts with zero address tokenOwner
+  /// @dev Verifies zero address validation for tokenOwner
+  function test_Revert_DepositWithPermit_ZeroAddressTokenOwner() public {
+    MockERC20Permit permitToken = new MockERC20Permit('Permit Token', 'PERMIT');
+    
+    EarnVaultUpgradeable implementation = new EarnVaultUpgradeable();
+    bytes memory initData = abi.encodeWithSelector(
+      EarnVaultUpgradeable.initialize.selector,
+      address(permitToken),
+      owner,
+      redistributor,
+      treasury,
+      pauser,
+      operator
+    );
+    ERC1967Proxy proxy = new ERC1967Proxy(address(implementation), initData);
+    EarnVaultUpgradeable permitVault = EarnVaultUpgradeable(payable(address(proxy)));
+
+    uint256 depositAmount = 5000e6;
+    uint256 deadline = block.timestamp + 1 hours;
+
+    vm.prank(relayer);
+    vm.expectRevert(IEarnVaultEventsAndErrors.CanNotBeZeroAddress.selector);
+    permitVault.depositWithPermit(address(0), depositAmount, deadline, 27, bytes32(0), bytes32(0));
+  }
+
+  /// @notice Test depositWithPermit reverts when signature approves wrong amount
+  /// @dev Verifies that permit amount must match deposit amount
+  function test_Revert_DepositWithPermit_WrongAmountInSignature() public {
+    MockERC20Permit permitToken = new MockERC20Permit('Permit Token', 'PERMIT');
+    
+    EarnVaultUpgradeable implementation = new EarnVaultUpgradeable();
+    bytes memory initData = abi.encodeWithSelector(
+      EarnVaultUpgradeable.initialize.selector,
+      address(permitToken),
+      owner,
+      redistributor,
+      treasury,
+      pauser,
+      operator
+    );
+    ERC1967Proxy proxy = new ERC1967Proxy(address(implementation), initData);
+    EarnVaultUpgradeable permitVault = EarnVaultUpgradeable(payable(address(proxy)));
+
+    uint256 permitAmount = 5000e6; // Amount in permit signature
+    uint256 depositAmount = 10000e6; // Different amount trying to deposit
+    permitToken.mint(tokenOwner, depositAmount);
+
+    // Create signature with permitAmount (smaller than depositAmount)
+    uint256 deadline = block.timestamp + 1 hours;
+    (uint8 v, bytes32 r, bytes32 s) = _getPermitSignature(
+      IERC20Permit(address(permitToken)),
+      tokenOwner,
+      address(permitVault),
+      permitAmount, // Signature approves permitAmount
+      deadline,
+      tokenOwnerPrivateKey
+    );
+
+    // Try to deposit depositAmount (larger than permitAmount)
+    vm.prank(relayer);
+    vm.expectRevert(); // TransferFrom will fail due to insufficient allowance
+    permitVault.depositWithPermit(tokenOwner, depositAmount, deadline, v, r, s);
+  }
+
+  /// @notice Test depositWithPermit reverts when signature approves wrong spender
+  /// @dev Verifies that permit spender must be vault address
+  function test_Revert_DepositWithPermit_WrongSpenderInSignature() public {
+    MockERC20Permit permitToken = new MockERC20Permit('Permit Token', 'PERMIT');
+    
+    EarnVaultUpgradeable implementation = new EarnVaultUpgradeable();
+    bytes memory initData = abi.encodeWithSelector(
+      EarnVaultUpgradeable.initialize.selector,
+      address(permitToken),
+      owner,
+      redistributor,
+      treasury,
+      pauser,
+      operator
+    );
+    ERC1967Proxy proxy = new ERC1967Proxy(address(implementation), initData);
+    EarnVaultUpgradeable permitVault = EarnVaultUpgradeable(payable(address(proxy)));
+
+    uint256 depositAmount = 5000e6;
+    permitToken.mint(tokenOwner, depositAmount);
+
+    // Create signature with wrong spender (not vault address)
+    address wrongSpender = address(0x9999);
+    uint256 deadline = block.timestamp + 1 hours;
+    (uint8 v, bytes32 r, bytes32 s) = _getPermitSignature(
+      IERC20Permit(address(permitToken)),
+      tokenOwner,
+      wrongSpender, // Wrong spender in signature
+      depositAmount,
+      deadline,
+      tokenOwnerPrivateKey
+    );
+
+    // Try to use signature with vault as spender (but signature was for wrongSpender)
+    vm.prank(relayer);
+    vm.expectRevert(); // Permit will fail because spender doesn't match
+    permitVault.depositWithPermit(tokenOwner, depositAmount, deadline, v, r, s);
+  }
+
+  /// @notice Test depositWithPermit reverts when tokenOwner has insufficient balance
+  /// @dev Verifies that transferFrom fails when balance is insufficient
+  function test_Revert_DepositWithPermit_InsufficientBalance() public {
+    MockERC20Permit permitToken = new MockERC20Permit('Permit Token', 'PERMIT');
+    
+    EarnVaultUpgradeable implementation = new EarnVaultUpgradeable();
+    bytes memory initData = abi.encodeWithSelector(
+      EarnVaultUpgradeable.initialize.selector,
+      address(permitToken),
+      owner,
+      redistributor,
+      treasury,
+      pauser,
+      operator
+    );
+    ERC1967Proxy proxy = new ERC1967Proxy(address(implementation), initData);
+    EarnVaultUpgradeable permitVault = EarnVaultUpgradeable(payable(address(proxy)));
+
+    uint256 depositAmount = 5000e6;
+    uint256 balance = 3000e6; // Less than depositAmount
+    permitToken.mint(tokenOwner, balance);
+
+    // Create valid permit signature
+    uint256 deadline = block.timestamp + 1 hours;
+    (uint8 v, bytes32 r, bytes32 s) = _getPermitSignature(
+      IERC20Permit(address(permitToken)),
+      tokenOwner,
+      address(permitVault),
+      depositAmount,
+      deadline,
+      tokenOwnerPrivateKey
+    );
+
+    // Try to deposit more than balance
+    vm.prank(relayer);
+    vm.expectRevert(); // TransferFrom will fail due to insufficient balance
+    permitVault.depositWithPermit(tokenOwner, depositAmount, deadline, v, r, s);
+  }
+
+  /// @notice Test depositWithPermit prevents replay attacks
+  /// @dev Verifies that same signature cannot be used twice (nonce protection)
+  function test_Revert_DepositWithPermit_ReplayAttack() public {
+    MockERC20Permit permitToken = new MockERC20Permit('Permit Token', 'PERMIT');
+    
+    EarnVaultUpgradeable implementation = new EarnVaultUpgradeable();
+    bytes memory initData = abi.encodeWithSelector(
+      EarnVaultUpgradeable.initialize.selector,
+      address(permitToken),
+      owner,
+      redistributor,
+      treasury,
+      pauser,
+      operator
+    );
+    ERC1967Proxy proxy = new ERC1967Proxy(address(implementation), initData);
+    EarnVaultUpgradeable permitVault = EarnVaultUpgradeable(payable(address(proxy)));
+
+    uint256 depositAmount = 5000e6;
+    permitToken.mint(tokenOwner, depositAmount * 2); // Enough for two deposits
+
+    // Create permit signature
+    uint256 deadline = block.timestamp + 1 hours;
+    (uint8 v, bytes32 r, bytes32 s) = _getPermitSignature(
+      IERC20Permit(address(permitToken)),
+      tokenOwner,
+      address(permitVault),
+      depositAmount,
+      deadline,
+      tokenOwnerPrivateKey
+    );
+
+    // First deposit succeeds
+    vm.prank(relayer);
+    permitVault.depositWithPermit(tokenOwner, depositAmount, deadline, v, r, s);
+
+    // Try to use same signature again (replay attack)
+    vm.prank(relayer);
+    vm.expectRevert(); // Permit will fail due to nonce mismatch
+    permitVault.depositWithPermit(tokenOwner, depositAmount, deadline, v, r, s);
   }
 
   function test_Revert_DepositWithPermit_Blacklisted() public {
@@ -416,7 +825,7 @@ contract EarnVaultUpgradeableEdgeCasesTest is Test {
     // Try to deposit with permit while blacklisted
     vm.prank(user);
     vm.expectRevert(IEarnVaultEventsAndErrors.AddressBlacklisted.selector);
-    vault.depositWithPermit(depositAmount, block.timestamp + 1 hours, 27, bytes32(0), bytes32(0));
+    vault.depositWithPermit(user, depositAmount, block.timestamp + 1 hours, 27, bytes32(0), bytes32(0));
   }
 
   function test_Revert_DepositWithPermit_Paused() public {
@@ -430,7 +839,7 @@ contract EarnVaultUpgradeableEdgeCasesTest is Test {
     // Try to deposit with permit while paused
     vm.prank(user);
     vm.expectRevert(); // EnforcedPause from PausableUpgradeable
-    vault.depositWithPermit(depositAmount, block.timestamp + 1 hours, 27, bytes32(0), bytes32(0));
+    vault.depositWithPermit(user, depositAmount, block.timestamp + 1 hours, 27, bytes32(0), bytes32(0));
   }
 
   /// @notice Test depositWithPermit triggers _settle when user has existing principal
