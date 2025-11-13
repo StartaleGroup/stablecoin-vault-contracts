@@ -235,8 +235,14 @@ contract RewardRedistributor is
     }
   }
 
-  /// @notice Validates that the snapshot is valid
-  /// @dev    Reverts if the snapshot is invalid
+  /**
+   * @notice Validates that the snapshot is valid.
+   * @dev Performs the following checks:
+   *      - Ensures a snapshot has been taken (timestamp and block number are non-zero).
+   *      - Verifies the snapshot is from a previous block (prevents same-block manipulation).
+   *      - Ensures the snapshot is not too old (must be within `snapshotMaxAge`).
+   *      Reverts with appropriate errors if any check fails.
+   */
   function _validateSnapShotAge() internal view {
     if (lastSnapshotTimestamp == 0) {
       revert IRewardRedistributorEventsAndErrors.LastSnapshotInvalid();
