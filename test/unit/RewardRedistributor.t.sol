@@ -1450,7 +1450,7 @@ contract RewardRedistributorTest is Test {
   /// @dev This ensures snapshot and distribute are in separate transactions:
   ///      - Transaction 1: snapshotSusdscTVL() in block N
   ///      - Transaction 2: distribute() in block N+x (x >= 1)
-  ///      Caller must still call distribute() separately after this helper
+  ///      Caller must still call distribute() separately after this helper, and must ensure that distribute() is called in a subsequent block (N+1, N+2, etc.), not in the same block as the snapshot. The block advanced by this helper is N+1, but the caller may advance further if needed, as long as the snapshot age is valid.
   function _takeSnapshotAndWait() internal {
     // Transaction 1: Take snapshot in current block
     vm.prank(operator);
