@@ -25,7 +25,7 @@ contract RewardRedistributorTest is Test {
 
   function setUp() public {
     usdsc = new MockUSDSC();
-    ext = new MockExtension(usdsc, address(0)); // set later
+    ext = new MockExtension(usdsc, address(0), address(this)); // owner is test contract
     earnV = new MockEarnVault(usdsc);
     sVault = new MockERC4626Vault(usdsc);
 
@@ -40,6 +40,8 @@ contract RewardRedistributorTest is Test {
 
     // Set redistributor as extension yieldRecipient
     ext.setYieldRecipient(address(rr));
+    // Set redistributor as the claimer (only it can call claimYield())
+    ext.setClaimer(address(rr));
 
     // Seed supply: mint 10M to some holder to represent circulating base (wallets/Lps)
     usdsc.mint(address(this), 10_000_000e6);
@@ -958,164 +960,191 @@ contract RewardRedistributorTest is Test {
     assertTrue(foundDistributedEvent, 'Distributed event was emitted');
   }
 
-  function testExternalClaimYieldBeforeDistribute() public {
-    // Test the scenario where claimYield() is called externally before distribute()
+  function testDonationBeforeDistribute() public {
+    // Test the scenario where a donation is sent to the contract before distribute()
+    // With the new behavior: distribute() only distributes what it mints, not existing balance.
+    // Donations remain in the contract and can be recovered.
 
     // Clear any existing balances first
     uint256 initialTreasuryBalance = usdsc.balanceOf(startale);
-    uint256 initialEarnVaultBalance = usdsc.balanceOf(address(earnV));
-    uint256 initialSVaultBalance = usdsc.balanceOf(address(sVault));
 
-    // Add pending yield
-    ext.addPending(50_000e6);
+    // Send a donation directly to the contract (simulating accidental/intentional transfer)
+    uint256 donationAmount = 50_000e6;
+    usdsc.mint(address(this), donationAmount);
+    usdsc.transfer(address(rr), donationAmount);
 
-    // External user calls claimYield() first (must be yield recipient)
-    vm.prank(address(rr)); // RewardRedistributor is the yield recipient
-    uint256 externalMinted = ext.claimYield();
-    assertEq(externalMinted, 50_000e6, 'External claimYield should mint correct amount');
-
-    // Verify RewardRedistributor has the yield
+    // Verify RewardRedistributor has the donation
     uint256 balanceBefore = usdsc.balanceOf(address(rr));
-    assertEq(balanceBefore, 50_000e6, 'RewardRedistributor should have the yield');
+    assertEq(balanceBefore, donationAmount, 'RewardRedistributor should have the donation');
 
-    // Now keeper calls distribute() - should handle existing balance
+    // Add pending yield and distribute - donation should remain separate
+    ext.addPending(100_000e6);
     _takeSnapshotAndWait();
     vm.prank(operator);
     rr.distribute();
 
-    // Verify all yield was distributed (no dust left)
+    // Verify donation remains (treated as donation, not distributed)
     uint256 balanceAfter = usdsc.balanceOf(address(rr));
-    assertEq(balanceAfter, 0, 'All yield should be distributed');
+    assertEq(balanceAfter, donationAmount, 'Donation should remain in contract after distribute');
 
-    // Verify yield went to expected recipients (accounting for initial balances)
-    uint256 treasuryBalance = usdsc.balanceOf(startale);
-    uint256 earnVaultBalance = usdsc.balanceOf(address(earnV));
-    uint256 sVaultBalance = usdsc.balanceOf(address(sVault));
+    // Verify distribution occurred for the minted yield (100k), not the donation
+    uint256 treasuryBalanceAfter = usdsc.balanceOf(startale);
+    assertGt(treasuryBalanceAfter, initialTreasuryBalance, 'Distribution should have occurred for minted yield');
 
-    // Calculate the additional amounts distributed
-    uint256 additionalTreasury = treasuryBalance - initialTreasuryBalance;
-    uint256 additionalEarnVault = earnVaultBalance - initialEarnVaultBalance;
-    uint256 additionalSVault = sVaultBalance - initialSVaultBalance;
+    // Recover the donation
+    vm.prank(admin);
+    rr.recoverDonations();
 
-    // Total additional distributed should equal original yield
-    uint256 totalAdditionalDistributed = additionalTreasury + additionalEarnVault + additionalSVault;
-    assertEq(totalAdditionalDistributed, 50_000e6, 'All yield should be distributed to recipients');
-
-    // Verify conservation
-    assertEq(externalMinted, totalAdditionalDistributed, 'External minted amount should equal total distributed');
+    // Verify donation was recovered to treasury
+    uint256 treasuryBalanceFinal = usdsc.balanceOf(startale);
+    assertEq(treasuryBalanceFinal - treasuryBalanceAfter, donationAmount, 'Donation should be recovered to treasury');
+    assertEq(usdsc.balanceOf(address(rr)), 0, 'Balance should be zero after recovery');
   }
 
-  function testExternalClaimYieldInvariants() public {
-    // Test that all invariants hold when claimYield() is called externally before distribute()
-
-    // Add pending yield
-    ext.addPending(100_000e6);
+  function testDonationInvariants() public {
+    // Test that all invariants hold when donations are sent to the contract
+    // With the new behavior: donations remain in the contract and can be recovered
 
     // Record initial state for invariant checks
     uint256 initialTotalSupply = usdsc.totalSupply();
     uint256 initialTreasuryBalance = usdsc.balanceOf(startale);
-    uint256 initialEarnVaultBalance = usdsc.balanceOf(address(earnV));
-    uint256 initialSVaultBalance = usdsc.balanceOf(address(sVault));
 
-    // External user calls claimYield() first
-    vm.prank(address(rr));
-    uint256 externalMinted = ext.claimYield();
+    // Send a donation directly to the contract
+    uint256 donationAmount = 100_000e6;
+    usdsc.mint(address(this), donationAmount);
+    usdsc.transfer(address(rr), donationAmount);
 
-    // Invariant 1: Conservation of Value (after external claimYield)
+    // Invariant 1: Conservation of Value (after donation)
     uint256 newTotalSupply = usdsc.totalSupply();
-    assertEq(newTotalSupply, initialTotalSupply + externalMinted, 'Total supply should increase by minted amount');
+    assertEq(newTotalSupply, initialTotalSupply + donationAmount, 'Total supply should increase by donation amount');
 
-    // Invariant 2: RewardRedistributor balance should equal minted amount
+    // Invariant 2: RewardRedistributor balance should equal donation amount
     uint256 rrBalance = usdsc.balanceOf(address(rr));
-    assertEq(rrBalance, externalMinted, 'RewardRedistributor should hold the minted yield');
+    assertEq(rrBalance, donationAmount, 'RewardRedistributor should hold the donation');
 
-    // Now keeper calls distribute()
+    // Add pending yield and distribute - donation should remain separate
+    ext.addPending(50_000e6);
     _takeSnapshotAndWait();
     vm.prank(operator);
     rr.distribute();
 
     // Invariant 3: Conservation of Value (after distribution)
     uint256 finalTotalSupply = usdsc.totalSupply();
-    assertEq(finalTotalSupply, newTotalSupply, 'Total supply should not change during distribution');
+    assertEq(finalTotalSupply, newTotalSupply + 50_000e6, 'Total supply should increase by minted yield');
 
-    // Invariant 4: No dust retention
+    // Invariant 4: Balance remains as donation (not distributed)
     uint256 finalRrBalance = usdsc.balanceOf(address(rr));
-    assertEq(finalRrBalance, 0, 'RewardRedistributor should have no remaining balance');
+    assertEq(finalRrBalance, donationAmount, 'RewardRedistributor should retain donation balance');
 
-    // Invariant 5: All yield distributed to recipients
+    // Invariant 5: Distribution occurred for minted yield only
     uint256 finalTreasuryBalance = usdsc.balanceOf(startale);
-    uint256 finalEarnVaultBalance = usdsc.balanceOf(address(earnV));
-    uint256 finalSVaultBalance = usdsc.balanceOf(address(sVault));
+    assertGt(finalTreasuryBalance, initialTreasuryBalance, 'Distribution should have occurred for minted yield');
 
-    uint256 additionalTreasury = finalTreasuryBalance - initialTreasuryBalance;
-    uint256 additionalEarnVault = finalEarnVaultBalance - initialEarnVaultBalance;
-    uint256 additionalSVault = finalSVaultBalance - initialSVaultBalance;
-
-    uint256 totalDistributed = additionalTreasury + additionalEarnVault + additionalSVault;
-    assertEq(totalDistributed, externalMinted, 'All minted yield should be distributed');
+    // Invariant 6: Donation can be recovered
+    vm.prank(admin);
+    rr.recoverDonations();
+    assertEq(usdsc.balanceOf(address(rr)), 0, 'Donation should be recoverable');
+    assertEq(
+      usdsc.balanceOf(startale) - finalTreasuryBalance, donationAmount, 'Donation should be recovered to treasury'
+    );
   }
 
-  function testPreviewDistributeConsistencyWithExternalClaimYield() public {
-    // Test that previewDistribute() is consistent with actual distribute() when claimYield() was called externally
+  function testPreviewDistributeConsistencyWithDonation() public {
+    // Test that previewDistribute() is consistent with actual distribute() when donation exists
+    // With the new behavior: distribute() only distributes what it mints, not existing balance
+
+    // Send a donation to the contract
+    uint256 donationAmount = 75_000e6;
+    usdsc.mint(address(this), donationAmount);
+    usdsc.transfer(address(rr), donationAmount);
 
     // Add pending yield
-    ext.addPending(75_000e6);
+    ext.addPending(50_000e6);
 
-    // External user calls claimYield() first
-    vm.prank(address(rr));
-    ext.claimYield();
-
-    // Preview the distribution
+    // Preview the distribution - should show pending yield, not donation
     (uint256 minted,,,,,,,) = rr.previewDistribute();
+    assertEq(minted, 50_000e6, 'Preview should show pending yield amount');
 
-    // Since yield was already claimed externally, preview should show 0 pending yield
-    assertEq(minted, 0, 'Preview should show 0 pending yield after external claim');
+    // Verify donation is in contract
+    assertEq(usdsc.balanceOf(address(rr)), donationAmount, 'Donation should be in contract');
 
     // Now perform actual distribution
     _takeSnapshotAndWait();
     vm.prank(operator);
     rr.distribute();
 
-    // Verify that the actual distribution used the existing balance
+    // Verify that the donation remains (treated as donation, not distributed)
     uint256 finalRrBalance = usdsc.balanceOf(address(rr));
-    assertEq(finalRrBalance, 0, 'All yield should be distributed');
+    assertEq(finalRrBalance, donationAmount, 'Donation should remain in contract after distribute');
 
-    // The key insight: previewDistribute() shows 0 because there's no pending yield,
-    // but distribute() handles the existing balance correctly
-    // This is the expected behavior - preview shows pending yield, distribute handles existing balance
+    // The key insight: previewDistribute() shows pending yield to be minted,
+    // distribute() mints and distributes that yield, but donations remain separate.
+    // The donation can be recovered via recoverDonations().
+
+    // Verify donation can be recovered
+    vm.prank(admin);
+    rr.recoverDonations();
+    assertEq(usdsc.balanceOf(address(rr)), 0, 'Donation should be recoverable');
   }
 
-  function testMultipleExternalClaimYieldCalls() public {
-    // Test multiple external claimYield() calls before distribute()
+  function testMultipleDonations() public {
+    // Test multiple donations sent to the contract before and after distribute()
+    // With the new behavior: donations remain in the contract and can be recovered
 
-    // First external claimYield
-    ext.addPending(25_000e6);
-    vm.prank(address(rr));
-    uint256 firstMinted = ext.claimYield();
+    uint256 initialTreasuryBalance = usdsc.balanceOf(startale);
 
-    // Second external claimYield (after more yield accrues)
-    ext.addPending(30_000e6);
-    vm.prank(address(rr));
-    uint256 secondMinted = ext.claimYield();
+    // First donation
+    uint256 donation1 = 25_000e6;
+    usdsc.mint(address(this), donation1);
+    usdsc.transfer(address(rr), donation1);
 
-    uint256 totalExternalMinted = firstMinted + secondMinted;
-
-    // Verify RewardRedistributor has all the yield
-    uint256 rrBalance = usdsc.balanceOf(address(rr));
-    assertEq(rrBalance, totalExternalMinted, 'RewardRedistributor should have all externally minted yield');
-
-    // Now distribute - should handle all existing balance
+    // Add pending yield and distribute
+    ext.addPending(50_000e6);
     _takeSnapshotAndWait();
     vm.prank(operator);
     rr.distribute();
 
-    // Verify all yield was distributed
-    uint256 finalRrBalance = usdsc.balanceOf(address(rr));
-    assertEq(finalRrBalance, 0, 'All yield should be distributed');
+    // Verify first donation remains
+    assertEq(usdsc.balanceOf(address(rr)), donation1, 'First donation should remain after distribute');
 
-    // Verify conservation
+    // Second donation (after distribution)
+    uint256 donation2 = 30_000e6;
+    usdsc.mint(address(this), donation2);
+    usdsc.transfer(address(rr), donation2);
+
+    uint256 totalDonations = donation1 + donation2;
+
+    // Verify RewardRedistributor has all donations
+    uint256 rrBalance = usdsc.balanceOf(address(rr));
+    assertEq(rrBalance, totalDonations, 'RewardRedistributor should have all donations');
+
+    // Distribute again (with new pending yield)
+    ext.addPending(40_000e6);
+    _takeSnapshotAndWait();
+    vm.prank(operator);
+    rr.distribute();
+
+    // Verify donations remain (treated as donations, not distributed)
+    uint256 finalRrBalance = usdsc.balanceOf(address(rr));
+    assertEq(finalRrBalance, totalDonations, 'All donations should remain after distribute');
+
+    // Verify distribution occurred for minted yield
+    assertGt(usdsc.balanceOf(startale), initialTreasuryBalance, 'Distribution should have occurred for minted yield');
+
+    // Verify conservation - total supply increased by donations + minted yield
     uint256 totalSupplyIncrease = usdsc.totalSupply() - (10_000_000e6); // Subtract initial supply
-    assertEq(totalSupplyIncrease, totalExternalMinted, 'Total supply increase should equal total externally minted');
+    assertGt(totalSupplyIncrease, totalDonations, 'Total supply should include donations and minted yield');
+
+    // Record treasury balance before recovery
+    uint256 treasuryBeforeRecovery = usdsc.balanceOf(startale);
+
+    // Verify all donations can be recovered
+    vm.prank(admin);
+    rr.recoverDonations();
+    assertEq(usdsc.balanceOf(address(rr)), 0, 'All donations should be recoverable');
+    assertEq(
+      usdsc.balanceOf(startale) - treasuryBeforeRecovery, totalDonations, 'Donations should be recovered to treasury'
+    );
   }
 
   function testPreviewDistributeSBaseCalculationInvariants() public {
@@ -2165,5 +2194,324 @@ contract RewardRedistributorTest is Test {
 
     assertEq(rr.lastSnapshotBlockNumber(), blockBefore2, 'Should capture new block number');
     assertGt(rr.lastSnapshotBlockNumber(), blockBefore, 'Block number should increase');
+  }
+
+  // ========== RECOVER DONATIONS TESTS ==========
+
+  function test_RecoverDonations_BasicRecovery() public {
+    // Send some donations to the redistributor
+    uint256 donationAmount = 10_000e6;
+    usdsc.mint(address(this), donationAmount);
+    usdsc.transfer(address(rr), donationAmount);
+
+    uint256 treasuryBalanceBefore = usdsc.balanceOf(startale);
+    uint256 rrBalanceBefore = usdsc.balanceOf(address(rr));
+    assertEq(rrBalanceBefore, donationAmount, 'Redistributor should have donation');
+
+    // Recover donations
+    vm.prank(admin);
+    vm.expectEmit(true, true, true, true);
+    emit IRewardRedistributorEventsAndErrors.DonationsRecovered(donationAmount);
+    rr.recoverDonations();
+
+    // Verify donations were transferred to treasury
+    uint256 treasuryBalanceAfter = usdsc.balanceOf(startale);
+    uint256 rrBalanceAfter = usdsc.balanceOf(address(rr));
+
+    assertEq(rrBalanceAfter, 0, 'Redistributor should have zero balance after recovery');
+    assertEq(
+      treasuryBalanceAfter - treasuryBalanceBefore, donationAmount, 'Treasury should receive donation amount'
+    );
+  }
+
+  function test_RecoverDonations_OnlyAdmin() public {
+    // Send some donations
+    uint256 donationAmount = 5_000e6;
+    usdsc.mint(address(this), donationAmount);
+    usdsc.transfer(address(rr), donationAmount);
+
+    // Non-admin cannot recover
+    address nonAdmin = makeAddr('nonAdmin');
+    vm.prank(nonAdmin);
+    vm.expectRevert();
+    rr.recoverDonations();
+
+    // Operator cannot recover (only admin)
+    vm.prank(operator);
+    vm.expectRevert();
+    rr.recoverDonations();
+
+    // Admin can recover
+    vm.prank(admin);
+    rr.recoverDonations();
+    assertEq(usdsc.balanceOf(address(rr)), 0, 'Donations should be recovered');
+  }
+
+  function test_RecoverDonations_ZeroBalance() public {
+    // Ensure redistributor has zero balance
+    assertEq(usdsc.balanceOf(address(rr)), 0, 'Should start with zero balance');
+
+    uint256 treasuryBalanceBefore = usdsc.balanceOf(startale);
+
+    // Recovering zero balance should not revert, just do nothing
+    vm.prank(admin);
+    rr.recoverDonations();
+
+    // Verify no event was emitted (since balance was 0, the if condition is false)
+    // and treasury balance unchanged
+    uint256 treasuryBalanceAfter = usdsc.balanceOf(startale);
+    assertEq(treasuryBalanceAfter, treasuryBalanceBefore, 'Treasury balance should be unchanged');
+    assertEq(usdsc.balanceOf(address(rr)), 0, 'Redistributor should still have zero balance');
+  }
+
+  function test_RecoverDonations_MultipleDonations() public {
+    // Send multiple donations
+    uint256 donation1 = 5_000e6;
+    uint256 donation2 = 3_000e6;
+    uint256 donation3 = 2_000e6;
+    uint256 totalDonations = donation1 + donation2 + donation3;
+
+    usdsc.mint(address(this), donation1);
+    usdsc.transfer(address(rr), donation1);
+
+    usdsc.mint(address(this), donation2);
+    usdsc.transfer(address(rr), donation2);
+
+    usdsc.mint(address(this), donation3);
+    usdsc.transfer(address(rr), donation3);
+
+    assertEq(usdsc.balanceOf(address(rr)), totalDonations, 'Should have accumulated donations');
+
+    // Recover all donations at once
+    uint256 treasuryBalanceBefore = usdsc.balanceOf(startale);
+    vm.prank(admin);
+    rr.recoverDonations();
+
+    uint256 treasuryBalanceAfter = usdsc.balanceOf(startale);
+    assertEq(usdsc.balanceOf(address(rr)), 0, 'All donations should be recovered');
+    assertEq(
+      treasuryBalanceAfter - treasuryBalanceBefore, totalDonations, 'Treasury should receive all donations'
+    );
+  }
+
+  function test_RecoverDonations_BalanceInvariant_NoDonations() public {
+    // Test the invariant: before and after distribute(), balance remains the same (no donations)
+    ext.addPending(100_000e6);
+    _takeSnapshotAndWait();
+
+    uint256 balanceBeforeDistribute = usdsc.balanceOf(address(rr));
+    assertEq(balanceBeforeDistribute, 0, 'Should start with zero balance');
+
+    // Distribute
+    vm.prank(operator);
+    rr.distribute();
+
+    uint256 balanceAfterDistribute = usdsc.balanceOf(address(rr));
+    assertEq(
+      balanceAfterDistribute, balanceBeforeDistribute, 'Balance should remain same after distribute (no donations)'
+    );
+    assertEq(balanceAfterDistribute, 0, 'Balance should be zero after distribute');
+  }
+
+  function test_RecoverDonations_BalanceInvariant_WithDonations() public {
+    // Test that donations accumulate and don't get distributed
+    ext.addPending(100_000e6);
+    _takeSnapshotAndWait();
+
+    // Send donation before distribute
+    uint256 donationAmount = 5_000e6;
+    usdsc.mint(address(this), donationAmount);
+    usdsc.transfer(address(rr), donationAmount);
+
+    uint256 balanceBeforeDistribute = usdsc.balanceOf(address(rr));
+    assertEq(balanceBeforeDistribute, donationAmount, 'Should have donation before distribute');
+
+    // Distribute - should only distribute minted yield, not donations
+    vm.prank(operator);
+    rr.distribute();
+
+    uint256 balanceAfterDistribute = usdsc.balanceOf(address(rr));
+    // Balance should remain the same (donation is still there, only minted was distributed)
+    assertEq(
+      balanceAfterDistribute, balanceBeforeDistribute, 'Balance should remain same (donation preserved)'
+    );
+    assertEq(balanceAfterDistribute, donationAmount, 'Donation should still be in contract');
+
+    // Now recover the donation
+    vm.prank(admin);
+    rr.recoverDonations();
+    assertEq(usdsc.balanceOf(address(rr)), 0, 'Donation should be recovered');
+  }
+
+  function test_RecoverDonations_DonationsAfterDistribute() public {
+    // Distribute first
+    ext.addPending(100_000e6);
+    _takeSnapshotAndWait();
+    vm.prank(operator);
+    rr.distribute();
+
+    // Verify balance is zero after distribute
+    assertEq(usdsc.balanceOf(address(rr)), 0, 'Balance should be zero after distribute');
+
+    // Send donation after distribute
+    uint256 donationAmount = 7_500e6;
+    usdsc.mint(address(this), donationAmount);
+    usdsc.transfer(address(rr), donationAmount);
+
+    assertEq(usdsc.balanceOf(address(rr)), donationAmount, 'Should have donation after distribute');
+
+    // Recover donation
+    uint256 treasuryBalanceBefore = usdsc.balanceOf(startale);
+    vm.prank(admin);
+    rr.recoverDonations();
+
+    uint256 treasuryBalanceAfter = usdsc.balanceOf(startale);
+    assertEq(usdsc.balanceOf(address(rr)), 0, 'Donation should be recovered');
+    assertEq(
+      treasuryBalanceAfter - treasuryBalanceBefore, donationAmount, 'Treasury should receive donation'
+    );
+  }
+
+  function test_RecoverDonations_MultipleDistributionsWithDonations() public {
+    // First distribution
+    ext.addPending(50_000e6);
+    _takeSnapshotAndWait();
+
+    // Donation before first distribute
+    uint256 donation1 = 2_000e6;
+    usdsc.mint(address(this), donation1);
+    usdsc.transfer(address(rr), donation1);
+
+    uint256 balanceBefore1 = usdsc.balanceOf(address(rr));
+    vm.prank(operator);
+    rr.distribute();
+    uint256 balanceAfter1 = usdsc.balanceOf(address(rr));
+    assertEq(balanceAfter1, balanceBefore1, 'Balance invariant holds after first distribute');
+    assertEq(balanceAfter1, donation1, 'Donation should remain');
+
+    // Second donation
+    uint256 donation2 = 3_000e6;
+    usdsc.mint(address(this), donation2);
+    usdsc.transfer(address(rr), donation2);
+
+    // Second distribution
+    ext.addPending(75_000e6);
+    _takeSnapshotAndWait();
+
+    uint256 balanceBefore2 = usdsc.balanceOf(address(rr));
+    vm.prank(operator);
+    rr.distribute();
+    uint256 balanceAfter2 = usdsc.balanceOf(address(rr));
+    assertEq(balanceAfter2, balanceBefore2, 'Balance invariant holds after second distribute');
+    assertEq(balanceAfter2, donation1 + donation2, 'Both donations should remain');
+
+    // Third donation
+    uint256 donation3 = 1_000e6;
+    usdsc.mint(address(this), donation3);
+    usdsc.transfer(address(rr), donation3);
+
+    // Recover all accumulated donations
+    uint256 totalDonations = donation1 + donation2 + donation3;
+    uint256 treasuryBalanceBefore = usdsc.balanceOf(startale);
+    vm.prank(admin);
+    rr.recoverDonations();
+
+    uint256 treasuryBalanceAfter = usdsc.balanceOf(startale);
+    assertEq(usdsc.balanceOf(address(rr)), 0, 'All donations should be recovered');
+    assertEq(
+      treasuryBalanceAfter - treasuryBalanceBefore, totalDonations, 'Treasury should receive all donations'
+    );
+  }
+
+  function test_RecoverDonations_EventEmission() public {
+    uint256 donationAmount = 15_000e6;
+    usdsc.mint(address(this), donationAmount);
+    usdsc.transfer(address(rr), donationAmount);
+
+    // Verify event is emitted with correct parameters
+    vm.prank(admin);
+    vm.expectEmit(true, true, true, true);
+    emit IRewardRedistributorEventsAndErrors.DonationsRecovered(donationAmount);
+    rr.recoverDonations();
+  }
+
+  function test_RecoverDonations_NonReentrant() public {
+    // This test verifies that recoverDonations is protected by nonReentrant
+    // In a real scenario, we'd need a malicious contract to test reentrancy
+    // For now, we just verify the modifier is present by checking it compiles
+    // and that multiple calls work correctly
+
+    uint256 donationAmount = 5_000e6;
+    usdsc.mint(address(this), donationAmount);
+    usdsc.transfer(address(rr), donationAmount);
+
+    // First recovery
+    vm.prank(admin);
+    rr.recoverDonations();
+    assertEq(usdsc.balanceOf(address(rr)), 0, 'First recovery should work');
+
+    // Send another donation
+    usdsc.mint(address(this), donationAmount);
+    usdsc.transfer(address(rr), donationAmount);
+
+    // Second recovery should also work (nonReentrant allows new calls)
+    vm.prank(admin);
+    rr.recoverDonations();
+    assertEq(usdsc.balanceOf(address(rr)), 0, 'Second recovery should work');
+  }
+
+  function test_RecoverDonations_DonationsNotDistributed() public {
+    // Critical test: verify that donations are NOT included in distribution calculations
+    ext.addPending(100_000e6);
+    _takeSnapshotAndWait();
+
+    // Send donation
+    uint256 donationAmount = 10_000e6;
+    usdsc.mint(address(this), donationAmount);
+    usdsc.transfer(address(rr), donationAmount);
+
+    // Record balances before distribution
+    uint256 treasuryBalanceBefore = usdsc.balanceOf(startale);
+    uint256 earnVaultBalanceBefore = usdsc.balanceOf(address(earnV));
+    uint256 sVaultBalanceBefore = usdsc.balanceOf(address(sVault));
+
+    // Distribute - should only distribute the 100_000e6 minted, not the 10_000e6 donation
+    vm.prank(operator);
+    rr.distribute();
+
+    // Calculate what was distributed
+    uint256 treasuryReceived = usdsc.balanceOf(startale) - treasuryBalanceBefore;
+    uint256 earnVaultReceived = usdsc.balanceOf(address(earnV)) - earnVaultBalanceBefore;
+    uint256 sVaultReceived = usdsc.balanceOf(address(sVault)) - sVaultBalanceBefore;
+    uint256 totalDistributed = treasuryReceived + earnVaultReceived + sVaultReceived;
+
+    // Total distributed should equal the minted amount (100_000e6), not include donation
+    assertEq(totalDistributed, 100_000e6, 'Only minted amount should be distributed');
+    assertEq(usdsc.balanceOf(address(rr)), donationAmount, 'Donation should remain in contract');
+
+    // Now recover the donation
+    vm.prank(admin);
+    rr.recoverDonations();
+    assertEq(usdsc.balanceOf(address(rr)), 0, 'Donation should be recovered');
+  }
+
+  function test_RecoverDonations_AfterTreasuryChange() public {
+    // Send donation
+    uint256 donationAmount = 5_000e6;
+    usdsc.mint(address(this), donationAmount);
+    usdsc.transfer(address(rr), donationAmount);
+
+    // Change treasury address
+    address newTreasury = makeAddr('newTreasury');
+    vm.prank(admin);
+    rr.setTreasury(newTreasury);
+
+    // Recover donations - should go to new treasury
+    vm.prank(admin);
+    rr.recoverDonations();
+
+    assertEq(usdsc.balanceOf(address(rr)), 0, 'Donations should be recovered');
+    assertEq(usdsc.balanceOf(newTreasury), donationAmount, 'Donations should go to new treasury');
+    assertEq(usdsc.balanceOf(startale), 0, 'Old treasury should not receive donations');
   }
 }

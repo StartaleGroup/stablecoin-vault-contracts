@@ -63,6 +63,10 @@ interface IRewardRedistributorEventsAndErrors {
   /// @param newSnapshotMaxAge New snapshot maximum age value.
   event SnapshotMaxAgeUpdated(uint256 newSnapshotMaxAge);
 
+  /// @notice Emitted when donations are recovered.
+  /// @param balance Amount of USDSC recovered.
+  event DonationsRecovered(uint256 balance);
+
   // ========================================
   // Errors
   // ========================================
