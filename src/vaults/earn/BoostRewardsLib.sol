@@ -47,7 +47,7 @@ library BoostRewardsLib {
     if (totalPrincipal == 0) {
       // No deposits: transfer to treasury
       if (bal < amount) revert IEarnVaultEventsAndErrors.InsufficientBoostTokenBalance();
-      
+
       try IERC20(token).transfer(treasury, amount) returns (bool success) {
         if (!success) {
           revert IEarnVaultEventsAndErrors.InsufficientBoostTokenBalance();
@@ -126,7 +126,7 @@ library BoostRewardsLib {
 
     userBoostAccrued[user][token] = 0;
     boostClaimReserve[token] -= claimedAmount;
-    
+
     try IERC20(token).transfer(user, claimedAmount) returns (bool success) {
       if (!success) {
         // Transfer returned false - revert accounting changes
@@ -142,10 +142,10 @@ library BoostRewardsLib {
       // Revert accounting changes to maintain consistency
       userBoostAccrued[user][token] = claimedAmount;
       boostClaimReserve[token] += claimedAmount;
-      
+
       // Emit failure event for monitoring
       emit IEarnVaultEventsAndErrors.BoostRewardTransferFailed(user, token, claimedAmount);
-      
+
       // Returning 0 to indicate failure, allowing other tokens to still be claimed
       return 0;
     }
@@ -196,8 +196,8 @@ library BoostRewardsLib {
       return;
     }
     if (boostGlobalIndex > userBoostIndex) {
-        uint256 owed = Math.mulDiv(principal, boostGlobalIndex - userBoostIndex, RAY);
-        userBoostAccrued[user][token] += owed;
+      uint256 owed = Math.mulDiv(principal, boostGlobalIndex - userBoostIndex, RAY);
+      userBoostAccrued[user][token] += owed;
     }
     // Note: User's boost index update is handled by the calling contract
   }

@@ -66,6 +66,18 @@ contract RewardRedistributor is
   /// @dev Carry accumulator for sUSDSC share calculations across epochs.
   uint256 private carryOn;
 
+  /// @dev Latest sUSDSC TVL snapshot.
+  uint256 public lastSusdscTVL;
+
+  /// @dev Latest snapshot block number.
+  uint256 public lastSnapshotBlockNumber;
+
+  /// @dev Latest snapshot timestamp.
+  uint256 public lastSnapshotTimestamp;
+
+  /// @dev Maximum age for snapshot validity (e.g., 4 hours).
+  uint256 public snapshotMaxAge = 4 hours;
+
   /// @notice Initializes the redistributor.
   /// @param usdscAddress    USDSC token address (implements both IERC20 and IMYieldToOne interfaces).
   /// @param treasuryAddr   Treasury recipient.
@@ -155,6 +167,31 @@ contract RewardRedistributor is
     emit IRewardRedistributorEventsAndErrors.FeeUpdated(newFeeBps);
   }
 
+  /// @notice Updates the maximum age for snapshot validity.
+  /// @param newSnapshotMaxAge New snapshot maximum age value.
+  function setSnapshotMaxAge(uint256 newSnapshotMaxAge) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    if (newSnapshotMaxAge < 1 minutes) {
+      revert IRewardRedistributorEventsAndErrors.InvalidSnapshotMaxAge(newSnapshotMaxAge, 1 minutes);
+    }
+    if (newSnapshotMaxAge > 7 days) {
+      revert IRewardRedistributorEventsAndErrors.InvalidSnapshotMaxAge(newSnapshotMaxAge, 7 days);
+    }
+    snapshotMaxAge = newSnapshotMaxAge;
+    emit IRewardRedistributorEventsAndErrors.SnapshotMaxAgeUpdated(newSnapshotMaxAge);
+  }
+
+  /// @notice Capture sUSDSC vault TVL for next distribution
+  /// @dev Must be called in block N before distribute() in block N+x (a few blocks apart/ couple of minutes apart)
+  /// @custom:security Prevents same-block TVL manipulation attacks
+  function snapshotSusdscTVL() external onlyRole(OPERATOR_ROLE) whenNotPaused {
+    lastSusdscTVL = susdscVault.totalAssets();
+    lastSnapshotTimestamp = block.timestamp;
+    lastSnapshotBlockNumber = block.number;
+    emit IRewardRedistributorEventsAndErrors.SusdscTVLSnapshotCaptured(
+      lastSusdscTVL, lastSnapshotTimestamp, lastSnapshotBlockNumber
+    );
+  }
+
   function pause(bool p) external onlyRole(DEFAULT_ADMIN_ROLE) {
     p ? _pause() : _unpause();
   }
@@ -197,10 +234,37 @@ contract RewardRedistributor is
 
   /// @notice Validates that this contract is still the yield recipient on the extension.
   /// @dev    Reverts if the yield recipient has changed.
-  function validateYieldRecipient() internal view {
+  function _validateYieldRecipient() internal view {
     address currentRecipient = IMYieldToOne(USDSC_ADDRESS).yieldRecipient();
     if (currentRecipient != address(this)) {
       revert IRewardRedistributorEventsAndErrors.YieldRecipientChanged(currentRecipient);
+    }
+  }
+
+  /**
+   * @notice Validates that the snapshot is valid.
+   * @dev Performs the following checks:
+   *      - Ensures a snapshot has been taken (timestamp and block number are non-zero).
+   *      - Verifies the snapshot is from a previous block (prevents same-block manipulation).
+   *      - Ensures the snapshot is not too old (must be within `snapshotMaxAge`).
+   *      Reverts with appropriate errors if any check fails.
+   */
+  function _validateSnapShotAge() internal view {
+    if (lastSnapshotTimestamp == 0) {
+      revert IRewardRedistributorEventsAndErrors.LastSnapshotInvalid();
+    }
+
+    if (lastSnapshotBlockNumber == 0) {
+      revert IRewardRedistributorEventsAndErrors.LastSnapshotInvalid();
+    }
+
+    if (block.number - lastSnapshotBlockNumber < 1) {
+      revert IRewardRedistributorEventsAndErrors.MustSnapshotInPreviousBlocks(lastSnapshotBlockNumber, block.number);
+    }
+
+    // Check maximum age (snapshot must not be too old)
+    if (block.timestamp - lastSnapshotTimestamp > snapshotMaxAge) {
+      revert IRewardRedistributorEventsAndErrors.SnapshotTooOld(lastSnapshotTimestamp, block.timestamp, snapshotMaxAge);
     }
   }
 
@@ -211,7 +275,7 @@ contract RewardRedistributor is
   ///         3) Calculate `gross = balanceBefore + minted` to handle both normal flow and external claimYield() calls.
   ///         4) `feeToStartale = gross * fee_on_yield_bps / 10_000`.
   ///         5) Compute `S_base = IERC20(USDSC_ADDRESS).totalSupply() - minted` (supply **before** this mint).
-  ///         6) Read TVLs: `T_earn = earnVault.totalPrincipal()`, `T_yield = susdscVault.totalAssets()`.
+  ///         6) Read TVLs: `T_earn = earnVault.totalPrincipal()`, `T_yield = lastSusdscTVL` (snapshot TVL).
   ///         7) Allocate net using carries:
   ///            `toEarn = floor((net*T_earn + carryEarn)/S_base)`, `carryEarn = (net*T_earn + carryEarn) % S_base`
   ///            `toOn   = floor((net*T_yield   + carryOn)/S_base)`,   `carryOn   = (net*T_yield   + carryOn)   % S_base`
@@ -222,7 +286,8 @@ contract RewardRedistributor is
   ///            - sUSDSC: transfer `toOn` (PPS rises)
   /// @custom:security nonReentrant and Pausable.
   function distribute() external whenNotPaused onlyRole(OPERATOR_ROLE) nonReentrant {
-    validateYieldRecipient();
+    _validateYieldRecipient();
+    _validateSnapShotAge();
     uint256 balanceBefore = IERC20(USDSC_ADDRESS).balanceOf(address(this));
     uint256 minted = IMYieldToOne(USDSC_ADDRESS).claimYield();
     uint256 gross = balanceBefore + minted;
@@ -382,7 +447,7 @@ contract RewardRedistributor is
     )
   {
     if (minted == 0) {
-      return (0, 0, 0, 0, _supplyBase(0), earnVault.totalPrincipal(), susdscVault.totalAssets());
+      return (0, 0, 0, 0, _supplyBase(0), earnVault.totalPrincipal(), lastSusdscTVL);
     }
 
     feeToStartale = (minted * fee_on_yield_bps) / 10_000;
@@ -396,7 +461,7 @@ contract RewardRedistributor is
     }
 
     T_earn = earnVault.totalPrincipal();
-    T_yield = susdscVault.totalAssets();
+    T_yield = lastSusdscTVL; // Use snapshot TVL to prevent manipulation
 
     if (S_base == 0) {
       toStartaleExtra = net;

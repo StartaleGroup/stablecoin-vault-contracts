@@ -615,9 +615,12 @@ contract EarnVaultBoostTest is Test {
     // Store indices before claim to verify update
     uint256 userIndexBefore = earnVault.userBoostIndex(user1, address(astr));
     uint256 globalIndexBefore = earnVault.boostGlobalIndex(address(astr));
-    
+
     // User index should be 0 (uninitialized) or less than global index
-    assertTrue(userIndexBefore < globalIndexBefore || userIndexBefore == 0, 'User index should be less than global index before claim');
+    assertTrue(
+      userIndexBefore < globalIndexBefore || userIndexBefore == 0,
+      'User index should be less than global index before claim'
+    );
 
     // =========================
     // Action: Claim (this calls _settleBoost() then claimBoostReward())
@@ -669,16 +672,16 @@ contract EarnVaultBoostTest is Test {
     // =========================
     uint256 initialASTRBalance = astr.balanceOf(user1);
     uint256 initialUSDSCBalance = usdsc.balanceOf(user1);
-    
+
     // Verify user has no ASTR tokens initially
     assertEq(initialASTRBalance, 0, 'User should have no ASTR tokens initially');
-    
+
     vm.prank(user1);
     earnVault.claim(); // First claim - this clears userBoostAccrued[user1][astr] = 0
 
     uint256 astrBalanceAfterFirstClaim = astr.balanceOf(user1);
     uint256 usdscBalanceAfterFirstClaim = usdsc.balanceOf(user1);
-    
+
     // Verify user received ASTR rewards in first claim (no USDSC yield in this test)
     assertGe(astrBalanceAfterFirstClaim, initialASTRBalance, 'User ASTR balance should increase or stay same');
     assertGt(astrBalanceAfterFirstClaim, initialASTRBalance, 'User ASTR balance should increase');
@@ -702,8 +705,12 @@ contract EarnVaultBoostTest is Test {
     earnVault.claim(); // Second claim attempt - should revert
 
     // Verify balances didn't change
-    assertEq(astr.balanceOf(user1), astrBalanceAfterFirstClaim, 'ASTR balance should not change after failed claim attempt');
-    assertEq(usdsc.balanceOf(user1), usdscBalanceAfterFirstClaim, 'USDSC balance should not change after failed claim attempt');
+    assertEq(
+      astr.balanceOf(user1), astrBalanceAfterFirstClaim, 'ASTR balance should not change after failed claim attempt'
+    );
+    assertEq(
+      usdsc.balanceOf(user1), usdscBalanceAfterFirstClaim, 'USDSC balance should not change after failed claim attempt'
+    );
 
     // =========================
     // Additional verification: Even if new rewards are distributed,
@@ -711,7 +718,7 @@ contract EarnVaultBoostTest is Test {
     // =========================
     // Mint more ASTR tokens to operator for the second distribution
     astr.mint(operator, ASTR_REWARD);
-    
+
     // Distribute new boost rewards
     vm.startPrank(operator);
     astr.approve(address(earnVault), ASTR_REWARD);
@@ -727,13 +734,15 @@ contract EarnVaultBoostTest is Test {
     uint256 astrBalanceBeforeSecondClaim = astr.balanceOf(user1);
     vm.prank(user1);
     earnVault.claim(); // Should succeed and claim only the new rewards
-    
+
     uint256 astrBalanceAfterSecondClaim = astr.balanceOf(user1);
     uint256 receivedSecondClaim = astrBalanceAfterSecondClaim - astrBalanceBeforeSecondClaim;
-    
+
     // User should receive exactly ASTR_REWARD (the new rewards), not ASTR_REWARD * 2
     assertEq(receivedSecondClaim, ASTR_REWARD, 'User should only receive new rewards, not old ones again');
-    assertEq(astrBalanceAfterSecondClaim, ASTR_REWARD * 2, 'Total received should be exactly 2x ASTR_REWARD (first + second)');
+    assertEq(
+      astrBalanceAfterSecondClaim, ASTR_REWARD * 2, 'Total received should be exactly 2x ASTR_REWARD (first + second)'
+    );
   }
 
   /// @notice Test that deposit() properly settles boost rewards, preventing retroactive accrual
@@ -779,7 +788,9 @@ contract EarnVaultBoostTest is Test {
     // owed = principal * (boostGlobalIndex - userBoostIndex) / RAY
     // owed = 1000e6 * (1e38 - 0) / 1e27 = 100e18 ASTR ✅
     uint256 claimableAfterFirstDistribution = earnVault.getClaimableBoostReward(user1, address(astr));
-    assertEq(claimableAfterFirstDistribution, ASTR_REWARD, 'T1: Alice should have 100e18 ASTR pending (100% as only user)');
+    assertEq(
+      claimableAfterFirstDistribution, ASTR_REWARD, 'T1: Alice should have 100e18 ASTR pending (100% as only user)'
+    );
 
     // State at T1:
     // principal[Alice] = 1000 USDSC (unchanged)
@@ -822,7 +833,11 @@ contract EarnVaultBoostTest is Test {
     // The deposit should NOT retroactively accrue rewards on the new 1000 USDSC principal
     // because userBoostIndex was updated BEFORE principal was increased
     uint256 claimableAfterDeposit = earnVault.getClaimableBoostReward(user1, address(astr));
-    assertEq(claimableAfterDeposit, ASTR_REWARD, 'T2: Alice should still have 100e18 ASTR claimable (no retroactive accrual on new principal)');
+    assertEq(
+      claimableAfterDeposit,
+      ASTR_REWARD,
+      'T2: Alice should still have 100e18 ASTR claimable (no retroactive accrual on new principal)'
+    );
 
     // ============================================================
     // TIME T3 - Second Boost Distribution
@@ -840,7 +855,9 @@ contract EarnVaultBoostTest is Test {
     // Calculation: boostGlobalIndex[TokenA] = 1e38 + (100e18 * 1e27) / 2000e6 = 1e38 + 0.5e38 = 1.5e38
     // Formula: previousIndex + (ASTR_REWARD * RAY) / totalPrincipal = 1e38 + (100e18 * 1e27) / 2000e6 = 1.5e38
     uint256 boostIndexAfterSecondDistribution = earnVault.boostGlobalIndex(address(astr));
-    assertEq(boostIndexAfterSecondDistribution, 1.5e38, 'T3: boostGlobalIndex should be 1.5e38 after second distribution');
+    assertEq(
+      boostIndexAfterSecondDistribution, 1.5e38, 'T3: boostGlobalIndex should be 1.5e38 after second distribution'
+    );
 
     // ============================================================
     // TIME T4 - Alice Tries to Claim (CORRECT CALCULATION)
@@ -849,7 +866,7 @@ contract EarnVaultBoostTest is Test {
     // ✅ CORRECT Calculation (with fix):
     // Alice's userBoostIndex = 1e38 (updated during deposit at T2)
     // Alice's principal = 2000 USDSC
-    // 
+    //
     // Rewards from T1→T3 (second distribution):
     // owed = 2000e6 * (1.5e38 - 1e38) / 1e27 = 2000e6 * 0.5e38 / 1e27 = 100e18 ASTR
     //
@@ -859,12 +876,20 @@ contract EarnVaultBoostTest is Test {
     // Total: 200e18 ASTR ✅
 
     uint256 claimableAfterSecondDistribution = earnVault.getClaimableBoostReward(user1, address(astr));
-    assertEq(claimableAfterSecondDistribution, ASTR_REWARD * 2, 'T4: Alice should have 200e18 ASTR claimable (100e18 from T1 + 100e18 from T3)');
+    assertEq(
+      claimableAfterSecondDistribution,
+      ASTR_REWARD * 2,
+      'T4: Alice should have 200e18 ASTR claimable (100e18 from T1 + 100e18 from T3)'
+    );
 
     // Verify the user's boost index is still at the first distribution level (1e38)
     // This is because getClaimableBoostReward() doesn't update the index, only _settleBoost() does
     uint256 userBoostIndexBeforeClaim = earnVault.userBoostIndex(user1, address(astr));
-    assertEq(userBoostIndexBeforeClaim, boostIndexAfterFirstDistribution, 'T4: User boost index should still be 1e38 (not updated by getClaimableBoostReward)');
+    assertEq(
+      userBoostIndexBeforeClaim,
+      boostIndexAfterFirstDistribution,
+      'T4: User boost index should still be 1e38 (not updated by getClaimableBoostReward)'
+    );
 
     // ============================================================
     // TIME T5 - Alice Claims Rewards
@@ -924,7 +949,7 @@ contract EarnVaultBoostTest is Test {
     // Alice's pending: 1000e6 * (1e38 - 0) / 1e27 = 100e18 ASTR ✅
     uint256 boostIndexT1 = earnVault.boostGlobalIndex(address(astr));
     assertEq(boostIndexT1, 1e38, 'T1: Global index = 1e38');
-    
+
     uint256 claimableT1 = earnVault.getClaimableBoostReward(user1, address(astr));
     assertEq(claimableT1, ASTR_REWARD, 'T1: Alice has 100e18 ASTR pending');
 
@@ -1170,7 +1195,9 @@ contract EarnVaultBoostTest is Test {
     earnVault.claim();
 
     // Verify only DOT was processed (ASTR balance unchanged, DOT increased)
-    assertEq(astr.balanceOf(user1), astrBalanceBeforeSecondClaim, 'ASTR balance should not change (token removed from array)');
+    assertEq(
+      astr.balanceOf(user1), astrBalanceBeforeSecondClaim, 'ASTR balance should not change (token removed from array)'
+    );
     assertEq(dot.balanceOf(user1), dotBalanceBeforeSecondClaim + DOT_REWARD, 'User should receive new DOT rewards');
     assertGt(dot.balanceOf(user1), DOT_REWARD, 'User should have received DOT from both distributions');
   }

@@ -472,24 +472,24 @@ contract EarnVaultUpgradeable is
   function removeBoostRewardToken(address token) external onlyOwner nonReentrant {
     EarnVaultStorage storage $ = _getStorage();
     if (token == address(0)) revert IEarnVaultEventsAndErrors.CanNotBeZeroAddress();
-    
+
     uint256 index = $.boostTokenIndex[token];
     if (index == 0) return;
-    
+
     if ($.boostClaimReserve[token] > 0) {
       revert IEarnVaultEventsAndErrors.InsufficientBoostClaimReserve();
     }
-    
+
     uint256 lastIndex = $.activeBoostTokens.length - 1;
     if (index != lastIndex + 1) {
       address lastToken = $.activeBoostTokens[lastIndex];
       $.activeBoostTokens[index - 1] = lastToken;
       $.boostTokenIndex[lastToken] = index;
     }
-    
+
     $.activeBoostTokens.pop();
     delete $.boostTokenIndex[token];
-    
+
     emit IEarnVaultEventsAndErrors.BoostRewardTokenRemoved(token);
   }
 
