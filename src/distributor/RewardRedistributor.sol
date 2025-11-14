@@ -475,12 +475,10 @@ contract RewardRedistributor is
     feeToStartale = (minted * fee_on_yield_bps) / BPS_DENOMINATOR;
     uint256 net = minted - feeToStartale;
 
-    uint256 SNow = IERC20(USDSC_ADDRESS).totalSupply();
-    if (preMint) {
-      S_base = SNow;
-    } else {
-      S_base = SNow > minted ? SNow - minted : 0;
-    }
+    // Use _supplyBase() helper to calculate S_base
+    // For preview (preMint=true): use current supply (minted=0)
+    // For actual distribution (preMint=false): use supply before mint (minted=minted)
+    S_base = _supplyBase(preMint ? 0 : minted);
 
     T_earn = earnVault.totalPrincipal();
     T_yield = lastSusdscTVL; // Use snapshot TVL to prevent manipulation
