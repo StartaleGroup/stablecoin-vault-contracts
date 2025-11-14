@@ -58,7 +58,7 @@ contract RewardRedistributorIntegrationTest is Test {
     );
 
     // Deploy MockExtension (will be set as yieldRecipient later)
-    ext = new MockExtension(usdsc, address(0));
+    ext = new MockExtension(usdsc, address(0), owner);
 
     // Deploy RewardRedistributor
     rr = new RewardRedistributor(
@@ -78,7 +78,11 @@ contract RewardRedistributorIntegrationTest is Test {
     // Note: operator already has OPERATOR_ROLE from constructor
 
     // Set RewardRedistributor as yieldRecipient in MockExtension
+    vm.startPrank(owner);
     ext.setYieldRecipient(address(rr));
+    // Set RewardRedistributor as the claimer (only it can call claimYield())
+    ext.setClaimer(address(rr));
+    vm.stopPrank();
 
     // Mint initial supply and distribute to test users
     usdsc.mint(address(this), 100_000_000e6); // 100M USDSC
@@ -645,9 +649,12 @@ contract RewardRedistributorIntegrationTest is Test {
       operator // keeper gets OPERATOR_ROLE
     );
 
-    // Set the new redistributor as yieldRecipient for this test
+    // Set the new redistributor as yieldRecipient and claimer for this test
     address originalRecipient = ext.yieldRecipient();
+    vm.startPrank(owner);
     ext.setYieldRecipient(address(rrEmpty));
+    ext.setClaimer(address(rrEmpty)); // Set as claimer so it can call claimYield()
+    vm.stopPrank();
 
     // Distribute yield to empty vaults
     ext.addPending(50_000e6);
@@ -669,8 +676,11 @@ contract RewardRedistributorIntegrationTest is Test {
     assertEq(usdsc.balanceOf(address(emptyEarnVault)), 0, 'empty EarnVault stays empty');
     assertEq(emptySusdscVault.totalAssets(), 0, 'empty sUSDSC vault stays empty');
 
-    // Restore original recipient
+    // Restore original recipient and claimer
+    vm.startPrank(owner);
     ext.setYieldRecipient(originalRecipient);
+    ext.setClaimer(address(rr)); // Restore original claimer
+    vm.stopPrank();
   }
 
   function testIntegration_LargeScaleDistribution() public {

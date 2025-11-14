@@ -192,8 +192,25 @@ contract RewardRedistributor is
     );
   }
 
+  /// @notice Pauses or unpauses the contract.
+  /// @dev    Callable by DEFAULT_ADMIN_ROLE.
+  /// @param p              True to pause, false to unpause.
   function pause(bool p) external onlyRole(DEFAULT_ADMIN_ROLE) {
     p ? _pause() : _unpause();
+  }
+
+  /// @notice Recovers donations made to the contract to the treasury.
+  /// @dev Callable by DEFAULT_ADMIN_ROLE.
+  /// @notice The invariant holds that before and after distribute the usdsc balance of address(this) is the same.
+  /// @notice The inflow during claimYield happens in the distribute() gets distributed whole leaving no balance.
+  /// @notice Hence we can safely assumy at any point in time usdscbalance of address(this) is from the intentional/accidental donations.
+  /// @custom:security nonReentrant.
+  function recoverDonations() external onlyRole(DEFAULT_ADMIN_ROLE) nonReentrant {
+    uint256 balance = IERC20(USDSC_ADDRESS).balanceOf(address(this));
+    if (balance > 0) {
+      IERC20(USDSC_ADDRESS).safeTransfer(treasury, balance);
+      emit IRewardRedistributorEventsAndErrors.DonationsRecovered(balance);
+    }
   }
 
   /// @notice Prevents renunciation of the last DEFAULT_ADMIN_ROLE only.
@@ -288,11 +305,11 @@ contract RewardRedistributor is
   function distribute() external whenNotPaused onlyRole(OPERATOR_ROLE) nonReentrant {
     _validateYieldRecipient();
     _validateSnapShotAge();
-    uint256 balanceBefore = IERC20(USDSC_ADDRESS).balanceOf(address(this));
+    // Note: claimYield() on USDSCextension is not public method anymore and is gated by trusted actors.
+    // Hence any other accruals before/after distribute are pure donations and not newly minted.
     uint256 minted = IMYieldToOne(USDSC_ADDRESS).claimYield();
-    uint256 gross = balanceBefore + minted;
 
-    if (gross == 0) return;
+    if (minted == 0) return;
 
     uint256 feeToStartale;
     uint256 toEarn;
@@ -302,17 +319,17 @@ contract RewardRedistributor is
     uint256 T_earn;
     uint256 T_yield;
 
-    (feeToStartale, toEarn, toOn, toStartaleExtra, S_base, T_earn, T_yield) = _calculateSplit(gross, true, false);
+    (feeToStartale, toEarn, toOn, toStartaleExtra, S_base, T_earn, T_yield) = _calculateSplit(minted, true, false);
 
     if (S_base == 0) {
       if (feeToStartale > 0) IERC20(USDSC_ADDRESS).safeTransfer(treasury, feeToStartale);
       if (toStartaleExtra > 0) IERC20(USDSC_ADDRESS).safeTransfer(treasury, toStartaleExtra);
-      emit Distributed(gross, feeToStartale, 0, 0, toStartaleExtra, 0, 0, 0);
+      emit Distributed(minted, feeToStartale, 0, 0, toStartaleExtra, 0, 0, 0);
       return;
     }
 
     if (S_base > 0) {
-      uint256 net = gross - feeToStartale;
+      uint256 net = minted - feeToStartale;
       uint256 numEarn = net * T_earn + carryEarn;
       carryEarn = numEarn % S_base;
 
@@ -331,7 +348,8 @@ contract RewardRedistributor is
       IERC20(USDSC_ADDRESS).safeTransfer(address(susdscVault), toOn);
     }
 
-    emit Distributed(gross, feeToStartale, toEarn, toOn, toStartaleExtra, S_base, T_earn, T_yield);
+    emit Distributed(minted, feeToStartale, toEarn, toOn, toStartaleExtra, S_base, T_earn, T_yield);
+    // balanceBefore and balanceAfter distribute would be the same.
   }
 
   /// @notice Preview a split for a hypothetical minted amount.
