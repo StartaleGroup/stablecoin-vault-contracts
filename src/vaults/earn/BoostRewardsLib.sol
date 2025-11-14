@@ -136,7 +136,6 @@ library BoostRewardsLib {
         return 0;
       }
       emit IEarnVaultEventsAndErrors.BoostRewardClaimed(user, token, claimedAmount);
-      return claimedAmount;
     } catch {
       // Transfer failed (token may be frozen, paused, etc.)
       // Revert accounting changes to maintain consistency

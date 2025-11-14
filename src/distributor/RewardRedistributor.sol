@@ -44,6 +44,9 @@ contract RewardRedistributor is
   /// @notice Maximum fee allowed (basis points).
   uint16 public constant MAX_FEE_BPS = 2000;
 
+  /// @notice Basis points denominator (10000 = 100%).
+  uint256 public constant BPS_DENOMINATOR = 10_000;
+
   /// @notice USDSC token address - used for both transfers/supply queries (IERC20) and yield operations (IMYieldToOne).
   /// @dev    The same address implements both IERC20 and IMYieldToOne interfaces.
   address public immutable USDSC_ADDRESS;
@@ -338,6 +341,7 @@ contract RewardRedistributor is
     }
 
     uint256 startaleTotal = feeToStartale + toStartaleExtra;
+    // Note: We may split it into two transfers to two different addresses.
     if (startaleTotal > 0) IERC20(USDSC_ADDRESS).safeTransfer(treasury, startaleTotal);
 
     if (toEarn > 0) {
@@ -468,7 +472,7 @@ contract RewardRedistributor is
       return (0, 0, 0, 0, _supplyBase(0), earnVault.totalPrincipal(), lastSusdscTVL);
     }
 
-    feeToStartale = (minted * fee_on_yield_bps) / 10_000;
+    feeToStartale = (minted * fee_on_yield_bps) / BPS_DENOMINATOR;
     uint256 net = minted - feeToStartale;
 
     uint256 SNow = IERC20(USDSC_ADDRESS).totalSupply();

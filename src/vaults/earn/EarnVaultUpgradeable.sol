@@ -150,6 +150,7 @@ contract EarnVaultUpgradeable is
     if (who == address(0)) revert IEarnVaultEventsAndErrors.CanNotBeZeroAddress();
     EarnVaultStorage storage $ = _getStorage();
     address oldTreasury = $.treasury;
+    if (oldTreasury == who) return;
     $.treasury = who;
     emit TreasuryChanged(msg.sender, oldTreasury, who);
   }
@@ -161,6 +162,7 @@ contract EarnVaultUpgradeable is
 
     EarnVaultStorage storage $ = _getStorage();
     address oldPauser = $.pauser;
+    if (oldPauser == who) return;
     $.pauser = who;
 
     emit PauserChanged(msg.sender, oldPauser, who);
@@ -172,6 +174,7 @@ contract EarnVaultUpgradeable is
   function setBlacklisted(address who, bool blacklisted) external onlyOwner {
     EarnVaultStorage storage $ = _getStorage();
     bool oldStatus = $.isBlacklisted[who];
+    if (oldStatus == blacklisted) return;
     $.isBlacklisted[who] = blacklisted;
     emit BlacklistStatusChanged(msg.sender, who, oldStatus, blacklisted);
   }

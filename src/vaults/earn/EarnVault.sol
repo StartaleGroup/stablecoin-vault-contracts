@@ -184,6 +184,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
   function setTreasury(address who) external onlyOwner {
     if (who == address(0)) revert IEarnVaultEventsAndErrors.CanNotBeZeroAddress();
     address oldTreasury = treasury;
+    if (oldTreasury == who) return;
     treasury = who;
     emit TreasuryChanged(msg.sender, oldTreasury, who);
   }
@@ -194,6 +195,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     if (who == address(0)) revert IEarnVaultEventsAndErrors.CanNotBeZeroAddress();
 
     address oldPauser = pauser;
+    if (oldPauser == who) return;
     pauser = who;
 
     emit PauserChanged(msg.sender, oldPauser, who);
@@ -204,6 +206,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
   /// @param blacklisted Whether address should be blacklisted
   function setBlacklisted(address who, bool blacklisted) external onlyOwner {
     bool oldStatus = isBlacklisted[who];
+    if (oldStatus == blacklisted) return;
     isBlacklisted[who] = blacklisted;
     emit BlacklistStatusChanged(msg.sender, who, oldStatus, blacklisted);
   }
