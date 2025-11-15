@@ -184,6 +184,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
   function setTreasury(address who) external onlyOwner {
     if (who == address(0)) revert IEarnVaultEventsAndErrors.CanNotBeZeroAddress();
     address oldTreasury = treasury;
+    if (oldTreasury == who) return;
     treasury = who;
     emit TreasuryChanged(msg.sender, oldTreasury, who);
   }
@@ -194,6 +195,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     if (who == address(0)) revert IEarnVaultEventsAndErrors.CanNotBeZeroAddress();
 
     address oldPauser = pauser;
+    if (oldPauser == who) return;
     pauser = who;
 
     emit PauserChanged(msg.sender, oldPauser, who);
@@ -204,6 +206,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
   /// @param blacklisted Whether address should be blacklisted
   function setBlacklisted(address who, bool blacklisted) external onlyOwner {
     bool oldStatus = isBlacklisted[who];
+    if (oldStatus == blacklisted) return;
     isBlacklisted[who] = blacklisted;
     emit BlacklistStatusChanged(msg.sender, who, oldStatus, blacklisted);
   }
@@ -234,19 +237,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     _checkNotBlacklisted(msg.sender);
     if (amount == 0) revert IEarnVaultEventsAndErrors.ZeroAmount();
 
-    _settle(msg.sender);
-
-    // Settle boost rewards for all active tokens BEFORE updating principal
-    for (uint256 i = 0; i < activeBoostTokens.length; i++) {
-      _settleBoost(msg.sender, activeBoostTokens[i]);
-    }
-
-    USDSC.safeTransferFrom(msg.sender, address(this), amount);
-    principal[msg.sender] += amount;
-    totalPrincipal += amount;
-    claimReserve += amount; // reserve principal 1:1
-
-    emit Deposit(msg.sender, amount);
+    _deposit(msg.sender, amount);
   }
 
   /// @notice Deposit USDSC tokens using permit (gasless approval)
@@ -278,21 +269,8 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     catch {
       revert IEarnVaultEventsAndErrors.PermitFailed();
     }
-    _settle(tokenOwner);
-
-    // Settle boost rewards for all active tokens BEFORE updating principal
-    for (uint256 i = 0; i < activeBoostTokens.length; i++) {
-      _settleBoost(tokenOwner, activeBoostTokens[i]);
-    }
-
-    // Transfer tokens from tokenOwner (permit allows this contract to transfer)
-    USDSC.safeTransferFrom(tokenOwner, address(this), amount);
     
-    principal[tokenOwner] += amount;
-    totalPrincipal += amount;
-    claimReserve += amount; // reserve principal 1:1
-
-    emit Deposit(tokenOwner, amount);
+    _deposit(tokenOwner, amount);
   }
 
   /// @notice Withdraw any amount up to principal amount
@@ -308,20 +286,8 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     uint256 p = principal[msg.sender];
     if (amount > p) revert IEarnVaultEventsAndErrors.InsufficientPrincipal();
 
-    // Settle and claim ALL boost rewards in single loop
-    for (uint256 i = 0; i < activeBoostTokens.length; i++) {
-      address token = activeBoostTokens[i];
-      _settleBoost(msg.sender, token);
-      BoostRewardsLib.claimBoostReward(
-        msg.sender,
-        token,
-        p, // Use original principal before withdrawal
-        userBoostIndex[msg.sender][token],
-        boostGlobalIndex[token],
-        userBoostAccrued,
-        boostClaimReserve
-      );
-    }
+    // Settle and claim ALL boost rewards
+    _claimBoostRewards(msg.sender);
 
     // Update state AFTER settling all rewards
     principal[msg.sender] = p - amount;
@@ -332,14 +298,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     USDSC.safeTransfer(msg.sender, amount);
 
     // Automatically claim ALL USDSC yield
-    uint256 usdscYield = accrued[msg.sender];
-    if (usdscYield > 0) {
-      if (claimReserve < usdscYield) revert IEarnVaultEventsAndErrors.InsufficientFunding();
-      accrued[msg.sender] = 0;
-      claimReserve -= usdscYield;
-      USDSC.safeTransfer(msg.sender, usdscYield);
-      emit InterestClaimed(msg.sender, usdscYield);
-    }
+    _claimUSDSC(msg.sender);
 
     // Emit events
     emit Withdraw(msg.sender, amount);
@@ -355,32 +314,13 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     bool hasUSDSCClaim = usdscAmt > 0;
     bool hasBoostClaim = false;
 
-    // Claim USDSC interest
+    // Claim USDSC interest (original order: USDSC first, then boost rewards)
     if (hasUSDSCClaim) {
-      if (claimReserve < usdscAmt) revert IEarnVaultEventsAndErrors.InsufficientFunding();
-      accrued[msg.sender] = 0;
-      claimReserve -= usdscAmt;
-      USDSC.safeTransfer(msg.sender, usdscAmt);
-      emit InterestClaimed(msg.sender, usdscAmt);
+      _claimUSDSC(msg.sender);
     }
 
-    // Settle and claim all boost rewards in single loop
-    for (uint256 i = 0; i < activeBoostTokens.length; i++) {
-      address token = activeBoostTokens[i];
-      _settleBoost(msg.sender, token);
-      uint256 claimedAmount = BoostRewardsLib.claimBoostReward(
-        msg.sender,
-        token,
-        principal[msg.sender],
-        userBoostIndex[msg.sender][token],
-        boostGlobalIndex[token],
-        userBoostAccrued,
-        boostClaimReserve
-      );
-      if (claimedAmount > 0) {
-        hasBoostClaim = true;
-      }
-    }
+    // Settle and claim all boost rewards
+    hasBoostClaim = _claimBoostRewards(msg.sender);
 
     if (!hasUSDSCClaim && !hasBoostClaim) revert IEarnVaultEventsAndErrors.NothingToClaim();
   }
@@ -540,15 +480,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
   /// @notice Get user's total value (principal + claimable interest)
   function totalValue(address user) external view returns (uint256) {
     uint256 p = principal[user];
-    if (p == 0) return accrued[user];
-
-    uint256 ui = userIndex[user];
-    uint256 gi = globalIndex;
-    if (gi > ui) {
-      uint256 owed = Math.mulDiv(p, gi - ui, RAY);
-      return p + accrued[user] + owed;
-    }
-    return p + accrued[user];
+    return p + this.claimable(user);
   }
 
   /// @notice Get user's complete account info in one call
@@ -641,6 +573,61 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
   // ================================================================
   // INTERNAL FUNCTIONS (STATE-CHANGING)
   // ================================================================
+
+  /// @dev Internal helper to handle deposit logic (shared by deposit() and depositWithPermit())
+  /// @param user Address of the user depositing
+  /// @param amount Amount of USDSC tokens to deposit
+  function _deposit(address user, uint256 amount) internal {
+    _settle(user);
+
+    // Settle boost rewards for all active tokens BEFORE updating principal
+    for (uint256 i = 0; i < activeBoostTokens.length; i++) {
+      _settleBoost(user, activeBoostTokens[i]);
+    }
+
+    USDSC.safeTransferFrom(user, address(this), amount);
+    principal[user] += amount;
+    totalPrincipal += amount;
+    claimReserve += amount; // reserve principal 1:1
+
+    emit Deposit(user, amount);
+  }
+
+  /// @dev Internal helper to claim USDSC interest for a user
+  /// @param user Address of the user claiming
+  function _claimUSDSC(address user) internal {
+    uint256 usdscYield = accrued[user];
+    if (usdscYield > 0) {
+      if (claimReserve < usdscYield) revert IEarnVaultEventsAndErrors.InsufficientFunding();
+      accrued[user] = 0;
+      claimReserve -= usdscYield;
+      USDSC.safeTransfer(user, usdscYield);
+      emit InterestClaimed(user, usdscYield);
+    }
+  }
+
+  /// @dev Internal helper to claim all boost rewards for a user
+  /// @param user Address of the user claiming
+  /// @return hasBoostClaim Whether any boost rewards were claimed
+  function _claimBoostRewards(address user) internal returns (bool hasBoostClaim) {
+    uint256 p = principal[user];
+    for (uint256 i = 0; i < activeBoostTokens.length; i++) {
+      address token = activeBoostTokens[i];
+      _settleBoost(user, token);
+      uint256 claimedAmount = BoostRewardsLib.claimBoostReward(
+        user,
+        token,
+        p,
+        userBoostIndex[user][token],
+        boostGlobalIndex[token],
+        userBoostAccrued,
+        boostClaimReserve
+      );
+      if (claimedAmount > 0) {
+        hasBoostClaim = true;
+      }
+    }
+  }
 
   /// @dev Settles user's accrued yield based on globalIndex difference
   /// @dev Must ALWAYS be called before modifying principal[user] or accrued[user]

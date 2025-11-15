@@ -35,7 +35,7 @@ library BoostRewardsLib {
     mapping(address => uint256) storage boostClaimReserve,
     address[] storage activeBoostTokens,
     mapping(address => uint256) storage boostTokenIndex
-  ) external {
+  ) internal {
     if (token == address(0)) {
       revert IEarnVaultEventsAndErrors.CanNotBeZeroAddress();
     }
@@ -104,7 +104,7 @@ library BoostRewardsLib {
     uint256 boostGlobalIndex,
     mapping(address => mapping(address => uint256)) storage userBoostAccrued,
     mapping(address => uint256) storage boostClaimReserve
-  ) external returns (uint256 claimedAmount) {
+  ) internal returns (uint256 claimedAmount) {
     if (token == address(0)) revert IEarnVaultEventsAndErrors.CanNotBeZeroAddress();
 
     // Settle user's boost rewards
@@ -136,7 +136,6 @@ library BoostRewardsLib {
         return 0;
       }
       emit IEarnVaultEventsAndErrors.BoostRewardClaimed(user, token, claimedAmount);
-      return claimedAmount;
     } catch {
       // Transfer failed (token may be frozen, paused, etc.)
       // Revert accounting changes to maintain consistency
@@ -165,7 +164,7 @@ library BoostRewardsLib {
     uint256 userBoostIndex,
     uint256 boostGlobalIndex,
     mapping(address => mapping(address => uint256)) storage userBoostAccrued
-  ) external view returns (uint256) {
+  ) internal view returns (uint256) {
     if (principal == 0) {
       return userBoostAccrued[user][token];
     }
@@ -190,7 +189,7 @@ library BoostRewardsLib {
     uint256 userBoostIndex,
     uint256 boostGlobalIndex,
     mapping(address => mapping(address => uint256)) storage userBoostAccrued
-  ) external {
+  ) internal {
     if (principal == 0) {
       // User has no principal, nothing to settle
       return;
