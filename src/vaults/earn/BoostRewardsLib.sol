@@ -88,38 +88,61 @@ library BoostRewardsLib {
     emit IEarnVaultEventsAndErrors.BoostRewardIndexed(token, amount, boostGlobalIndex[token], boostClaimReserve[token]);
   }
 
+  /// @notice Settle user's accrued boost rewards for a specific token
+  /// @param user User address to settle
+  /// @param token Token address to settle boost rewards for
+  /// @param principal User's principal amount
+  /// @param boostGlobalIndex Global boost index for this token
+  /// @param userBoostIndex Mapping of user => token => boost index
+  /// @param userBoostAccrued User's accrued boost rewards for this token
+  function settleBoost(
+    address user,
+    address token,
+    uint256 principal,
+    uint256 boostGlobalIndex,
+    mapping(address => mapping(address => uint256)) storage userBoostIndex,
+    mapping(address => mapping(address => uint256)) storage userBoostAccrued
+  ) public {
+    if (principal == 0) {
+      // User has no principal, just update index
+      userBoostIndex[user][token] = boostGlobalIndex;
+      return;
+    }
+    
+    uint256 ui = userBoostIndex[user][token];
+
+    // Settle accrued rewards if global index has increased
+    if (boostGlobalIndex > ui) {
+      uint256 owed = Math.mulDiv(principal, boostGlobalIndex - ui, RAY);
+      userBoostAccrued[user][token] += owed;
+    }
+    
+    // Always update index for consistency
+    userBoostIndex[user][token] = boostGlobalIndex;
+  }
+
   /// @notice Claim boost rewards for a specific token
   /// @param user User address claiming rewards
   /// @param token Token address to claim boost rewards for
   /// @param principal User's principal amount
-  /// @param userBoostIndex User's last boost index for this token
   /// @param boostGlobalIndex Global boost index for this token
+  /// @param userBoostIndex Mapping of user => token => boost index
   /// @param userBoostAccrued User's accrued boost rewards for this token
   /// @param boostClaimReserve Claimable boost reserves for this token
   function claimBoostReward(
     address user,
     address token,
     uint256 principal,
-    uint256 userBoostIndex,
     uint256 boostGlobalIndex,
+    mapping(address => mapping(address => uint256)) storage userBoostIndex,
     mapping(address => mapping(address => uint256)) storage userBoostAccrued,
     mapping(address => uint256) storage boostClaimReserve
   ) internal returns (uint256 claimedAmount) {
     if (token == address(0)) revert IEarnVaultEventsAndErrors.CanNotBeZeroAddress();
 
     // Settle user's boost rewards
-    if (principal == 0) {
-      // User has no principal, just return accrued amount
-      claimedAmount = userBoostAccrued[user][token];
-    } else {
-      uint256 ui = userBoostIndex;
-      uint256 gi = boostGlobalIndex;
-      if (gi > ui) {
-        uint256 owed = Math.mulDiv(principal, gi - ui, RAY);
-        userBoostAccrued[user][token] += owed;
-      }
-      claimedAmount = userBoostAccrued[user][token];
-    }
+    settleBoost(user, token, principal, boostGlobalIndex, userBoostIndex, userBoostAccrued);
+    claimedAmount = userBoostAccrued[user][token];
 
     if (claimedAmount == 0) return 0;
     if (boostClaimReserve[token] < claimedAmount) revert IEarnVaultEventsAndErrors.InsufficientBoostClaimReserve();
@@ -175,29 +198,4 @@ library BoostRewardsLib {
     return userBoostAccrued[user][token];
   }
 
-  /// @notice Settle user's accrued boost rewards for a specific token
-  /// @param user User address to settle
-  /// @param token Token address to settle boost rewards for
-  /// @param principal User's principal amount
-  /// @param userBoostIndex User's last boost index for this token
-  /// @param boostGlobalIndex Global boost index for this token
-  /// @param userBoostAccrued User's accrued boost rewards for this token
-  function settleBoost(
-    address user,
-    address token,
-    uint256 principal,
-    uint256 userBoostIndex,
-    uint256 boostGlobalIndex,
-    mapping(address => mapping(address => uint256)) storage userBoostAccrued
-  ) internal {
-    if (principal == 0) {
-      // User has no principal, nothing to settle
-      return;
-    }
-    if (boostGlobalIndex > userBoostIndex) {
-      uint256 owed = Math.mulDiv(principal, boostGlobalIndex - userBoostIndex, RAY);
-      userBoostAccrued[user][token] += owed;
-    }
-    // Note: User's boost index update is handled by the calling contract
-  }
 }

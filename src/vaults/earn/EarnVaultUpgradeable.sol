@@ -623,7 +623,8 @@ contract EarnVaultUpgradeable is
 
     // Settle boost rewards for all active tokens BEFORE updating principal
     for (uint256 i = 0; i < $.activeBoostTokens.length; i++) {
-      _settleBoost(user, $.activeBoostTokens[i]);
+      address token = $.activeBoostTokens[i];
+      BoostRewardsLib.settleBoost(user, token, $.principal[user], $.boostGlobalIndex[token], $.userBoostIndex, $.userBoostAccrued);
     }
 
     $.USDSC.safeTransferFrom(user, address(this), amount);
@@ -656,13 +657,13 @@ contract EarnVaultUpgradeable is
     uint256 p = $.principal[user];
     for (uint256 i = 0; i < $.activeBoostTokens.length; i++) {
       address token = $.activeBoostTokens[i];
-      _settleBoost(user, token);
+      // settleBoost is called internally by claimBoostReward
       uint256 claimedAmount = BoostRewardsLib.claimBoostReward(
         user,
         token,
         p,
-        $.userBoostIndex[user][token],
         $.boostGlobalIndex[token],
+        $.userBoostIndex,
         $.userBoostAccrued,
         $.boostClaimReserve
       );
@@ -693,25 +694,6 @@ contract EarnVaultUpgradeable is
     $.userIndex[user] = gi; // Always update index for consistency
   }
 
-  /// @dev Settles user's accrued boost rewards for a specific token
-  /// @dev Same logic as _settle but for boost rewards
-  /// @param user Address to settle
-  /// @param token Token address to settle boost rewards for
-  function _settleBoost(address user, address token) internal {
-    EarnVaultStorage storage $ = _getStorage();
-    uint256 p = $.principal[user];
-    if (p == 0) {
-      $.userBoostIndex[user][token] = $.boostGlobalIndex[token];
-      return;
-    }
-
-    uint256 ui = $.userBoostIndex[user][token];
-    uint256 gi = $.boostGlobalIndex[token];
-    if (gi > ui) {
-      BoostRewardsLib.settleBoost(user, token, p, ui, gi, $.userBoostAccrued);
-    }
-    $.userBoostIndex[user][token] = gi; // Always update index for consistency
-  }
 
   // -------- Internal Functions (View) --------
 
