@@ -1146,9 +1146,9 @@ contract RewardRedistributorIntegrationTest is Test {
   function testIntegration_RewardRedistributorWithFees() public {
     // Test RewardRedistributor with non-zero fees
 
-    // Set fee to 10% (1000 bps)
+    // Set fee to 0.5% (50 bps) - within max limit of 100 bps
     vm.prank(owner);
-    rr.setFeeBps(1000);
+    rr.setFeeBps(50);
 
     uint256 startaleBalanceBefore = usdsc.balanceOf(startale);
     uint256 earnBalanceBefore = usdsc.balanceOf(address(earnVault));
@@ -1164,9 +1164,9 @@ contract RewardRedistributorIntegrationTest is Test {
     uint256 earnBalanceAfter = usdsc.balanceOf(address(earnVault));
     uint256 susdscAssetsAfter = susdscVault.totalAssets();
 
-    // Verify fee was taken (10% of 10,000 = 1,000 USDSC to Startale as fee)
+    // Verify fee was taken (0.5% of 10,000 = 50 USDSC to Startale as fee)
     uint256 startaleIncrease = startaleBalanceAfter - startaleBalanceBefore;
-    assertGt(startaleIncrease, 1000e6, 'Startale received fee + remainder');
+    assertGt(startaleIncrease, 50e6, 'Startale received fee + remainder');
 
     // Verify remaining yield was distributed to vaults
     assertGt(earnBalanceAfter, earnBalanceBefore, 'EarnVault received yield after fee');
@@ -1227,6 +1227,10 @@ contract RewardRedistributorIntegrationTest is Test {
   function testIntegration_RewardRedistributorPreviewFunctions() public {
     // Test preview functions for accuracy
 
+    // Set fee to 0 for this test
+    vm.prank(owner);
+    rr.setFeeBps(0);
+
     ext.addPending(5000e6);
 
     // Preview before distribution
@@ -1264,6 +1268,10 @@ contract RewardRedistributorIntegrationTest is Test {
     // Note: previewSplit doesn't use carry, so allocations will differ from previewDistribute
     assertApproxEqAbs(previewEarn, toEarn, 10_000, 'PreviewSplit earn allocation close to previewDistribute');
     assertApproxEqAbs(previewOn, toOn, 10_000, 'PreviewSplit on allocation close to previewDistribute');
+
+    // Reset fee to default (30 bps) for other tests
+    vm.prank(owner);
+    rr.setFeeBps(30);
   }
 
   function testIntegration_RewardRedistributorAccessControl() public {
@@ -1372,9 +1380,9 @@ contract RewardRedistributorIntegrationTest is Test {
     vm.expectRevert(abi.encodeWithSelector(IRewardRedistributorEventsAndErrors.ZeroAddress.selector, 'susdscVault'));
     rr.setSusdscVault(IERC4626(address(0)));
 
-    // Test fee too high validation
+    // Test fee too high validation (MAX_FEE_BPS is now 100)
     vm.expectRevert(
-      abi.encodeWithSelector(IRewardRedistributorEventsAndErrors.FeeTooHigh.selector, uint16(2001), uint16(2000))
+      abi.encodeWithSelector(IRewardRedistributorEventsAndErrors.FeeTooHigh.selector, uint16(2001), uint16(100))
     );
     rr.setFeeBps(2001); // > MAX_FEE_BPS
 
@@ -1383,12 +1391,12 @@ contract RewardRedistributorIntegrationTest is Test {
     rr.setTreasury(newTreasury);
     assertEq(rr.treasury(), newTreasury, 'Treasury updated');
 
-    rr.setFeeBps(500);
-    assertEq(rr.fee_on_yield_bps(), 500, 'Fee updated');
+    rr.setFeeBps(50); // 0.5% - within max limit of 100 bps
+    assertEq(rr.fee_on_yield_bps(), 50, 'Fee updated');
 
     // Reset for other tests
     rr.setTreasury(startale);
-    rr.setFeeBps(0);
+    rr.setFeeBps(30); // Reset to default 30 bps
 
     vm.stopPrank();
   }
@@ -1426,7 +1434,7 @@ contract RewardRedistributorIntegrationTest is Test {
     // Test with maximum allowed fee
 
     vm.prank(owner);
-    rr.setFeeBps(2000); // 20% fee
+    rr.setFeeBps(100); // 1% fee (max allowed)
 
     uint256 startaleBalanceBefore = usdsc.balanceOf(startale);
 
@@ -1438,12 +1446,12 @@ contract RewardRedistributorIntegrationTest is Test {
     uint256 startaleBalanceAfter = usdsc.balanceOf(startale);
     uint256 startaleIncrease = startaleBalanceAfter - startaleBalanceBefore;
 
-    // With 20% fee, Startale should get at least 2,000 USDSC as fee
-    assertGe(startaleIncrease, 2000e6, 'Startale received maximum fee');
+    // With 1% fee, Startale should get at least 100 USDSC as fee
+    assertGe(startaleIncrease, 100e6, 'Startale received maximum fee');
 
-    // Reset fee
+    // Reset fee to default (30 bps)
     vm.prank(owner);
-    rr.setFeeBps(0);
+    rr.setFeeBps(30);
   }
 
   // ========== EARN VAULT EDGE CASES FOR BRANCH COVERAGE ==========

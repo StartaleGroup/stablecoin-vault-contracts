@@ -48,9 +48,6 @@ contract RewardRedistributor is
   /// @dev    Basis Points (bps) are a unit of measurement for percentages:
   ///         - 1 bps = 0.01% = 1/10,000
   ///         - 10 bps = 0.1% = 10/10,000
-  ///         - 30 bps = 0.3% = 30/10,000
-  ///         - 100 bps = 1% = 100/10,000
-  ///         - 1,000 bps = 10% = 1,000/10,000
   ///         - 10,000 bps = 100% = 10,000/10,000
   ///
   ///         Fee calculation formula:
