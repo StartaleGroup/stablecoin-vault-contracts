@@ -102,6 +102,16 @@ interface IEarnVaultEventsAndErrors {
   /// @param amount Amount of boost rewards claimed
   event BoostRewardClaimed(address indexed user, address indexed token, uint256 amount);
 
+  /// @notice Emitted when a boost reward transfer fails (e.g., token is frozen)
+  /// @param user Address that attempted to claim boost rewards
+  /// @param token Token address that failed to transfer
+  /// @param amount Amount of boost rewards that failed to transfer
+  event BoostRewardTransferFailed(address indexed user, address indexed token, uint256 amount);
+
+  /// @notice Emitted when a boost reward token is removed from activeBoostTokens array
+  /// @param token Token address that was removed
+  event BoostRewardTokenRemoved(address indexed token);
+
   // ========================================
   // Errors
   // ========================================
@@ -148,6 +158,9 @@ interface IEarnVaultEventsAndErrors {
   /// @notice Thrown when contract receives ETH but shouldn't accept it
   error EthNotAccepted();
 
+  /// @notice Thrown when attempting to renounce ownership (feature disabled).
+  error OwnershipRenunciationDisabled();
+
   /// @notice Thrown when native ETH sweep operation fails
   error SweepFailed();
 
@@ -156,4 +169,7 @@ interface IEarnVaultEventsAndErrors {
 
   /// @notice Thrown when boost reward distribution fails due to insufficient claim reserve
   error InsufficientBoostClaimReserve();
+
+  /// @notice Thrown when attempting to add more boost tokens than the maximum allowed
+  error TooManyBoostTokens();
 }

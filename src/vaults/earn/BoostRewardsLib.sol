@@ -9,15 +9,22 @@ import {Math} from 'lib/openzeppelin-contracts/contracts/utils/math/Math.sol';
 /// @title BoostRewardsLib - Library for handling boost rewards distribution
 /// @notice Handles boost rewards logic separately from main EarnVault contract
 /// @dev Uses same logic as USDSC yield - distributed proportionally based on principal
+///
+/// @dev IMPORTANT: USDT is NOT supported as a boost reward token.
+///      USDT's transfer() and transferFrom() methods do not return a boolean value,
+///      which is incompatible with the standard IERC20 interface expected by this library.
+///      Attempting to use USDT will result in transaction failures.
 library BoostRewardsLib {
   using SafeERC20 for IERC20;
 
   // -------- Constants --------
   uint256 public constant RAY = 1e27;
+  uint256 public constant MAX_BOOST_TOKENS = 10;
 
   /// @notice Distribute boost rewards to vault users
   /// @dev Uses same logic as USDSC yield - distributed proportionally based on principal
-  /// @param token Token address to distribute as boost rewards
+  /// @dev USDT is NOT supported - see library-level documentation for details
+  /// @param token Token address to distribute as boost rewards (must be ERC20-compliant, not USDT)
   /// @param amount Amount of boost tokens to distribute
   /// @param totalPrincipal Total principal amount in vault
   /// @param treasury Treasury address for when no deposits exist
@@ -34,7 +41,7 @@ library BoostRewardsLib {
     mapping(address => uint256) storage boostClaimReserve,
     address[] storage activeBoostTokens,
     mapping(address => uint256) storage boostTokenIndex
-  ) external {
+  ) internal {
     if (token == address(0)) {
       revert IEarnVaultEventsAndErrors.CanNotBeZeroAddress();
     }
@@ -46,9 +53,18 @@ library BoostRewardsLib {
     if (totalPrincipal == 0) {
       // No deposits: transfer to treasury
       if (bal < amount) revert IEarnVaultEventsAndErrors.InsufficientBoostTokenBalance();
-      IERC20(token).safeTransfer(treasury, amount);
-      emit IEarnVaultEventsAndErrors.BoostRewardTransferredToTreasury(token, amount);
-      return;
+
+      try IERC20(token).transfer(treasury, amount) returns (bool success) {
+        if (!success) {
+          revert IEarnVaultEventsAndErrors.InsufficientBoostTokenBalance();
+        }
+        emit IEarnVaultEventsAndErrors.BoostRewardTransferredToTreasury(token, amount);
+        return;
+      } catch {
+        // Transfer failed (token may be frozen, paused, etc.)
+        // Revert the operation - treasury transfer failure should be handled by keeper
+        revert IEarnVaultEventsAndErrors.InsufficientBoostTokenBalance();
+      }
     }
 
     // Deposits exist: distribute proportionally based on principal (same as USDSC yield)
@@ -66,6 +82,10 @@ library BoostRewardsLib {
 
     // Track active boost tokens (only add if not already tracked)
     if (boostTokenIndex[token] == 0) {
+      // Check maximum limit before adding new token
+      if (activeBoostTokens.length >= MAX_BOOST_TOKENS) {
+        revert IEarnVaultEventsAndErrors.TooManyBoostTokens();
+      }
       // Token not tracked yet, add to array and set index
       activeBoostTokens.push(token);
       boostTokenIndex[token] = activeBoostTokens.length; // 1-based index
@@ -74,48 +94,90 @@ library BoostRewardsLib {
     emit IEarnVaultEventsAndErrors.BoostRewardIndexed(token, amount, boostGlobalIndex[token], boostClaimReserve[token]);
   }
 
-  /// @notice Claim boost rewards for a specific token
-  /// @param user User address claiming rewards
-  /// @param token Token address to claim boost rewards for
+  /// @notice Settle user's accrued boost rewards for a specific token
+  /// @param user User address to settle
+  /// @param token Token address to settle boost rewards for
   /// @param principal User's principal amount
-  /// @param userBoostIndex User's last boost index for this token
   /// @param boostGlobalIndex Global boost index for this token
+  /// @param userBoostIndex Mapping of user => token => boost index
+  /// @param userBoostAccrued User's accrued boost rewards for this token
+  function settleBoost(
+    address user,
+    address token,
+    uint256 principal,
+    uint256 boostGlobalIndex,
+    mapping(address => mapping(address => uint256)) storage userBoostIndex,
+    mapping(address => mapping(address => uint256)) storage userBoostAccrued
+  ) public {
+    if (principal == 0) {
+      // User has no principal, just update index
+      userBoostIndex[user][token] = boostGlobalIndex;
+      return;
+    }
+    
+    uint256 ui = userBoostIndex[user][token];
+
+    // Settle accrued rewards if global index has increased
+    if (boostGlobalIndex > ui) {
+      uint256 owed = Math.mulDiv(principal, boostGlobalIndex - ui, RAY);
+      userBoostAccrued[user][token] += owed;
+    }
+    
+    // Always update index for consistency
+    userBoostIndex[user][token] = boostGlobalIndex;
+  }
+
+  /// @notice Claim boost rewards for a specific token
+  /// @dev USDT is NOT supported - see library-level documentation for details
+  /// @param user User address claiming rewards
+  /// @param token Token address to claim boost rewards for (must be ERC20-compliant, not USDT)
+  /// @param principal User's principal amount
+  /// @param boostGlobalIndex Global boost index for this token
+  /// @param userBoostIndex Mapping of user => token => boost index
   /// @param userBoostAccrued User's accrued boost rewards for this token
   /// @param boostClaimReserve Claimable boost reserves for this token
   function claimBoostReward(
     address user,
     address token,
     uint256 principal,
-    uint256 userBoostIndex,
     uint256 boostGlobalIndex,
+    mapping(address => mapping(address => uint256)) storage userBoostIndex,
     mapping(address => mapping(address => uint256)) storage userBoostAccrued,
     mapping(address => uint256) storage boostClaimReserve
-  ) external returns (uint256 claimedAmount) {
+  ) internal returns (uint256 claimedAmount) {
     if (token == address(0)) revert IEarnVaultEventsAndErrors.CanNotBeZeroAddress();
 
     // Settle user's boost rewards
-    if (principal == 0) {
-      // User has no principal, just return accrued amount
-      claimedAmount = userBoostAccrued[user][token];
-    } else {
-      uint256 ui = userBoostIndex;
-      uint256 gi = boostGlobalIndex;
-      if (gi > ui) {
-        uint256 owed = Math.mulDiv(principal, gi - ui, RAY);
-        userBoostAccrued[user][token] += owed;
-      }
-      claimedAmount = userBoostAccrued[user][token];
-    }
+    settleBoost(user, token, principal, boostGlobalIndex, userBoostIndex, userBoostAccrued);
+    claimedAmount = userBoostAccrued[user][token];
 
     if (claimedAmount == 0) return 0;
     if (boostClaimReserve[token] < claimedAmount) revert IEarnVaultEventsAndErrors.InsufficientBoostClaimReserve();
 
     userBoostAccrued[user][token] = 0;
     boostClaimReserve[token] -= claimedAmount;
-    IERC20(token).safeTransfer(user, claimedAmount);
-    emit IEarnVaultEventsAndErrors.BoostRewardClaimed(user, token, claimedAmount);
 
-    return claimedAmount;
+    try IERC20(token).transfer(user, claimedAmount) returns (bool success) {
+      if (!success) {
+        // Transfer returned false - revert accounting changes
+        userBoostAccrued[user][token] = claimedAmount;
+        boostClaimReserve[token] += claimedAmount;
+        emit IEarnVaultEventsAndErrors.BoostRewardTransferFailed(user, token, claimedAmount);
+        return 0;
+      }
+      emit IEarnVaultEventsAndErrors.BoostRewardClaimed(user, token, claimedAmount);
+    } catch {
+      // Transfer failed (token may be frozen, paused, etc.)
+      // Revert accounting changes to maintain consistency
+      userBoostAccrued[user][token] = claimedAmount;
+      boostClaimReserve[token] += claimedAmount;
+
+      // Emit failure event for monitoring
+      emit IEarnVaultEventsAndErrors.BoostRewardTransferFailed(user, token, claimedAmount);
+
+      // Returning 0 to indicate failure, allowing other tokens to still be claimed
+      return 0;
+    }
   }
 
   /// @notice Get user's claimable boost rewards for a specific token
@@ -132,7 +194,7 @@ library BoostRewardsLib {
     uint256 userBoostIndex,
     uint256 boostGlobalIndex,
     mapping(address => mapping(address => uint256)) storage userBoostAccrued
-  ) external view returns (uint256) {
+  ) internal view returns (uint256) {
     if (principal == 0) {
       return userBoostAccrued[user][token];
     }
@@ -143,31 +205,4 @@ library BoostRewardsLib {
     return userBoostAccrued[user][token];
   }
 
-  /// @notice Settle user's accrued boost rewards for a specific token
-  /// @param user User address to settle
-  /// @param token Token address to settle boost rewards for
-  /// @param principal User's principal amount
-  /// @param userBoostIndex User's last boost index for this token
-  /// @param boostGlobalIndex Global boost index for this token
-  /// @param userBoostAccrued User's accrued boost rewards for this token
-  function settleBoost(
-    address user,
-    address token,
-    uint256 principal,
-    uint256 userBoostIndex,
-    uint256 boostGlobalIndex,
-    mapping(address => mapping(address => uint256)) storage userBoostAccrued
-  ) external {
-    if (principal == 0) {
-      // User has no principal, nothing to settle
-      return;
-    }
-    if (boostGlobalIndex >= userBoostIndex) {
-      if (boostGlobalIndex > userBoostIndex) {
-        uint256 owed = Math.mulDiv(principal, boostGlobalIndex - userBoostIndex, RAY);
-        userBoostAccrued[user][token] += owed;
-      }
-      // Note: User's boost index update is handled by the calling contract
-    }
-  }
 }

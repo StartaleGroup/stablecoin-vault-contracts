@@ -26,6 +26,9 @@ docs/
 # NPM modules
 node_modules
 
+# Deployments
+deployments/
+
 # Soljson
 soljson-latest.js
 
@@ -34,9 +37,6 @@ gasreport.ansi
 
 # Broadcast
 broadcast/
-
-# Deployments
-deployments/
 
 # submodules that cause CI issues
 lib/common/

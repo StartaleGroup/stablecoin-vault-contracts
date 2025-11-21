@@ -4,19 +4,30 @@ pragma solidity ^0.8.30;
 import './MockUSDSC.sol';
 import {IERC20} from 'lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol';
 import {IMYieldToOne} from 'm-extensions/projects/yieldToOne/IMYieldToOne.sol';
+import {Ownable} from 'lib/openzeppelin-contracts/contracts/access/Ownable.sol';
 
-contract MockExtension is IMYieldToOne, IERC20 {
+contract MockExtension is IMYieldToOne, IERC20, Ownable {
   MockUSDSC public immutable USDSC;
   address public yieldRecipient;
+  address public claimer; // Only this address can call claimYield()
   uint256 public pending; // pending yield
 
-  constructor(MockUSDSC _usdsc, address _recipient) {
+  modifier onlyClaimer() {
+    require(msg.sender == claimer, 'not claimer');
+    _;
+  }
+
+  constructor(MockUSDSC _usdsc, address _recipient, address _owner) Ownable(_owner) {
     USDSC = _usdsc;
     yieldRecipient = _recipient;
   }
 
   function setYieldRecipient(address y) external {
     yieldRecipient = y;
+  }
+
+  function setClaimer(address _claimer) external onlyOwner {
+    claimer = _claimer;
   }
 
   function addPending(uint256 amt) external {
@@ -31,12 +42,11 @@ contract MockExtension is IMYieldToOne, IERC20 {
     return keccak256('YIELD_RECIPIENT_MANAGER_ROLE');
   }
 
-  function claimYield() external returns (uint256) {
-    require(msg.sender == yieldRecipient, 'not recipient');
+  function claimYield() external onlyClaimer returns (uint256) {
     uint256 m = pending;
     if (m > 0) {
       pending = 0;
-      USDSC.mint(msg.sender, m);
+      USDSC.mint(yieldRecipient, m);
     }
     return m;
   }

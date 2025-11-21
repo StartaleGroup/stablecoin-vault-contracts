@@ -4,6 +4,10 @@ pragma solidity ^0.8.30;
 import {IRewardRedistributorEventsAndErrors} from '../interfaces/distributor/IRewardRedistributorEventsAndErrors.sol';
 import {IEarnVault} from '../interfaces/vaults/earn/IEarnVault.sol';
 import {AccessControl} from 'lib/openzeppelin-contracts/contracts/access/AccessControl.sol';
+import {IAccessControl} from 'lib/openzeppelin-contracts/contracts/access/IAccessControl.sol';
+import {
+  AccessControlEnumerable
+} from 'lib/openzeppelin-contracts/contracts/access/extensions/AccessControlEnumerable.sol';
 import {IERC4626} from 'lib/openzeppelin-contracts/contracts/interfaces/IERC4626.sol';
 import {IERC20} from 'lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol';
 import {SafeERC20} from 'lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol';
@@ -26,14 +30,33 @@ import {IMYieldToOne} from 'm-extensions/projects/yieldToOne/IMYieldToOne.sol';
 ///         - USDSC_ADDRESS: Single USDSC token address that implements both IERC20 and IMYieldToOne interfaces
 ///         - Cast to IERC20 for transfers and supply queries (totalSupply, safeTransfer)
 ///         - Cast to IMYieldToOne for yield operations (claimYield, yield)
-contract RewardRedistributor is IRewardRedistributorEventsAndErrors, AccessControl, Pausable, ReentrancyGuardTransient {
+contract RewardRedistributor is
+  IRewardRedistributorEventsAndErrors,
+  AccessControlEnumerable,
+  Pausable,
+  ReentrancyGuardTransient
+{
   using SafeERC20 for IERC20;
 
   /// Keeper allowed to call distribute()
   bytes32 public constant OPERATOR_ROLE = keccak256('OPERATOR_ROLE');
 
   /// @notice Maximum fee allowed (basis points).
-  uint16 public constant MAX_FEE_BPS = 2000;
+  uint16 public constant MAX_FEE_BPS = 100; // 100 bps max (1%)
+
+  /// @notice Basis points denominator (10000 = 100%).
+  /// @dev    Basis Points (bps) are a unit of measurement for percentages:
+  ///         - 1 bps = 0.01% = 1/10,000
+  ///         - 10 bps = 0.1% = 10/10,000
+  ///         - 10,000 bps = 100% = 10,000/10,000
+  ///
+  ///         Fee calculation formula:
+  ///         `feeAmount = (amount × fee_bps) / BPS_DENOMINATOR`
+  ///
+  ///         Example: For 30 bps (0.3%) fee on 1,000,000 tokens:
+  ///         `feeAmount = (1,000,000 × 30) / 10,000 = 3,000 tokens`
+  ///         Verification: 3,000 / 1,000,000 = 0.003 = 0.3% ✓
+  uint256 public constant BPS_DENOMINATOR = 10_000;
 
   /// @notice USDSC token address - used for both transfers/supply queries (IERC20) and yield operations (IMYieldToOne).
   /// @dev    The same address implements both IERC20 and IMYieldToOne interfaces.
@@ -48,14 +71,29 @@ contract RewardRedistributor is IRewardRedistributorEventsAndErrors, AccessContr
   /// @notice sUSDSC (ERC-4626) vault that receives yield via raw transfers (no minting).
   IERC4626 public susdscVault;
 
-  /// @notice Fee on newly minted yield expressed in basis points (e.g., 1000 = 10%).
-  uint16 public fee_on_yield_bps = 0;
+  /// @notice Fee on newly minted yield expressed in basis points.
+  /// @dev    See {BPS_DENOMINATOR} for basis points explanation.
+  ///         Examples: 30 bps = 0.3%, 100 bps = 1%, 1000 bps = 10%.
+  ///         Initial value: 30 bps (0.3%).
+  uint16 public fee_on_yield_bps = 30;
 
   /// @dev Carry accumulator for EarnVault share calculations across epochs.
   uint256 private carryEarn;
 
   /// @dev Carry accumulator for sUSDSC share calculations across epochs.
   uint256 private carryOn;
+
+  /// @dev Latest sUSDSC TVL snapshot.
+  uint256 public lastSusdscTVL;
+
+  /// @dev Latest snapshot block number.
+  uint256 public lastSnapshotBlockNumber;
+
+  /// @dev Latest snapshot timestamp.
+  uint256 public lastSnapshotTimestamp;
+
+  /// @dev Maximum age for snapshot validity (e.g., 4 hours).
+  uint256 public snapshotMaxAge = 4 hours;
 
   /// @notice Initializes the redistributor.
   /// @param usdscAddress    USDSC token address (implements both IERC20 and IMYieldToOne interfaces).
@@ -64,8 +102,16 @@ contract RewardRedistributor is IRewardRedistributorEventsAndErrors, AccessContr
   /// @param sVault         sUSDSC ERC-4626 vault (checkbox ON) recipient.
   /// @param admin          Admin address; receives DEFAULT_ADMIN_ROLE.
   /// @param keeper         Keeper address; receives OPERATOR_ROLE (can call distribute()).
-  constructor(address usdscAddress, address treasuryAddr, IEarnVault earnV, IERC4626 sVault, address admin, address keeper) {
-    if (usdscAddress == address(0)) revert IRewardRedistributorEventsAndErrors.ZeroAddress('USDSC_ADDRESS');
+  constructor(
+    address usdscAddress,
+    address treasuryAddr,
+    IEarnVault earnV,
+    IERC4626 sVault,
+    address admin,
+    address keeper
+  ) {
+    _validateUsdscContract(usdscAddress);
+
     if (treasuryAddr == address(0)) revert IRewardRedistributorEventsAndErrors.ZeroAddress('treasury');
     if (address(earnV) == address(0)) revert IRewardRedistributorEventsAndErrors.ZeroAddress('earnVault');
     if (address(sVault) == address(0)) revert IRewardRedistributorEventsAndErrors.ZeroAddress('susdscVault');
@@ -79,6 +125,27 @@ contract RewardRedistributor is IRewardRedistributorEventsAndErrors, AccessContr
 
     _grantRole(DEFAULT_ADMIN_ROLE, admin);
     _grantRole(OPERATOR_ROLE, keeper);
+  }
+
+  function _validateUsdscContract(address usdscAddress) internal view {
+    if (usdscAddress == address(0)) {
+      revert IRewardRedistributorEventsAndErrors.ZeroAddress('USDSC_ADDRESS');
+    }
+
+    // Check that the address is a contract
+    if (usdscAddress.code.length == 0) revert InvalidUSDSC('NOT_CONTRACT');
+
+    // Validate that the contract implements IERC20
+    try IERC20(usdscAddress).totalSupply() returns (uint256) {}
+    catch {
+      revert IRewardRedistributorEventsAndErrors.InvalidUSDSC('IERC20');
+    }
+
+    // Validate that the contract implements IMYieldToOne
+    try IMYieldToOne(usdscAddress).yield() returns (uint256) {}
+    catch {
+      revert IRewardRedistributorEventsAndErrors.InvalidUSDSC('IMYieldToOne');
+    }
   }
 
   /// @notice Updates Treasury address.
@@ -117,8 +184,122 @@ contract RewardRedistributor is IRewardRedistributorEventsAndErrors, AccessContr
     emit IRewardRedistributorEventsAndErrors.FeeUpdated(newFeeBps);
   }
 
+  /// @notice Updates the maximum age for snapshot validity.
+  /// @param newSnapshotMaxAge New snapshot maximum age value.
+  function setSnapshotMaxAge(uint256 newSnapshotMaxAge) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    if (newSnapshotMaxAge < 1 minutes) {
+      revert IRewardRedistributorEventsAndErrors.InvalidSnapshotMaxAge(newSnapshotMaxAge, 1 minutes);
+    }
+    if (newSnapshotMaxAge > 7 days) {
+      revert IRewardRedistributorEventsAndErrors.InvalidSnapshotMaxAge(newSnapshotMaxAge, 7 days);
+    }
+    snapshotMaxAge = newSnapshotMaxAge;
+    emit IRewardRedistributorEventsAndErrors.SnapshotMaxAgeUpdated(newSnapshotMaxAge);
+  }
+
+  /// @notice Capture sUSDSC vault TVL for next distribution
+  /// @dev Must be called in block N before distribute() in block N+x (a few blocks apart/ couple of minutes apart)
+  /// @custom:security Prevents same-block TVL manipulation attacks
+  function snapshotSusdscTVL() external onlyRole(OPERATOR_ROLE) whenNotPaused {
+    lastSusdscTVL = susdscVault.totalAssets();
+    lastSnapshotTimestamp = block.timestamp;
+    lastSnapshotBlockNumber = block.number;
+    emit IRewardRedistributorEventsAndErrors.SusdscTVLSnapshotCaptured(
+      lastSusdscTVL, lastSnapshotTimestamp, lastSnapshotBlockNumber
+    );
+  }
+
+  /// @notice Pauses or unpauses the contract.
+  /// @dev    Callable by DEFAULT_ADMIN_ROLE.
+  /// @param p              True to pause, false to unpause.
   function pause(bool p) external onlyRole(DEFAULT_ADMIN_ROLE) {
     p ? _pause() : _unpause();
+  }
+
+  /// @notice Recovers donations made to the contract to the treasury.
+  /// @dev Callable by DEFAULT_ADMIN_ROLE.
+  /// @notice The invariant holds that before and after distribute the usdsc balance of address(this) is the same.
+  /// @notice The inflow during claimYield happens in the distribute() gets distributed whole leaving no balance.
+  /// @notice Hence we can safely assumy at any point in time usdscbalance of address(this) is from the intentional/accidental donations.
+  /// @custom:security nonReentrant.
+  function recoverDonations() external onlyRole(DEFAULT_ADMIN_ROLE) nonReentrant {
+    uint256 balance = IERC20(USDSC_ADDRESS).balanceOf(address(this));
+    if (balance > 0) {
+      IERC20(USDSC_ADDRESS).safeTransfer(treasury, balance);
+      emit IRewardRedistributorEventsAndErrors.DonationsRecovered(balance);
+    }
+  }
+
+  /// @notice Prevents renunciation of the last DEFAULT_ADMIN_ROLE only.
+  /// @dev Overrides AccessControl's renounceRole to ensure at least one admin remains.
+  ///      Other roles (e.g., OPERATOR_ROLE) can still be renounced freely.
+  ///      Admin can renounce their role only if there are other admins remaining.
+  /// @param role The role to renounce.
+  /// @param callerConfirmation The address of the caller confirming renunciation.
+  function renounceRole(
+    bytes32 role,
+    address callerConfirmation
+  ) public virtual override(AccessControl, IAccessControl) {
+    if (role == DEFAULT_ADMIN_ROLE) {
+      // Only check last admin protection if the caller actually has the role
+      if (hasRole(DEFAULT_ADMIN_ROLE, callerConfirmation) && getRoleMemberCount(DEFAULT_ADMIN_ROLE) <= 1) {
+        revert IRewardRedistributorEventsAndErrors.CannotRemoveLastAdmin();
+      }
+    }
+    super.renounceRole(role, callerConfirmation);
+  }
+
+  /// @notice Prevents revocation of the last DEFAULT_ADMIN_ROLE only.
+  /// @dev Overrides AccessControl's revokeRole to ensure at least one admin remains.
+  ///      Non-admin roles (e.g., OPERATOR_ROLE) can be revoked freely.
+  ///      Multiple admins can be revoked as long as at least one admin remains.
+  ///      Only an account with the admin role can revoke roles from others.
+  /// @param role The role to revoke.
+  /// @param account The account from which to revoke the role.
+  function revokeRole(bytes32 role, address account) public virtual override(AccessControl, IAccessControl) {
+    if (role == DEFAULT_ADMIN_ROLE) {
+      // Only check last admin protection if the account actually has the role
+      if (hasRole(DEFAULT_ADMIN_ROLE, account) && getRoleMemberCount(DEFAULT_ADMIN_ROLE) <= 1) {
+        revert IRewardRedistributorEventsAndErrors.CannotRemoveLastAdmin();
+      }
+    }
+    super.revokeRole(role, account);
+  }
+
+  /// @notice Validates that this contract is still the yield recipient on the extension.
+  /// @dev    Reverts if the yield recipient has changed.
+  function _validateYieldRecipient() internal view {
+    address currentRecipient = IMYieldToOne(USDSC_ADDRESS).yieldRecipient();
+    if (currentRecipient != address(this)) {
+      revert IRewardRedistributorEventsAndErrors.YieldRecipientChanged(currentRecipient);
+    }
+  }
+
+  /**
+   * @notice Validates that the snapshot is valid.
+   * @dev Performs the following checks:
+   *      - Ensures a snapshot has been taken (timestamp and block number are non-zero).
+   *      - Verifies the snapshot is from a previous block (prevents same-block manipulation).
+   *      - Ensures the snapshot is not too old (must be within `snapshotMaxAge`).
+   *      Reverts with appropriate errors if any check fails.
+   */
+  function _validateSnapShotAge() internal view {
+    if (lastSnapshotTimestamp == 0) {
+      revert IRewardRedistributorEventsAndErrors.LastSnapshotInvalid();
+    }
+
+    if (lastSnapshotBlockNumber == 0) {
+      revert IRewardRedistributorEventsAndErrors.LastSnapshotInvalid();
+    }
+
+    if (block.number - lastSnapshotBlockNumber < 1) {
+      revert IRewardRedistributorEventsAndErrors.MustSnapshotInPreviousBlocks(lastSnapshotBlockNumber, block.number);
+    }
+
+    // Check maximum age (snapshot must not be too old)
+    if (block.timestamp - lastSnapshotTimestamp > snapshotMaxAge) {
+      revert IRewardRedistributorEventsAndErrors.SnapshotTooOld(lastSnapshotTimestamp, block.timestamp, snapshotMaxAge);
+    }
   }
 
   /// @notice Claims pending USDSC yield from the extension and distributes it per policy.
@@ -128,7 +309,7 @@ contract RewardRedistributor is IRewardRedistributorEventsAndErrors, AccessContr
   ///         3) Calculate `gross = balanceBefore + minted` to handle both normal flow and external claimYield() calls.
   ///         4) `feeToStartale = gross * fee_on_yield_bps / 10_000`.
   ///         5) Compute `S_base = IERC20(USDSC_ADDRESS).totalSupply() - minted` (supply **before** this mint).
-  ///         6) Read TVLs: `T_earn = earnVault.totalPrincipal()`, `T_yield = susdscVault.totalAssets()`.
+  ///         6) Read TVLs: `T_earn = earnVault.totalPrincipal()`, `T_yield = lastSusdscTVL` (snapshot TVL).
   ///         7) Allocate net using carries:
   ///            `toEarn = floor((net*T_earn + carryEarn)/S_base)`, `carryEarn = (net*T_earn + carryEarn) % S_base`
   ///            `toOn   = floor((net*T_yield   + carryOn)/S_base)`,   `carryOn   = (net*T_yield   + carryOn)   % S_base`
@@ -139,11 +320,13 @@ contract RewardRedistributor is IRewardRedistributorEventsAndErrors, AccessContr
   ///            - sUSDSC: transfer `toOn` (PPS rises)
   /// @custom:security nonReentrant and Pausable.
   function distribute() external whenNotPaused onlyRole(OPERATOR_ROLE) nonReentrant {
-    uint256 balanceBefore = IERC20(USDSC_ADDRESS).balanceOf(address(this));
+    _validateYieldRecipient();
+    _validateSnapShotAge();
+    // Note: claimYield() on USDSCextension is not public method anymore and is gated by trusted actors.
+    // Hence any other accruals before/after distribute are pure donations and not newly minted.
     uint256 minted = IMYieldToOne(USDSC_ADDRESS).claimYield();
-    uint256 gross = balanceBefore + minted;
 
-    if (gross == 0) return;
+    if (minted == 0) return;
 
     uint256 feeToStartale;
     uint256 toEarn;
@@ -153,17 +336,17 @@ contract RewardRedistributor is IRewardRedistributorEventsAndErrors, AccessContr
     uint256 T_earn;
     uint256 T_yield;
 
-    (feeToStartale, toEarn, toOn, toStartaleExtra, S_base, T_earn, T_yield) = _calculateSplit(gross, true, false);
+    (feeToStartale, toEarn, toOn, toStartaleExtra, S_base, T_earn, T_yield) = _calculateSplit(minted, true, false);
 
     if (S_base == 0) {
       if (feeToStartale > 0) IERC20(USDSC_ADDRESS).safeTransfer(treasury, feeToStartale);
       if (toStartaleExtra > 0) IERC20(USDSC_ADDRESS).safeTransfer(treasury, toStartaleExtra);
-      emit Distributed(gross, feeToStartale, 0, 0, toStartaleExtra, 0, 0, 0);
+      emit Distributed(minted, feeToStartale, 0, 0, toStartaleExtra, 0, 0, 0);
       return;
     }
 
     if (S_base > 0) {
-      uint256 net = gross - feeToStartale;
+      uint256 net = minted - feeToStartale;
       uint256 numEarn = net * T_earn + carryEarn;
       carryEarn = numEarn % S_base;
 
@@ -172,6 +355,7 @@ contract RewardRedistributor is IRewardRedistributorEventsAndErrors, AccessContr
     }
 
     uint256 startaleTotal = feeToStartale + toStartaleExtra;
+    // Note: We may split it into two transfers to two different addresses.
     if (startaleTotal > 0) IERC20(USDSC_ADDRESS).safeTransfer(treasury, startaleTotal);
 
     if (toEarn > 0) {
@@ -182,7 +366,8 @@ contract RewardRedistributor is IRewardRedistributorEventsAndErrors, AccessContr
       IERC20(USDSC_ADDRESS).safeTransfer(address(susdscVault), toOn);
     }
 
-    emit Distributed(gross, feeToStartale, toEarn, toOn, toStartaleExtra, S_base, T_earn, T_yield);
+    emit Distributed(minted, feeToStartale, toEarn, toOn, toStartaleExtra, S_base, T_earn, T_yield);
+    // balanceBefore and balanceAfter distribute would be the same.
   }
 
   /// @notice Preview a split for a hypothetical minted amount.
@@ -298,21 +483,19 @@ contract RewardRedistributor is IRewardRedistributorEventsAndErrors, AccessContr
     )
   {
     if (minted == 0) {
-      return (0, 0, 0, 0, _supplyBase(0), earnVault.totalPrincipal(), susdscVault.totalAssets());
+      return (0, 0, 0, 0, _supplyBase(0), earnVault.totalPrincipal(), lastSusdscTVL);
     }
 
-    feeToStartale = (minted * fee_on_yield_bps) / 10_000;
+    feeToStartale = (minted * fee_on_yield_bps) / BPS_DENOMINATOR;
     uint256 net = minted - feeToStartale;
 
-    uint256 SNow = IERC20(USDSC_ADDRESS).totalSupply();
-    if (preMint) {
-      S_base = SNow;
-    } else {
-      S_base = SNow > minted ? SNow - minted : 0;
-    }
+    // Use _supplyBase() helper to calculate S_base
+    // For preview (preMint=true): use current supply (minted=0)
+    // For actual distribution (preMint=false): use supply before mint (minted=minted)
+    S_base = _supplyBase(preMint ? 0 : minted);
 
     T_earn = earnVault.totalPrincipal();
-    T_yield = susdscVault.totalAssets();
+    T_yield = lastSusdscTVL; // Use snapshot TVL to prevent manipulation
 
     if (S_base == 0) {
       toStartaleExtra = net;

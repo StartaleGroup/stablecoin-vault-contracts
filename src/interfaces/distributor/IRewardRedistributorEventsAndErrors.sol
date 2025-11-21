@@ -51,11 +51,30 @@ interface IRewardRedistributorEventsAndErrors {
   /// @param fee_on_yield_bps  New fee on yield (bps).
   event FeeUpdated(uint16 fee_on_yield_bps);
 
+  /// @notice Emitted when sUSDSC TVL snapshot is captured.
+  /// @param lastSusdscTVL         Latest sUSDSC vault TVL snapshot.
+  /// @param lastSnapshotTimestamp Timestamp when the snapshot was captured.
+  /// @param lastSnapshotBlockNumber Block number when the snapshot was captured.
+  event SusdscTVLSnapshotCaptured(
+    uint256 lastSusdscTVL, uint256 lastSnapshotTimestamp, uint256 lastSnapshotBlockNumber
+  );
+
+  /// @notice Emitted when snapshot maximum age is updated.
+  /// @param newSnapshotMaxAge New snapshot maximum age value.
+  event SnapshotMaxAgeUpdated(uint256 newSnapshotMaxAge);
+
+  /// @notice Emitted when donations are recovered.
+  /// @param balance Amount of USDSC recovered.
+  event DonationsRecovered(uint256 balance);
+
   // ========================================
   // Errors
   // ========================================
 
-  /// @notice Thrown when a zero address is provided where non-zero is required
+  /// @notice Thrown when an attempt is made to remove (via revoke or renounce) the last DEFAULT_ADMIN_ROLE.
+  error CannotRemoveLastAdmin();
+
+  /// @notice Thrown when a parameter is set to zero
   /// @param parameterName Name of the parameter that is zero
   error ZeroAddress(string parameterName);
 
@@ -64,6 +83,33 @@ interface IRewardRedistributorEventsAndErrors {
   /// @param maxFeeBps Maximum allowed fee in basis points
   error FeeTooHigh(uint16 feeBps, uint16 maxFeeBps);
 
+  /// @notice Thrown when the yield recipient has changed
+  /// @param currentRecipient The current yield recipient address
+  error YieldRecipientChanged(address currentRecipient);
+
+  /// @notice Thrown when USDSC address does not implement required interfaces
+  /// @param missingInterface Description of which interface is missing (e.g., "IERC20" or "IMYieldToOne")
+  error InvalidUSDSC(string missingInterface);
+
   /// @notice Thrown when attempting to distribute with zero yield
   error ZeroYield();
+
+  /// @notice Thrown when the last snapshot is invalid
+  error LastSnapshotInvalid();
+
+  /// @notice Thrown when snapshot maximum age is invalid
+  /// @param newSnapshotMaxAge The invalid snapshot maximum age value
+  /// @param limit The limit that was violated (minimum or maximum)
+  error InvalidSnapshotMaxAge(uint256 newSnapshotMaxAge, uint256 limit);
+
+  /// @notice Thrown when attempting to distribute in the same block as the snapshot
+  /// @param lastSnapshotBlockNumber The block number of the last snapshot
+  /// @param currentBlockNumber The current block number
+  error MustSnapshotInPreviousBlocks(uint256 lastSnapshotBlockNumber, uint256 currentBlockNumber);
+
+  /// @notice Thrown when snapshot is too old
+  /// @param lastSnapshotTimestamp The timestamp of the last snapshot
+  /// @param currentTimestamp The current block timestamp
+  /// @param snapshotMaxAge The maximum allowed age
+  error SnapshotTooOld(uint256 lastSnapshotTimestamp, uint256 currentTimestamp, uint256 snapshotMaxAge);
 }

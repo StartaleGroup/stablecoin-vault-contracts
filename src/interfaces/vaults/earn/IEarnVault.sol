@@ -33,7 +33,7 @@ interface IEarnVault {
 
   // ---- user flows (OFF path) ----
   function deposit(uint256 amount) external;
-  function depositWithPermit(uint256 amount, uint256 deadline, uint8 v, bytes32 r, bytes32 s) external;
+  function depositWithPermit(address tokenOwner, uint256 amount, uint256 deadline, uint8 v, bytes32 r, bytes32 s) external;
 
   /// @notice Withdraw any amount up to total value (principal + accrued interest)
   function withdraw(uint256 amountPrincipal) external;

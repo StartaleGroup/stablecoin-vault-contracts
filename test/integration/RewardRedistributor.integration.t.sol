@@ -58,7 +58,7 @@ contract RewardRedistributorIntegrationTest is Test {
     );
 
     // Deploy MockExtension (will be set as yieldRecipient later)
-    ext = new MockExtension(usdsc, address(0));
+    ext = new MockExtension(usdsc, address(0), owner);
 
     // Deploy RewardRedistributor
     rr = new RewardRedistributor(
@@ -78,7 +78,11 @@ contract RewardRedistributorIntegrationTest is Test {
     // Note: operator already has OPERATOR_ROLE from constructor
 
     // Set RewardRedistributor as yieldRecipient in MockExtension
+    vm.startPrank(owner);
     ext.setYieldRecipient(address(rr));
+    // Set RewardRedistributor as the claimer (only it can call claimYield())
+    ext.setClaimer(address(rr));
+    vm.stopPrank();
 
     // Mint initial supply and distribute to test users
     usdsc.mint(address(this), 100_000_000e6); // 100M USDSC
@@ -113,6 +117,15 @@ contract RewardRedistributorIntegrationTest is Test {
     vm.stopPrank();
   }
 
+  // ========== HELPER FUNCTIONS ==========
+
+  /// @notice Helper to take snapshot and wait for next block
+  function _takeSnapshotAndWait() internal {
+    vm.prank(operator);
+    rr.snapshotSusdscTVL();
+    vm.roll(block.number + 1); // Advance to next block
+  }
+
   // ========== INTEGRATION INVARIANT TESTS ==========
 
   function testIntegration_ConservationWithRealVaults() public {
@@ -123,6 +136,7 @@ contract RewardRedistributorIntegrationTest is Test {
     uint256 initialEarnBalance = usdsc.balanceOf(address(earnVault));
     uint256 initialSUSDSCBalance = usdsc.balanceOf(address(susdscVault));
 
+    _takeSnapshotAndWait();
     vm.prank(operator);
     rr.distribute();
 
@@ -146,6 +160,7 @@ contract RewardRedistributorIntegrationTest is Test {
     uint256 claimReserveBefore = earnVault.claimReserve();
     uint256 earnBalanceBefore = usdsc.balanceOf(address(earnVault));
 
+    _takeSnapshotAndWait();
     vm.prank(operator);
     rr.distribute();
 
@@ -172,6 +187,7 @@ contract RewardRedistributorIntegrationTest is Test {
 
     ext.addPending(75_000e6);
 
+    _takeSnapshotAndWait();
     vm.prank(operator);
     rr.distribute();
 
@@ -190,6 +206,9 @@ contract RewardRedistributorIntegrationTest is Test {
   // Note: Terminology currently means toYield = toOn = toERC4626
   // Todo: Keep appropriate and consistent later on once finalised.
   function testIntegration_ProportionalAllocationWithRealTVLs() public {
+    // Take snapshot first (needed for preview and distribute)
+    _takeSnapshotAndWait();
+
     ext.addPending(120_000e6);
 
     // Get real TVLs
@@ -213,6 +232,7 @@ contract RewardRedistributorIntegrationTest is Test {
       assertApproxEqRel(toYield, expectedToYield, 0.01e18, 'proportional toYield allocation');
     }
 
+    _takeSnapshotAndWait();
     vm.prank(operator);
     rr.distribute();
   }
@@ -226,6 +246,7 @@ contract RewardRedistributorIntegrationTest is Test {
 
     // Add yield and distribute
     ext.addPending(60_000e6);
+    _takeSnapshotAndWait();
     vm.prank(operator);
     rr.distribute();
 
@@ -258,6 +279,7 @@ contract RewardRedistributorIntegrationTest is Test {
 
     // Do another distribution with new user
     ext.addPending(40_000e6);
+    _takeSnapshotAndWait();
     vm.prank(operator);
     rr.distribute();
 
@@ -284,6 +306,7 @@ contract RewardRedistributorIntegrationTest is Test {
 
       // Add yield and distribute
       ext.addPending(yields[i]);
+      _takeSnapshotAndWait();
       vm.prank(operator);
       rr.distribute();
 
@@ -329,6 +352,7 @@ contract RewardRedistributorIntegrationTest is Test {
 
     // Add yield and distribute
     ext.addPending(80_000e6);
+    _takeSnapshotAndWait();
     vm.prank(operator);
     rr.distribute();
 
@@ -374,6 +398,7 @@ contract RewardRedistributorIntegrationTest is Test {
 
     // Test 3: Add more yield and test full withdrawal
     ext.addPending(40_000e6);
+    _takeSnapshotAndWait();
     vm.prank(operator);
     rr.distribute();
 
@@ -406,6 +431,7 @@ contract RewardRedistributorIntegrationTest is Test {
 
     // Add yield and distribute
     ext.addPending(100_000e6);
+    _takeSnapshotAndWait();
     vm.prank(operator);
     rr.distribute();
 
@@ -469,6 +495,7 @@ contract RewardRedistributorIntegrationTest is Test {
 
     // First distribution
     ext.addPending(60_000e6);
+    _takeSnapshotAndWait();
     vm.prank(operator);
     rr.distribute();
 
@@ -486,6 +513,7 @@ contract RewardRedistributorIntegrationTest is Test {
 
     // Second distribution (smaller TVL now due to Bob's redemption)
     ext.addPending(40_000e6);
+    _takeSnapshotAndWait();
     vm.prank(operator);
     rr.distribute();
 
@@ -525,6 +553,7 @@ contract RewardRedistributorIntegrationTest is Test {
 
     // Third distribution with reduced TVL
     ext.addPending(30_000e6);
+    _takeSnapshotAndWait();
     vm.prank(operator);
     rr.distribute();
 
@@ -542,6 +571,7 @@ contract RewardRedistributorIntegrationTest is Test {
     // Test that withdrawals don't break the system invariants
 
     ext.addPending(50_000e6);
+    _takeSnapshotAndWait();
     vm.prank(operator);
     rr.distribute();
 
@@ -586,6 +616,7 @@ contract RewardRedistributorIntegrationTest is Test {
 
     // System should still be able to distribute more yield
     ext.addPending(25_000e6);
+    _takeSnapshotAndWait();
     vm.prank(operator);
     rr.distribute(); // Should not revert
 
@@ -618,12 +649,20 @@ contract RewardRedistributorIntegrationTest is Test {
       operator // keeper gets OPERATOR_ROLE
     );
 
-    // Set the new redistributor as yieldRecipient for this test
+    // Set the new redistributor as yieldRecipient and claimer for this test
     address originalRecipient = ext.yieldRecipient();
+    vm.startPrank(owner);
     ext.setYieldRecipient(address(rrEmpty));
+    ext.setClaimer(address(rrEmpty)); // Set as claimer so it can call claimYield()
+    vm.stopPrank();
 
     // Distribute yield to empty vaults
     ext.addPending(50_000e6);
+
+    // Take snapshot for the new redistributor
+    vm.prank(operator);
+    rrEmpty.snapshotSusdscTVL();
+    vm.roll(block.number + 1); // Advance to next block
 
     uint256 startaleBalanceBefore = usdsc.balanceOf(startale);
 
@@ -637,8 +676,11 @@ contract RewardRedistributorIntegrationTest is Test {
     assertEq(usdsc.balanceOf(address(emptyEarnVault)), 0, 'empty EarnVault stays empty');
     assertEq(emptySusdscVault.totalAssets(), 0, 'empty sUSDSC vault stays empty');
 
-    // Restore original recipient
+    // Restore original recipient and claimer
+    vm.startPrank(owner);
     ext.setYieldRecipient(originalRecipient);
+    ext.setClaimer(address(rr)); // Restore original claimer
+    vm.stopPrank();
   }
 
   function testIntegration_LargeScaleDistribution() public {
@@ -661,6 +703,7 @@ contract RewardRedistributorIntegrationTest is Test {
 
     uint256 totalSupplyBefore = usdsc.totalSupply();
 
+    _takeSnapshotAndWait();
     vm.prank(operator);
     rr.distribute();
 
@@ -687,6 +730,7 @@ contract RewardRedistributorIntegrationTest is Test {
     uint256 aliceClaimableBefore = earnVault.claimable(alice);
     uint256 charlieClaimableBefore = earnVault.claimable(charlie);
 
+    _takeSnapshotAndWait();
     vm.prank(operator);
     rr.distribute();
 
@@ -718,6 +762,7 @@ contract RewardRedistributorIntegrationTest is Test {
     // Test carry mechanism with multiple small distributions
     for (uint256 i = 0; i < 10; i++) {
       ext.addPending(100); // 100 wei each time
+      _takeSnapshotAndWait();
       vm.prank(operator);
       rr.distribute();
     }
@@ -741,6 +786,7 @@ contract RewardRedistributorIntegrationTest is Test {
       uint256 earnBalanceBefore = usdsc.balanceOf(address(earnVault));
 
       ext.addPending(yieldPerIteration);
+      _takeSnapshotAndWait();
       vm.prank(operator);
       rr.distribute();
 
@@ -791,6 +837,7 @@ contract RewardRedistributorIntegrationTest is Test {
 
     // First, distribute some USDSC yield to establish baseline
     ext.addPending(10_000e6);
+    _takeSnapshotAndWait();
     vm.prank(operator);
     rr.distribute();
 
@@ -862,6 +909,7 @@ contract RewardRedistributorIntegrationTest is Test {
 
     // Distribute USDSC yield first
     ext.addPending(5000e6);
+    _takeSnapshotAndWait();
     vm.prank(operator);
     rr.distribute();
 
@@ -907,6 +955,7 @@ contract RewardRedistributorIntegrationTest is Test {
     // Multiple rapid distributions
     for (uint256 i = 0; i < 20; i++) {
       ext.addPending((i + 1) * 1000e6); // Increasing amounts
+      _takeSnapshotAndWait();
       vm.prank(operator);
       rr.distribute();
 
@@ -925,6 +974,7 @@ contract RewardRedistributorIntegrationTest is Test {
     for (uint256 i = 0; i < 10; i++) {
       // Random distribution
       ext.addPending(((i * 123 + 456) % 5000e6) + 1000e6);
+      _takeSnapshotAndWait();
       vm.prank(operator);
       rr.distribute();
 
@@ -995,6 +1045,7 @@ contract RewardRedistributorIntegrationTest is Test {
 
     for (uint256 i = 0; i < distributions.length; i++) {
       ext.addPending(distributions[i]);
+      _takeSnapshotAndWait();
       vm.prank(operator);
       rr.distribute();
 
@@ -1033,6 +1084,7 @@ contract RewardRedistributorIntegrationTest is Test {
 
     // Distribute some yield
     ext.addPending(10_000e6);
+    _takeSnapshotAndWait();
     vm.prank(operator);
     rr.distribute();
 
@@ -1052,6 +1104,7 @@ contract RewardRedistributorIntegrationTest is Test {
     uint256 startaleBalanceBefore = usdsc.balanceOf(startale);
 
     ext.addPending(5000e6);
+    _takeSnapshotAndWait();
     vm.prank(operator);
     rr.distribute();
 
@@ -1073,6 +1126,7 @@ contract RewardRedistributorIntegrationTest is Test {
 
     // Distribute yield again - should work normally
     ext.addPending(8000e6);
+    _takeSnapshotAndWait();
     vm.prank(operator);
     rr.distribute();
 
@@ -1092,9 +1146,9 @@ contract RewardRedistributorIntegrationTest is Test {
   function testIntegration_RewardRedistributorWithFees() public {
     // Test RewardRedistributor with non-zero fees
 
-    // Set fee to 10% (1000 bps)
+    // Set fee to 0.5% (50 bps) - within max limit of 100 bps
     vm.prank(owner);
-    rr.setFeeBps(1000);
+    rr.setFeeBps(50);
 
     uint256 startaleBalanceBefore = usdsc.balanceOf(startale);
     uint256 earnBalanceBefore = usdsc.balanceOf(address(earnVault));
@@ -1102,6 +1156,7 @@ contract RewardRedistributorIntegrationTest is Test {
 
     // Distribute yield with fees
     ext.addPending(10_000e6);
+    _takeSnapshotAndWait();
     vm.prank(operator);
     rr.distribute();
 
@@ -1109,9 +1164,9 @@ contract RewardRedistributorIntegrationTest is Test {
     uint256 earnBalanceAfter = usdsc.balanceOf(address(earnVault));
     uint256 susdscAssetsAfter = susdscVault.totalAssets();
 
-    // Verify fee was taken (10% of 10,000 = 1,000 USDSC to Startale as fee)
+    // Verify fee was taken (0.5% of 10,000 = 50 USDSC to Startale as fee)
     uint256 startaleIncrease = startaleBalanceAfter - startaleBalanceBefore;
-    assertGt(startaleIncrease, 1000e6, 'Startale received fee + remainder');
+    assertGt(startaleIncrease, 50e6, 'Startale received fee + remainder');
 
     // Verify remaining yield was distributed to vaults
     assertGt(earnBalanceAfter, earnBalanceBefore, 'EarnVault received yield after fee');
@@ -1130,6 +1185,7 @@ contract RewardRedistributorIntegrationTest is Test {
     uint256 susdscAssetsBefore = susdscVault.totalAssets();
 
     // Try to distribute with no pending yield
+    _takeSnapshotAndWait();
     vm.prank(operator);
     rr.distribute(); // Should return early with no effect
 
@@ -1171,6 +1227,10 @@ contract RewardRedistributorIntegrationTest is Test {
   function testIntegration_RewardRedistributorPreviewFunctions() public {
     // Test preview functions for accuracy
 
+    // Set fee to 0 for this test
+    vm.prank(owner);
+    rr.setFeeBps(0);
+
     ext.addPending(5000e6);
 
     // Preview before distribution
@@ -1208,6 +1268,10 @@ contract RewardRedistributorIntegrationTest is Test {
     // Note: previewSplit doesn't use carry, so allocations will differ from previewDistribute
     assertApproxEqAbs(previewEarn, toEarn, 10_000, 'PreviewSplit earn allocation close to previewDistribute');
     assertApproxEqAbs(previewOn, toOn, 10_000, 'PreviewSplit on allocation close to previewDistribute');
+
+    // Reset fee to default (30 bps) for other tests
+    vm.prank(owner);
+    rr.setFeeBps(30);
   }
 
   function testIntegration_RewardRedistributorAccessControl() public {
@@ -1294,6 +1358,7 @@ contract RewardRedistributorIntegrationTest is Test {
     vm.prank(owner);
     rr.pause(false);
 
+    _takeSnapshotAndWait();
     vm.prank(operator);
     rr.distribute(); // Should work now
   }
@@ -1315,9 +1380,9 @@ contract RewardRedistributorIntegrationTest is Test {
     vm.expectRevert(abi.encodeWithSelector(IRewardRedistributorEventsAndErrors.ZeroAddress.selector, 'susdscVault'));
     rr.setSusdscVault(IERC4626(address(0)));
 
-    // Test fee too high validation
+    // Test fee too high validation (MAX_FEE_BPS is now 100)
     vm.expectRevert(
-      abi.encodeWithSelector(IRewardRedistributorEventsAndErrors.FeeTooHigh.selector, uint16(2001), uint16(2000))
+      abi.encodeWithSelector(IRewardRedistributorEventsAndErrors.FeeTooHigh.selector, uint16(2001), uint16(100))
     );
     rr.setFeeBps(2001); // > MAX_FEE_BPS
 
@@ -1326,12 +1391,12 @@ contract RewardRedistributorIntegrationTest is Test {
     rr.setTreasury(newTreasury);
     assertEq(rr.treasury(), newTreasury, 'Treasury updated');
 
-    rr.setFeeBps(500);
-    assertEq(rr.fee_on_yield_bps(), 500, 'Fee updated');
+    rr.setFeeBps(50); // 0.5% - within max limit of 100 bps
+    assertEq(rr.fee_on_yield_bps(), 50, 'Fee updated');
 
     // Reset for other tests
     rr.setTreasury(startale);
-    rr.setFeeBps(0);
+    rr.setFeeBps(30); // Reset to default 30 bps
 
     vm.stopPrank();
   }
@@ -1342,6 +1407,7 @@ contract RewardRedistributorIntegrationTest is Test {
     ext.addPending(2000e6);
 
     // Just verify distribution works (events are emitted internally)
+    _takeSnapshotAndWait();
     vm.prank(operator);
     rr.distribute();
 
@@ -1349,7 +1415,7 @@ contract RewardRedistributorIntegrationTest is Test {
     address newTreasury = makeAddr('newTreasury2');
     vm.prank(owner);
     rr.setTreasury(newTreasury);
-    
+
     vm.prank(owner);
     rr.setFeeBps(100);
 
@@ -1368,23 +1434,24 @@ contract RewardRedistributorIntegrationTest is Test {
     // Test with maximum allowed fee
 
     vm.prank(owner);
-    rr.setFeeBps(2000); // 20% fee
+    rr.setFeeBps(100); // 1% fee (max allowed)
 
     uint256 startaleBalanceBefore = usdsc.balanceOf(startale);
 
     ext.addPending(10_000e6);
+    _takeSnapshotAndWait();
     vm.prank(operator);
     rr.distribute();
 
     uint256 startaleBalanceAfter = usdsc.balanceOf(startale);
     uint256 startaleIncrease = startaleBalanceAfter - startaleBalanceBefore;
 
-    // With 20% fee, Startale should get at least 2,000 USDSC as fee
-    assertGe(startaleIncrease, 2000e6, 'Startale received maximum fee');
+    // With 1% fee, Startale should get at least 100 USDSC as fee
+    assertGe(startaleIncrease, 100e6, 'Startale received maximum fee');
 
-    // Reset fee
+    // Reset fee to default (30 bps)
     vm.prank(owner);
-    rr.setFeeBps(0);
+    rr.setFeeBps(30);
   }
 
   // ========== EARN VAULT EDGE CASES FOR BRANCH COVERAGE ==========

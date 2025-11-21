@@ -841,7 +841,7 @@ contract EarnVaultTest is Test {
     // Alice cannot use depositWithPermit when blacklisted
     vm.prank(alice);
     vm.expectRevert(IEarnVaultEventsAndErrors.AddressBlacklisted.selector);
-    vault.depositWithPermit(1000e6, block.timestamp + 1 hours, 0, bytes32(0), bytes32(0));
+    vault.depositWithPermit(alice, 1000e6, block.timestamp + 1 hours, 0, bytes32(0), bytes32(0));
   }
 
   /// @notice Test depositWithPermit handles non-permit tokens gracefully
@@ -849,7 +849,7 @@ contract EarnVaultTest is Test {
     // Our MockERC20 doesn't implement permit, so this should fail gracefully
     vm.prank(alice);
     vm.expectRevert(IEarnVaultEventsAndErrors.PermitFailed.selector);
-    vault.depositWithPermit(1000e6, block.timestamp + 1 hours, 0, bytes32(0), bytes32(0));
+    vault.depositWithPermit(alice, 1000e6, block.timestamp + 1 hours, 0, bytes32(0), bytes32(0));
   }
 
   /// @notice Test depositWithPermit triggers _settle when user has existing principal
@@ -1437,22 +1437,19 @@ contract EarnVaultTest is Test {
 
   /// @notice Test renounce ownership functionality
   function test_RenounceOwnership() public {
-    // Owner can renounce ownership
+    // Owner cannot renounce ownership (security fix)
     vm.prank(owner);
+    vm.expectRevert(IEarnVaultEventsAndErrors.OwnershipRenunciationDisabled.selector);
     vault.renounceOwnership();
 
-    // Verify ownership is renounced
-    assertEq(vault.owner(), address(0));
+    // Verify ownership is NOT renounced
+    assertEq(vault.owner(), owner, 'Owner should remain unchanged');
 
-    // No one should be able to call owner functions
+    // Owner should still be able to call owner functions
+    address newDistributor = makeAddr('newDistributor');
     vm.prank(owner);
-    vm.expectRevert();
-    vault.setYieldRedistributor(makeAddr('newDistributor'));
-
-    // Even the old owner cannot call owner functions
-    vm.prank(owner);
-    vm.expectRevert();
-    vault.setYieldRedistributor(makeAddr('newDistributor'));
+    vault.setYieldRedistributor(newDistributor);
+    assertEq(vault.yieldRedistributor(), newDistributor, 'Owner functions should still work');
   }
 
   /// @notice Test asset function
@@ -2425,7 +2422,7 @@ contract EarnVaultTest is Test {
     // === Keeper sends tokens directly to EarnVault and calls onBoostReward ===
     // This simulates a person from the company distributing boost rewards
     // Boost tokens bypass RewardRedistributor entirely - sent directly to vault
-    
+
     vm.startPrank(operator); // operator is boost reward keeper
 
     // ASTR distribution (18 decimals)

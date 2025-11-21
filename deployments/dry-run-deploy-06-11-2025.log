@@ -1,0 +1,189 @@
+forge script script/deploy/DeployRewardRedistributor.s.sol:DeployRewardRedistributor --rpc-url $SEPOLIA_RPC_URL -vv
+[⠊] Compiling...
+No files changed, compilation skipped
+Script ran successfully.
+
+== Logs ==
+  === Deployment Configuration ===
+  USDSC Address: 0x3f99231dD03a9F0E7e3421c92B7b90fbe012985a
+  Treasury Address: 0x77001610a4fD68548B80E49226c02a99c3b6Ae14
+  EarnVault Address: 0xFdeB7e9F59cad080D9158ff850Ce79bCf6cdd5f0
+  sUSDSC Vault Address: 0x938bca6c4281313Baa82154745E4d020E85E7340
+  Admin Address: 0x77001610a4fD68548B80E49226c02a99c3b6Ae14
+  Keeper Address: 0x77001610a4fD68548B80E49226c02a99c3b6Ae14
+
+=== Starting Deployment ===
+  Deployer address: 0x111d4f7F87754E05E66689BE7d672d1299f3A8BB
+  Computed salt:
+  0x111d4f7f87754e05e66689be7d672d1299f3a8bb00eb96670b1b53534e05a7b0
+
+=== Deployment Successful ===
+  RewardRedistributor deployed at: 0xFee1467934428Df54C696B36a4747c5Be86674CC
+
+=== Post-Deployment Verification ===
+  USDSC_ADDRESS: OK
+  Treasury address: OK
+  EarnVault address: OK
+  sUSDSC Vault address: OK
+  Fee on yield (bps): 0 (default)
+  Admin DEFAULT_ADMIN_ROLE: OK
+  Keeper OPERATOR_ROLE: OK
+  Contract paused status: false (OK)
+
+=== All Verifications Passed ===
+
+=== Deployment Summary ===
+  Contract: RewardRedistributor
+  Address: 0xFee1467934428Df54C696B36a4747c5Be86674CC
+  USDSC Token: 0x3f99231dD03a9F0E7e3421c92B7b90fbe012985a
+  Treasury: 0x77001610a4fD68548B80E49226c02a99c3b6Ae14
+  EarnVault: 0xFdeB7e9F59cad080D9158ff850Ce79bCf6cdd5f0
+  sUSDSC Vault: 0x938bca6c4281313Baa82154745E4d020E85E7340
+  Admin: 0x77001610a4fD68548B80E49226c02a99c3b6Ae14
+  Keeper: 0x77001610a4fD68548B80E49226c02a99c3b6Ae14
+  Fee (bps): 0
+  Max Fee (bps): 2000
+
+=== Next Steps ===
+  1. Verify contract on block explorer
+  2. Set RewardRedistributor as yieldRecipient in M0 extension
+  3. Set RewardRedistributor as yieldRedistributor in EarnVault
+  4. Keeper already has OPERATOR_ROLE - ready to call distribute()
+  5. Test distribute() function with small amounts
+
+## Setting up 1 EVM.
+
+==========================
+
+Chain 11155111
+
+Estimated gas price: 0.001000018 gwei
+
+Estimated total gas used for script: 2686206
+
+Estimated amount required: 0.000002686254351708 ETH
+
+==========================
+
+SIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s) to the previous command. See forge script --help for more.
+
+Transactions saved to: /Users/mario/op/startale-stablecoin-contracts/broadcast/DeployRewardRedistributor.s.sol/11155111/dry-run/run-latest.json
+
+Sensitive values saved to: /Users/mario/op/startale-stablecoin-contracts/cache/DeployRewardRedistributor.s.sol/11155111/dry-run/run-latest.json
+
+=============================================================================================
+
+forge script script/deploy/DeployEarnVaultUpgradable.s.sol --rpc-url $SEPOLIA_RPC_URL -vv
+
+[⠊] Compiling...
+No files changed, compilation skipped
+Script ran successfully.
+
+== Logs ==
+  === Deployment Configuration ===
+  USDSC Address: 0x3f99231dD03a9F0E7e3421c92B7b90fbe012985a
+  Owner Address: 0x77001610a4fD68548B80E49226c02a99c3b6Ae14
+  Yield Redistributor Address: 0xFee1467934428Df54C696B36a4747c5Be86674CC
+  Treasury Address: 0x77001610a4fD68548B80E49226c02a99c3b6Ae14
+  Pauser Address: 0x77001610a4fD68548B80E49226c02a99c3b6Ae14
+  ProxyAdmin Owner: 0x77001610a4fD68548B80E49226c02a99c3b6Ae14
+  Boost Reward Keeper Address: 0x77001610a4fD68548B80E49226c02a99c3b6Ae14
+
+=== Starting Deployment ===
+  Deployer address: 0x111d4f7F87754E05E66689BE7d672d1299f3A8BB
+  Implementation salt:
+  0x111d4f7f87754e05e66689be7d672d1299f3a8bb0087b8b06ba7c72238c23774
+  Proxy salt:
+  0x111d4f7f87754e05e66689be7d672d1299f3a8bb004e1cab70ac2568bcfa48b7
+
+=== Deployment Successful ===
+  EarnVaultUpgradeable Implementation: 0x7dCA02767dfD57888CE087900f9cfDf3D9a2af6f
+  EarnVaultUpgradeable Proxy (EarnVault): 0xFdeB7e9F59cad080D9158ff850Ce79bCf6cdd5f0
+
+=== Post-Deployment State ===
+  Total Principal: 0
+  Global Index: 1000000000000000000000000000
+  Claim Reserve: 0
+  Owner: 0x77001610a4fD68548B80E49226c02a99c3b6Ae14
+
+## Setting up 1 EVM.
+
+==========================
+
+Chain 11155111
+
+Estimated gas price: 0.001000018 gwei
+
+Estimated total gas used for script: 6938095
+
+Estimated amount required: 0.00000693821988571 ETH
+
+==========================
+
+SIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s) to the previous command. See forge script --help for more.
+
+Transactions saved to: /Users/mario/op/startale-stablecoin-contracts/broadcast/DeployEarnVaultUpgradable.s.sol/11155111/dry-run/run-latest.json
+
+Sensitive values saved to: /Users/mario/op/startale-stablecoin-contracts/cache/DeployEarnVaultUpgradable.s.sol/11155111/dry-run/run-latest.json
+
+
+=============================================================================================
+
+forge script script/deploy/DeploySUSDSCUpgradable.sol --rpc-url $SEPOLIA_RPC_URL -vv
+
+[⠊] Compiling...
+[⠰] Compiling 1 files with Solc 0.8.30
+[⠔] Solc 0.8.30 finished in 1.32s
+Compiler run successful with warnings:
+Warning (2394): Transient storage as defined by EIP-1153 can break the composability of smart contracts: Since transient storage is cleared only at the end of the transaction and not at the end of the outermost call frame to the contract within a transaction, your contract may unintentionally misbehave when invoked multiple times in a complex transaction. To avoid this, be sure to clear all transient storage at the end of any call to your contract. The use of transient storage for reentrancy guards that are cleared at the end of the call is safe.
+   --> lib/openzeppelin-contracts/contracts/utils/TransientSlot.sol:108:13:
+    |
+108 |             tstore(slot, value)
+    |             ^^^^^^
+
+Script ran successfully.
+
+== Logs ==
+  === Deployment Configuration ===
+  USDSC Address: 0x3f99231dD03a9F0E7e3421c92B7b90fbe012985a
+  Admin Address: 0x77001610a4fD68548B80E49226c02a99c3b6Ae14
+  Pauser Address: 0x77001610a4fD68548B80E49226c02a99c3b6Ae14
+  ProxyAdmin Owner: 0x77001610a4fD68548B80E49226c02a99c3b6Ae14
+
+=== Starting Deployment ===
+  Deployer address: 0x111d4f7F87754E05E66689BE7d672d1299f3A8BB
+  Implementation salt:
+  0x111d4f7f87754e05e66689be7d672d1299f3a8bb00d4c7cf63a31240dc4d07ff
+  Proxy salt:
+  0x111d4f7f87754e05e66689be7d672d1299f3a8bb00f7d9a433ec92de4cb6761a
+
+=== Deployment Successful ===
+  SUSDSCVaultUpgradeable Implementation: 0xdE13186F7ff1173628Ed5e15173d9E78e10Ad6Bb
+  SUSDSCVaultUpgradeable Proxy (SUSDSCVault): 0x938bca6c4281313Baa82154745E4d020E85E7340
+
+=== Post-Deployment Verification ===
+  Vault Name: Staked USDSC
+  Vault Symbol: sUSDSC
+
+## Setting up 1 EVM.
+
+==========================
+
+Chain 11155111
+
+Estimated gas price: 0.001015806 gwei
+
+Estimated total gas used for script: 5254290
+
+Estimated amount required: 0.00000533733930774 ETH
+
+==========================
+
+SIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s) to the previous command. See forge script --help for more.
+
+Transactions saved to: /Users/mario/op/startale-stablecoin-contracts/broadcast/DeploySUSDSCUpgradable.sol/11155111/dry-run/run-latest.json
+
+Sensitive values saved to: /Users/mario/op/startale-stablecoin-contracts/cache/DeploySUSDSCUpgradable.sol/11155111/dry-run/run-latest.json
+
+
+
