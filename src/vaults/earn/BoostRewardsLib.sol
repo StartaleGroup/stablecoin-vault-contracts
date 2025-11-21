@@ -9,6 +9,11 @@ import {Math} from 'lib/openzeppelin-contracts/contracts/utils/math/Math.sol';
 /// @title BoostRewardsLib - Library for handling boost rewards distribution
 /// @notice Handles boost rewards logic separately from main EarnVault contract
 /// @dev Uses same logic as USDSC yield - distributed proportionally based on principal
+///
+/// @dev IMPORTANT: USDT is NOT supported as a boost reward token.
+///      USDT's transfer() and transferFrom() methods do not return a boolean value,
+///      which is incompatible with the standard IERC20 interface expected by this library.
+///      Attempting to use USDT will result in transaction failures.
 library BoostRewardsLib {
   using SafeERC20 for IERC20;
 
@@ -18,7 +23,8 @@ library BoostRewardsLib {
 
   /// @notice Distribute boost rewards to vault users
   /// @dev Uses same logic as USDSC yield - distributed proportionally based on principal
-  /// @param token Token address to distribute as boost rewards
+  /// @dev USDT is NOT supported - see library-level documentation for details
+  /// @param token Token address to distribute as boost rewards (must be ERC20-compliant, not USDT)
   /// @param amount Amount of boost tokens to distribute
   /// @param totalPrincipal Total principal amount in vault
   /// @param treasury Treasury address for when no deposits exist
@@ -122,8 +128,9 @@ library BoostRewardsLib {
   }
 
   /// @notice Claim boost rewards for a specific token
+  /// @dev USDT is NOT supported - see library-level documentation for details
   /// @param user User address claiming rewards
-  /// @param token Token address to claim boost rewards for
+  /// @param token Token address to claim boost rewards for (must be ERC20-compliant, not USDT)
   /// @param principal User's principal amount
   /// @param boostGlobalIndex Global boost index for this token
   /// @param userBoostIndex Mapping of user => token => boost index
