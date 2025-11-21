@@ -42,9 +42,20 @@ contract RewardRedistributor is
   bytes32 public constant OPERATOR_ROLE = keccak256('OPERATOR_ROLE');
 
   /// @notice Maximum fee allowed (basis points).
-  uint16 public constant MAX_FEE_BPS = 2000;
+  uint16 public constant MAX_FEE_BPS = 100; // 100 bps max (1%)
 
   /// @notice Basis points denominator (10000 = 100%).
+  /// @dev    Basis Points (bps) are a unit of measurement for percentages:
+  ///         - 1 bps = 0.01% = 1/10,000
+  ///         - 10 bps = 0.1% = 10/10,000
+  ///         - 10,000 bps = 100% = 10,000/10,000
+  ///
+  ///         Fee calculation formula:
+  ///         `feeAmount = (amount × fee_bps) / BPS_DENOMINATOR`
+  ///
+  ///         Example: For 30 bps (0.3%) fee on 1,000,000 tokens:
+  ///         `feeAmount = (1,000,000 × 30) / 10,000 = 3,000 tokens`
+  ///         Verification: 3,000 / 1,000,000 = 0.003 = 0.3% ✓
   uint256 public constant BPS_DENOMINATOR = 10_000;
 
   /// @notice USDSC token address - used for both transfers/supply queries (IERC20) and yield operations (IMYieldToOne).
@@ -60,8 +71,11 @@ contract RewardRedistributor is
   /// @notice sUSDSC (ERC-4626) vault that receives yield via raw transfers (no minting).
   IERC4626 public susdscVault;
 
-  /// @notice Fee on newly minted yield expressed in basis points (e.g., 1000 = 10%).
-  uint16 public fee_on_yield_bps = 0;
+  /// @notice Fee on newly minted yield expressed in basis points.
+  /// @dev    See {BPS_DENOMINATOR} for basis points explanation.
+  ///         Examples: 30 bps = 0.3%, 100 bps = 1%, 1000 bps = 10%.
+  ///         Initial value: 30 bps (0.3%).
+  uint16 public fee_on_yield_bps = 30;
 
   /// @dev Carry accumulator for EarnVault share calculations across epochs.
   uint256 private carryEarn;

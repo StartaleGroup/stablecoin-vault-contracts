@@ -336,7 +336,8 @@ contract EarnVaultUpgradeable is
   /// @notice Distribute boost rewards (ASTR, DOT, etc.) to vault users
   /// @dev MUST be called AFTER transferring `amount` of `token` to this contract
   /// @dev Uses same logic as USDSC yield - distributed proportionally based on principal
-  /// @param token Token address to distribute as boost rewards
+  /// @dev USDT is NOT supported as a boost reward token - it does not return a value on transfer()/transferFrom()
+  /// @param token Token address to distribute as boost rewards (must be ERC20-compliant, not USDT)
   /// @param amount Amount of boost tokens to distribute
   function onBoostReward(address token, uint256 amount) external whenNotPaused onlyBoostRewardKeeper nonReentrant {
     EarnVaultStorage storage $ = _getStorage();
