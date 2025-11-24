@@ -92,6 +92,16 @@ contract DeploySUSDSCVaultUpgradeable is Script, DeployHelpers {
 
     vm.stopBroadcast();
     _verifyDeployment();
+    _logPostDeploymentState();
+  }
+
+  // Helper: Read ProxyAdmin owner
+  function _readProxyAdminOwner() internal view returns (address proxyAdminContract, address actualOwner) {
+    // ERC1967 admin slot: keccak256("eip1967.proxy.admin") - 1
+    bytes32 ADMIN_SLOT = 0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103;
+    proxyAdminContract = address(uint160(uint256(vm.load(address(proxy), ADMIN_SLOT))));
+    // ProxyAdmin's owner() is stored in the first slot (inherited from Ownable)
+    actualOwner = address(uint160(uint256(vm.load(proxyAdminContract, bytes32(0)))));
   }
 
   // Verify deployment
@@ -105,29 +115,69 @@ contract DeploySUSDSCVaultUpgradeable is Script, DeployHelpers {
     require(susdscVault.decimals() == 6, 'Vault decimals mismatch');
     console.log('sUSDSC decimals: OK');
     require(susdscVault.totalAssets() == 0, 'Vault total assets mismatch');
-    console.log('sUSDSC total assets: OK');
+    console.log('Total USDSC in vault = 0: OK');
     require(susdscVault.totalSupply() == 0, 'Vault total supply mismatch');
     console.log('sUSDSC total supply: OK');
     require(susdscVault.paused() == false, 'Vault paused mismatch');
     console.log('sUSDSC paused: OK');
-    require(susdscVault.hasRole(susdscVault.DEFAULT_ADMIN_ROLE(), adminAddress), 'Admin role not granted');
-    console.log('Admin Role: OK');
-    require(susdscVault.hasRole(susdscVault.PAUSER_ROLE(), pauserAddress), 'Pauser role not granted');
-    console.log('Pauser Role: OK');
+
+    // Verify roles
+    bytes32 adminRole = susdscVault.DEFAULT_ADMIN_ROLE();
+    require(susdscVault.hasRole(adminRole, adminAddress), 'Admin role not granted');
+    console.log('Admin DEFAULT_ADMIN_ROLE: OK');
+
+    bytes32 pauserRole = susdscVault.PAUSER_ROLE();
+    require(susdscVault.hasRole(pauserRole, pauserAddress), 'Pauser role not granted');
+    console.log('Pauser PAUSER_ROLE: OK');
+
     require(address(susdscVault.asset()) == usdscAddress, 'Asset address mismatch');
     console.log('Asset Address: OK');
+
+    // Verify ProxyAdmin owner
+    (, address actualProxyAdminOwner) = _readProxyAdminOwner();
+    require(actualProxyAdminOwner == proxyAdminOwner, 'ProxyAdmin owner mismatch');
+    console.log('ProxyAdmin Owner: OK');
 
     console.log('\n=== All Verifications Passed ===');
   }
 
   // Post-deployment state logging
   function _logPostDeploymentState() internal view {
-    console.log('\n=== Post-Deployment State ===');
-    console.log('Vault Name:', susdscVault.name());
-    console.log('Vault Symbol:', susdscVault.symbol());
-    console.log('Vault Decimals:', susdscVault.decimals());
-    console.log('Vault Total Assets:', susdscVault.totalAssets());
-    console.log('Vault Total Supply:', susdscVault.totalSupply());
-    console.log('Vault Paused:', susdscVault.paused());
+    console.log('\n=== Deployment Summary ===');
+    console.log('Contract: SUSDSCVaultUpgradable');
+    console.log('Implementation:', address(implementation));
+    console.log('Proxy:', address(susdscVault));
+
+    console.log('\n--- Initialize Parameters ---');
+    console.log('Asset (USDSC):', address(susdscVault.asset()));
+
+    console.log('\n--- ERC20/ERC4626 State ---');
+    console.log('Name:', susdscVault.name());
+    console.log('Symbol:', susdscVault.symbol());
+    console.log('sUSDSC Decimals:', susdscVault.decimals());
+    console.log('Total USDSC in vault:', susdscVault.totalAssets());
+    console.log('Total sUSDSC Supply:', susdscVault.totalSupply());
+
+    console.log('\n--- Roles ---');
+    bytes32 adminRole = susdscVault.DEFAULT_ADMIN_ROLE();
+    bytes32 pauserRole = susdscVault.PAUSER_ROLE();
+
+    console.log('DEFAULT_ADMIN_ROLE:');
+    console.logBytes32(adminRole);
+    console.log('  Admin address:', adminAddress);
+    console.log('  Admin has role:', susdscVault.hasRole(adminRole, adminAddress));
+
+    console.log('PAUSER_ROLE:');
+    console.logBytes32(pauserRole);
+    console.log('  Pauser address:', pauserAddress);
+    console.log('  Pauser has role:', susdscVault.hasRole(pauserRole, pauserAddress));
+
+    console.log('\n--- Proxy Configuration ---');
+    (address proxyAdminContract, address actualProxyAdminOwner) = _readProxyAdminOwner();
+    console.log('ProxyAdmin Contract:', proxyAdminContract);
+    console.log('ProxyAdmin Owner:', actualProxyAdminOwner);
+
+    console.log('\n--- Contract State ---');
+    console.log('Paused:', susdscVault.paused());
   }
 }
