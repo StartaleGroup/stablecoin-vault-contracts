@@ -168,8 +168,8 @@ balance >= claimReserve + incomingYield
 ### Fee Management
 
 ```solidity
-uint16 public fee_on_yield_bps = 0;        // Default: 0%
-uint16 public constant MAX_FEE_BPS = 2000; // Maximum: 20%
+uint16 public fee_on_yield_bps = 30;        // Default: 0.3%
+uint16 public constant MAX_FEE_BPS = 100;   // Maximum: 1%
 ```
 
 ### Parameter Updates

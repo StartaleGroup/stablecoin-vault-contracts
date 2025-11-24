@@ -91,15 +91,43 @@ contract DeploySUSDSCVaultUpgradeable is Script, DeployHelpers {
     console.log('SUSDSCVaultUpgradeable Proxy (SUSDSCVault):', address(susdscVault));
 
     vm.stopBroadcast();
-    _logPostDeploymentState();
+    _verifyDeployment();
   }
 
-  // Post-deployment verification
-  function _logPostDeploymentState() internal view {
+  // Verify deployment
+  function _verifyDeployment() internal view {
     console.log('\n=== Post-Deployment Verification ===');
+
+    require(keccak256(bytes(susdscVault.name())) == keccak256(bytes('Staked USDSC')), 'Vault name mismatch');
+    console.log('sUSDSC name Staked USDSC: OK');
+    require(keccak256(bytes(susdscVault.symbol())) == keccak256(bytes('sUSDSC')), 'Vault symbol mismatch');
+    console.log('sUSDSC symbol: OK');
+    require(susdscVault.decimals() == 6, 'Vault decimals mismatch');
+    console.log('sUSDSC decimals: OK');
+    require(susdscVault.totalAssets() == 0, 'Vault total assets mismatch');
+    console.log('sUSDSC total assets: OK');
+    require(susdscVault.totalSupply() == 0, 'Vault total supply mismatch');
+    console.log('sUSDSC total supply: OK');
+    require(susdscVault.paused() == false, 'Vault paused mismatch');
+    console.log('sUSDSC paused: OK');
+    require(susdscVault.hasRole(susdscVault.DEFAULT_ADMIN_ROLE(), adminAddress), 'Admin role not granted');
+    console.log('Admin Role: OK');
+    require(susdscVault.hasRole(susdscVault.PAUSER_ROLE(), pauserAddress), 'Pauser role not granted');
+    console.log('Pauser Role: OK');
+    require(address(susdscVault.asset()) == usdscAddress, 'Asset address mismatch');
+    console.log('Asset Address: OK');
+
+    console.log('\n=== All Verifications Passed ===');
+  }
+
+  // Post-deployment state logging
+  function _logPostDeploymentState() internal view {
+    console.log('\n=== Post-Deployment State ===');
     console.log('Vault Name:', susdscVault.name());
     console.log('Vault Symbol:', susdscVault.symbol());
-    // console.log('Total Assets:', susdscVault.totalAssets());
-    // console.log('Total Supply:', susdscVault.totalSupply());
+    console.log('Vault Decimals:', susdscVault.decimals());
+    console.log('Vault Total Assets:', susdscVault.totalAssets());
+    console.log('Vault Total Supply:', susdscVault.totalSupply());
+    console.log('Vault Paused:', susdscVault.paused());
   }
 }

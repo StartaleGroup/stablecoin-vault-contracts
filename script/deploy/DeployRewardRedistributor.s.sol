@@ -94,46 +94,35 @@ contract DeployRewardRedistributor is Script, DeployHelpers {
     _logDeploymentSummary();
   }
 
+  // Verify deployment
   function _verifyDeployment() internal view {
     console.log('\n=== Post-Deployment Verification ===');
 
-    // Verify immutable USDSC address
     require(rewardRedistributor.USDSC_ADDRESS() == usdscAddress, 'USDSC_ADDRESS mismatch');
     console.log('USDSC_ADDRESS: OK');
-
-    // Verify treasury address
     require(rewardRedistributor.treasury() == treasuryAddress, 'Treasury address mismatch');
     console.log('Treasury address: OK');
-
-    // Verify earnVault address
     require(address(rewardRedistributor.earnVault()) == earnVaultAddress, 'EarnVault address mismatch');
     console.log('EarnVault address: OK');
-
-    // Verify susdscVault address
     require(address(rewardRedistributor.susdscVault()) == susdscVaultAddress, 'sUSDSC Vault address mismatch');
-    console.log('sUSDSC Vault address: OK');
-
-    // Verify fee is 0 (default)
-    require(rewardRedistributor.fee_on_yield_bps() == 0, 'Fee should be 0 by default');
-    console.log('Fee on yield (bps): 0 (default)');
-
-    // Verify admin has DEFAULT_ADMIN_ROLE
+    console.log('susdscVault address: OK');
+    require(rewardRedistributor.fee_on_yield_bps() == 30, 'Fee should be 0.3% by default');
+    console.log('fee_on_yield_bps = 30: OK');
+    require(rewardRedistributor.MAX_FEE_BPS() == 100, 'MAX_FEE_BPS should be 1% by default');
+    console.log('MAX_FEE_BPS = 100: OK');
     bytes32 adminRole = rewardRedistributor.DEFAULT_ADMIN_ROLE();
     require(rewardRedistributor.hasRole(adminRole, adminAddress), 'Admin missing DEFAULT_ADMIN_ROLE');
     console.log('Admin DEFAULT_ADMIN_ROLE: OK');
-
-    // Verify keeper has OPERATOR_ROLE
     bytes32 operatorRole = rewardRedistributor.OPERATOR_ROLE();
     require(rewardRedistributor.hasRole(operatorRole, keeperAddress), 'Keeper missing OPERATOR_ROLE');
     console.log('Keeper OPERATOR_ROLE: OK');
-
-    // Verify contract is not paused
     require(!rewardRedistributor.paused(), 'Contract should not be paused');
     console.log('Contract paused status: false (OK)');
 
     console.log('\n=== All Verifications Passed ===');
   }
 
+  // Post-deployment state logging
   function _logDeploymentSummary() internal view {
     console.log('\n=== Deployment Summary ===');
     console.log('Contract: RewardRedistributor');
@@ -146,11 +135,5 @@ contract DeployRewardRedistributor is Script, DeployHelpers {
     console.log('Keeper:', keeperAddress);
     console.log('Fee (bps):', rewardRedistributor.fee_on_yield_bps());
     console.log('Max Fee (bps):', rewardRedistributor.MAX_FEE_BPS());
-    console.log('\n=== Next Steps ===');
-    console.log('1. Verify contract on block explorer');
-    console.log('2. Set RewardRedistributor as yieldRecipient in M0 extension');
-    console.log('3. Set RewardRedistributor as yieldRedistributor in EarnVault');
-    console.log('4. Keeper already has OPERATOR_ROLE - ready to call distribute()');
-    console.log('5. Test distribute() function with small amounts');
   }
 }

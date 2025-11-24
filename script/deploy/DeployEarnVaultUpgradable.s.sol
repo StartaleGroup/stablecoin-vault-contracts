@@ -108,16 +108,41 @@ contract DeployEarnVaultUpgradeable is Script, DeployHelpers {
     console.log('EarnVaultUpgradeable Proxy (EarnVault):', address(earnVault));
 
     vm.stopBroadcast();
-
+    _verifyDeployment();
     _logPostDeploymentState();
   }
 
-  // Post-deployment verification
+  // Verify deployment
+  function _verifyDeployment() internal view {
+    console.log('\n=== Post-Deployment Verification ===');
+
+    require(earnVault.asset() == usdscAddress, 'Asset address mismatch');
+    console.log('Asset usdscAddress Address: OK');
+    require(earnVault.owner() == ownerAddress, 'Owner address mismatch');
+    console.log('Owner Address: OK');
+    require(earnVault.yieldRedistributor() == yieldRedistributorAddress, 'Yield redistributor mismatch');
+    console.log('Yield Redistributor: OK');
+    require(earnVault.treasury() == treasuryAddress, 'Treasury address mismatch');
+    console.log('Treasury Address: OK');
+    require(earnVault.pauser() == pauserAddress, 'Pauser address mismatch');
+    console.log('Pauser Address: OK');
+    require(!earnVault.paused(), 'Vault should not be paused');
+    console.log('Paused State: OK');
+
+    console.log('\n=== All Verifications Passed ===');
+  }
+
+  // Post-deployment state logging
   function _logPostDeploymentState() internal view {
     console.log('\n=== Post-Deployment State ===');
+    console.log('Asset (USDSC):', earnVault.asset());
+    console.log('Owner:', earnVault.owner());
+    console.log('Yield Redistributor:', earnVault.yieldRedistributor());
+    console.log('Treasury:', earnVault.treasury());
+    console.log('Pauser:', earnVault.pauser());
     console.log('Total Principal:', earnVault.totalPrincipal());
     console.log('Global Index:', earnVault.globalIndex());
     console.log('Claim Reserve:', earnVault.claimReserve());
-    console.log('Owner:', earnVault.owner());
+    console.log('Paused:', earnVault.paused());
   }
 }
