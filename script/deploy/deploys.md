@@ -1,5 +1,6 @@
 # Deployment Scripts Reference
 
+( Earlier script version )
 **Deployment Order**: SUSDSCVault (1st) → EarnVault (2nd) → RewardRedistributor (3rd)
 
 ## Prerequisites
