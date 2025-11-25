@@ -15,7 +15,7 @@ The `SUSDSCVault` is a passive ERC4626-compliant vault that allows users to depo
 ## Contract Details
 
 ### Token Information
-- **Name**: Staked USDSC
+- **Name**: Staked Startale USD
 - **Symbol**: sUSDSC
 - **Underlying Asset**: USDSC token
 

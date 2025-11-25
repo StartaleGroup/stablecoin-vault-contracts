@@ -16,7 +16,7 @@ contract SUSDSCVault is ERC20, ERC4626, AccessControl, Pausable, ReentrancyGuard
 
   bytes32 public constant PAUSER_ROLE = keccak256('PAUSER_ROLE');
 
-  constructor(IERC20 usdsc, address admin, address pauser) ERC20('Staked USDSC', 'sUSDSC') ERC4626(usdsc) {
+  constructor(IERC20 usdsc, address admin, address pauser) ERC20('Staked Startale USD', 'sUSDSC') ERC4626(usdsc) {
     if (admin == address(0)) revert ISUSDSCVaultEventsAndErrors.AdminCannotBeZeroAddress();
     if (pauser == address(0)) revert ISUSDSCVaultEventsAndErrors.PauserCannotBeZeroAddress();
     _grantRole(DEFAULT_ADMIN_ROLE, admin);

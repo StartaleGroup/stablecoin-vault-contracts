@@ -108,8 +108,8 @@ contract DeploySUSDSCVaultUpgradeable is Script, DeployHelpers {
   function _verifyDeployment() internal view {
     console.log('\n=== Post-Deployment Verification ===');
 
-    require(keccak256(bytes(susdscVault.name())) == keccak256(bytes('Staked USDSC')), 'Vault name mismatch');
-    console.log('sUSDSC name Staked USDSC: OK');
+    require(keccak256(bytes(susdscVault.name())) == keccak256(bytes('Staked Startale USD')), 'Vault name mismatch');
+    console.log('sUSDSC name Staked Startale USD: OK');
     require(keccak256(bytes(susdscVault.symbol())) == keccak256(bytes('sUSDSC')), 'Vault symbol mismatch');
     console.log('sUSDSC symbol: OK');
     require(susdscVault.decimals() == 6, 'Vault decimals mismatch');
