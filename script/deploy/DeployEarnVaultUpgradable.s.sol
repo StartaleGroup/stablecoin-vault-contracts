@@ -108,16 +108,78 @@ contract DeployEarnVaultUpgradeable is Script, DeployHelpers {
     console.log('EarnVaultUpgradeable Proxy (EarnVault):', address(earnVault));
 
     vm.stopBroadcast();
-
+    _verifyDeployment();
     _logPostDeploymentState();
   }
 
-  // Post-deployment verification
+  // Helper: Read boostRewardKeeper from ERC-7201 storage
+  function _readBoostRewardKeeper() internal view returns (address) {
+    // ERC-7201 storage location from EarnVaultStorageBase.sol
+    bytes32 EARN_VAULT_STORAGE_LOCATION = 0x4acfb950108afb92cc59b268b946808304d34de46619a1e803aeac06ad89cb00;
+    // boostRewardKeeper is at offset 2 in the struct (after RAY at 0, yieldRedistributor at 1)
+    bytes32 boostKeeperSlot = bytes32(uint256(EARN_VAULT_STORAGE_LOCATION) + 2);
+    return address(uint160(uint256(vm.load(address(earnVault), boostKeeperSlot))));
+  }
+
+  // Helper: Read ProxyAdmin owner
+  function _readProxyAdminOwner() internal view returns (address proxyAdminContract, address actualOwner) {
+    // ERC1967 admin slot: keccak256("eip1967.proxy.admin") - 1
+    bytes32 ADMIN_SLOT = 0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103;
+    proxyAdminContract = address(uint160(uint256(vm.load(address(proxy), ADMIN_SLOT))));
+    // ProxyAdmin's owner() is stored in the first slot (inherited from Ownable)
+    actualOwner = address(uint160(uint256(vm.load(proxyAdminContract, bytes32(0)))));
+  }
+
+  // Verify deployment
+  function _verifyDeployment() internal view {
+    console.log('\n=== Post-Deployment Verification ===');
+
+    require(earnVault.asset() == usdscAddress, 'Asset address mismatch');
+    console.log('Asset usdscAddress Address: OK');
+    require(earnVault.owner() == ownerAddress, 'Owner address mismatch');
+    console.log('Owner Address: OK');
+    require(earnVault.yieldRedistributor() == yieldRedistributorAddress, 'Yield redistributor mismatch');
+    console.log('Yield Redistributor: OK');
+    require(earnVault.treasury() == treasuryAddress, 'Treasury address mismatch');
+    console.log('Treasury Address: OK');
+    require(earnVault.pauser() == pauserAddress, 'Pauser address mismatch');
+    console.log('Pauser Address: OK');
+    require(!earnVault.paused(), 'Vault should not be paused');
+    console.log('Paused State: OK');
+
+    // Verify boostRewardKeeper via storage read (no public getter exists)
+    address actualBoostRewardKeeper = _readBoostRewardKeeper();
+    require(actualBoostRewardKeeper == boostRewardKeeperAddress, 'Boost reward keeper mismatch');
+    console.log('Boost Reward Keeper: OK');
+
+    // Verify ProxyAdmin owner
+    (address proxyAdminContract, address actualProxyAdminOwner) = _readProxyAdminOwner();
+    require(actualProxyAdminOwner == proxyAdminOwner, 'ProxyAdmin owner mismatch');
+    console.log('ProxyAdmin Owner: OK');
+
+    console.log('\n=== All Verifications Passed ===');
+  }
+
+  // Post-deployment state logging
   function _logPostDeploymentState() internal view {
     console.log('\n=== Post-Deployment State ===');
+    console.log('Asset (USDSC):', earnVault.asset());
+    console.log('Owner:', earnVault.owner());
+    console.log('Yield Redistributor:', earnVault.yieldRedistributor());
+    console.log('Treasury:', earnVault.treasury());
+    console.log('Pauser:', earnVault.pauser());
     console.log('Total Principal:', earnVault.totalPrincipal());
     console.log('Global Index:', earnVault.globalIndex());
     console.log('Claim Reserve:', earnVault.claimReserve());
-    console.log('Owner:', earnVault.owner());
+    console.log('Paused:', earnVault.paused());
+
+    // Read ProxyAdmin info
+    (address proxyAdminContract, address actualProxyAdminOwner) = _readProxyAdminOwner();
+    console.log('ProxyAdmin Contract:', proxyAdminContract);
+    console.log('ProxyAdmin Owner:', actualProxyAdminOwner);
+
+    // Read boostRewardKeeper via storage (no public getter exists)
+    address actualBoostRewardKeeper = _readBoostRewardKeeper();
+    console.log('Boost Reward Keeper:', actualBoostRewardKeeper);
   }
 }

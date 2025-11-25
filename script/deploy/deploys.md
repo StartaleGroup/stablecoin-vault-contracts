@@ -19,15 +19,16 @@ Deploy SUSDSCVault - Independent, no dependencies.
 
 ### Simulate
 ```bash
-forge script script/deploy/DeploySUSDSCUpgradable.sol:DeploySUSDSCVaultUpgradeable --rpc-url $SEPOLIA_RPC_URL -vv
+forge script script/deploy/DeploySUSDSCUpgradable.sol:DeploySUSDSCVaultUpgradeable --rpc-url $SONEIUM_RPC_URL -vv
 ```
 
 ### Deploy
 ```bash
 forge script script/deploy/DeploySUSDSCUpgradable.sol:DeploySUSDSCVaultUpgradeable \
-  --rpc-url $SEPOLIA_RPC_URL \
+  --rpc-url $SONEIUM_RPC_URL \
   --private-key $DEPLOYER_PRIVATE_KEY \
   --broadcast \
+  --slow \
   --verify \
   -vvvv
 ```
@@ -39,15 +40,16 @@ Deploy EarnVault - Independent (use placeholder for YIELD_REDISTRIBUTOR).
 
 ### Simulate
 ```bash
-forge script script/deploy/DeployEarnVaultUpgradable.s.sol:DeployEarnVaultUpgradeable --rpc-url $SEPOLIA_RPC_URL -vv
+forge script script/deploy/DeployEarnVaultUpgradable.s.sol:DeployEarnVaultUpgradeable --rpc-url $SONEIUM_RPC_URL -vv
 ```
 
 ### Deploy
 ```bash
 forge script script/deploy/DeployEarnVaultUpgradable.s.sol:DeployEarnVaultUpgradeable \
-  --rpc-url $SEPOLIA_RPC_URL \
+  --rpc-url $SONEIUM_RPC_URL \
   --private-key $DEPLOYER_PRIVATE_KEY \
   --broadcast \
+  --slow \
   --verify \
   -vvvv
 ```
@@ -59,13 +61,13 @@ Deploy RewardRedistributor - Requires EARN_VAULT_ADDRESS and SUSDSC_VAULT_ADDRES
 
 ### Simulate
 ```bash
-forge script script/deploy/DeployRewardRedistributor.s.sol:DeployRewardRedistributor --rpc-url $SEPOLIA_RPC_URL -vv
+forge script script/deploy/DeployRewardRedistributor.s.sol:DeployRewardRedistributor --rpc-url $SONEIUM_RPC_URL -vv
 ```
 
 ### Deploy
 ```bash
 forge script script/deploy/DeployRewardRedistributor.s.sol:DeployRewardRedistributor \
-  --rpc-url $SEPOLIA_RPC_URL \
+  --rpc-url $SONEIUM_RPC_URL \
   --private-key $DEPLOYER_PRIVATE_KEY \
   --broadcast \
   --verify \
@@ -103,7 +105,7 @@ Contract: 0xFee1467934428Df54C696B36a4747c5Be86674CC
 
 EarnVaultUpgradeable proxy salt 0x111d4f7f87754e05e66689be7d672d1299f3a8bb004e1cab70ac2568bcfa48b7
 
-RewardRedistributor calt 0x111d4f7f87754e05e66689be7d672d1299f3a8bb00eb96670b1b53534e05a7b0
+RewardRedistributor salt 0x111d4f7f87754e05e66689be7d672d1299f3a8bb00eb96670b1b53534e05a7b0
 
 SUSDSCVaultUpgradeable proxy salt 0x111d4f7f87754e05e66689be7d672d1299f3a8bb00f7d9a433ec92de4cb6761a
 
