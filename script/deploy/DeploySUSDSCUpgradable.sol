@@ -65,12 +65,14 @@ contract DeploySUSDSCVaultUpgradeable is Script, DeployHelpers {
     console.log('Proxy salt:');
     console.logBytes32(proxySalt);
 
-    vm.startBroadcast(deployerPrivateKey);
-
     // Step 1: Deploy implementation using CREATE3
+    console.log('\n=== Deploying Implementation ===');
+    vm.startBroadcast(deployerPrivateKey);
     bytes memory implCreationCode = type(SUSDSCVaultUpgradable).creationCode;
     address deployedImplAddress = _deployCreate3(implCreationCode, implSalt);
     implementation = SUSDSCVaultUpgradable(payable(deployedImplAddress));
+    vm.stopBroadcast();
+    console.log('SUSDSCVaultUpgradeable Implementation:', address(implementation));
 
     // Step 2: Prepare initialization data
     bytes memory initData = abi.encodeWithSelector(
@@ -78,6 +80,8 @@ contract DeploySUSDSCVaultUpgradeable is Script, DeployHelpers {
     );
 
     // Step 3: Deploy proxy using CREATE3
+    console.log('\n=== Deploying Proxy ===');
+    vm.startBroadcast(deployerPrivateKey);
     bytes memory proxyCreationCode = abi.encodePacked(
       type(TransparentUpgradeableProxy).creationCode, abi.encode(address(implementation), proxyAdminOwner, initData)
     );
@@ -85,12 +89,10 @@ contract DeploySUSDSCVaultUpgradeable is Script, DeployHelpers {
     address deployedProxyAddress = _deployCreate3(proxyCreationCode, proxySalt);
     proxy = TransparentUpgradeableProxy(payable(deployedProxyAddress));
     susdscVault = SUSDSCVaultUpgradable(payable(deployedProxyAddress));
-
-    console.log('\n=== Deployment Successful ===');
-    console.log('SUSDSCVaultUpgradeable Implementation:', address(implementation));
+    vm.stopBroadcast();
     console.log('SUSDSCVaultUpgradeable Proxy (SUSDSCVault):', address(susdscVault));
 
-    vm.stopBroadcast();
+    console.log('\n=== Deployment Successful ===');
     _verifyDeployment();
     _logPostDeploymentState();
   }

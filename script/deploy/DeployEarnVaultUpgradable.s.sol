@@ -76,12 +76,14 @@ contract DeployEarnVaultUpgradeable is Script, DeployHelpers {
     console.log('Proxy salt:');
     console.logBytes32(proxySalt);
 
-    vm.startBroadcast(deployerPrivateKey);
-
     // Step 1: Deploy implementation using CREATE3
+    console.log('\n=== Deploying Implementation ===');
+    vm.startBroadcast(deployerPrivateKey);
     bytes memory implCreationCode = type(EarnVaultUpgradeable).creationCode;
     address deployedImplAddress = _deployCreate3(implCreationCode, implSalt);
     implementation = EarnVaultUpgradeable(payable(deployedImplAddress));
+    vm.stopBroadcast();
+    console.log('EarnVaultUpgradeable Implementation:', address(implementation));
 
     // Step 2: Prepare initialization data
     bytes memory initData = abi.encodeWithSelector(
@@ -95,6 +97,8 @@ contract DeployEarnVaultUpgradeable is Script, DeployHelpers {
     );
 
     // Step 3: Deploy proxy using CREATE3
+    console.log('\n=== Deploying Proxy ===');
+    vm.startBroadcast(deployerPrivateKey);
     bytes memory proxyCreationCode = abi.encodePacked(
       type(TransparentUpgradeableProxy).creationCode, abi.encode(address(implementation), proxyAdminOwner, initData)
     );
@@ -102,12 +106,10 @@ contract DeployEarnVaultUpgradeable is Script, DeployHelpers {
     address deployedProxyAddress = _deployCreate3(proxyCreationCode, proxySalt);
     proxy = TransparentUpgradeableProxy(payable(deployedProxyAddress));
     earnVault = EarnVaultUpgradeable(payable(deployedProxyAddress));
-
-    console.log('\n=== Deployment Successful ===');
-    console.log('EarnVaultUpgradeable Implementation:', address(implementation));
+    vm.stopBroadcast();
     console.log('EarnVaultUpgradeable Proxy (EarnVault):', address(earnVault));
 
-    vm.stopBroadcast();
+    console.log('\n=== Deployment Successful ===');
     _verifyDeployment();
     _logPostDeploymentState();
   }
@@ -153,7 +155,7 @@ contract DeployEarnVaultUpgradeable is Script, DeployHelpers {
     console.log('Boost Reward Keeper: OK');
 
     // Verify ProxyAdmin owner
-    (address proxyAdminContract, address actualProxyAdminOwner) = _readProxyAdminOwner();
+    (, address actualProxyAdminOwner) = _readProxyAdminOwner();
     require(actualProxyAdminOwner == proxyAdminOwner, 'ProxyAdmin owner mismatch');
     console.log('ProxyAdmin Owner: OK');
 
