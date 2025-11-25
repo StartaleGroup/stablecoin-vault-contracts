@@ -41,7 +41,7 @@ contract SUSDSCVaultUpgradable is
     if (admin == address(0)) revert ISUSDSCVaultEventsAndErrors.AdminCannotBeZeroAddress();
     if (pauser == address(0)) revert ISUSDSCVaultEventsAndErrors.PauserCannotBeZeroAddress();
 
-    __ERC20_init('Staked USDSC', 'sUSDSC');
+    __ERC20_init('Staked Startale USD', 'sUSDSC');
     __ERC4626_init(usdsc);
     __AccessControl_init();
     __Pausable_init();

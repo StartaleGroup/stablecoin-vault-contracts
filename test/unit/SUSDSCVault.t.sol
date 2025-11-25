@@ -101,7 +101,7 @@ contract UnitSUSDSCVault is Test {
   }
 
   function test_constructor() external view {
-    assertEq(vault.name(), 'Staked USDSC');
+    assertEq(vault.name(), 'Staked Startale USD');
     assertEq(vault.symbol(), 'sUSDSC');
     assertEq(address(vault.asset()), address(usdsc));
     assertTrue(vault.hasRole(vault.DEFAULT_ADMIN_ROLE(), admin));

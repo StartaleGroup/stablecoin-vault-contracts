@@ -133,7 +133,7 @@ contract SUSDSCVaultUpgradeTest is Test {
   }
 
   function test_InitializationSetsCorrectValues() public view {
-    assertEq(vault.name(), 'Staked USDSC');
+    assertEq(vault.name(), 'Staked Startale USD');
     assertEq(vault.symbol(), 'sUSDSC');
     assertEq(address(vault.asset()), address(usdsc));
     assertTrue(vault.hasRole(vault.DEFAULT_ADMIN_ROLE(), vaultAdmin));
