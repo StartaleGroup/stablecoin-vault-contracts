@@ -81,6 +81,9 @@ contract DeployEarnVaultUpgradeable is Script, DeployHelpers {
     // Step 1: Deploy implementation using CREATE3
     bytes memory implCreationCode = type(EarnVaultUpgradeable).creationCode;
     address deployedImplAddress = _deployCreate3(implCreationCode, implSalt);
+
+    vm.stopBroadcast();
+
     implementation = EarnVaultUpgradeable(payable(deployedImplAddress));
 
     // Step 2: Prepare initialization data
@@ -99,7 +102,11 @@ contract DeployEarnVaultUpgradeable is Script, DeployHelpers {
       type(TransparentUpgradeableProxy).creationCode, abi.encode(address(implementation), proxyAdminOwner, initData)
     );
 
+    vm.startBroadcast(deployerPrivateKey);
+
     address deployedProxyAddress = _deployCreate3(proxyCreationCode, proxySalt);
+
+    vm.stopBroadcast();
     proxy = TransparentUpgradeableProxy(payable(deployedProxyAddress));
     earnVault = EarnVaultUpgradeable(payable(deployedProxyAddress));
 
@@ -107,7 +114,6 @@ contract DeployEarnVaultUpgradeable is Script, DeployHelpers {
     console.log('EarnVaultUpgradeable Implementation:', address(implementation));
     console.log('EarnVaultUpgradeable Proxy (EarnVault):', address(earnVault));
 
-    vm.stopBroadcast();
     _verifyDeployment();
     _logPostDeploymentState();
   }
