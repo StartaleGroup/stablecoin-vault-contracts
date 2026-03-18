@@ -15,8 +15,8 @@ interface IRewardRedistributorEventsAndErrors {
   /// @param toSUSDSCVault      Net yield sent to sUSDSC ERC-4626 vault (checkbox ON).
   /// @param toStartaleExtra   Remainder of net yield: ineligible cohorts (wallets/LP/points) + rounding dust.
   /// @param S_base            Total USDSC supply **before** this mint (denominator for allocation).
-  /// @param T_earn            EarnVault TVL used for allocation (i.e., `earnVault.totalPrincipal()`).
-  /// @param T_yield              sUSDSCVault TVL used for allocation (i.e., `susdscVault.totalAssets()`).
+  /// @param T_earn            EarnVault TVL used for allocation (from snapshot: lastEarnTVL).
+  /// @param T_yield            sUSDSCVault TVL used for allocation (from snapshot: lastSusdscTVL).
   event Distributed(
     uint256 minted,
     uint256 feeToStartale,
@@ -51,12 +51,24 @@ interface IRewardRedistributorEventsAndErrors {
   /// @param fee_on_yield_bps  New fee on yield (bps).
   event FeeUpdated(uint16 fee_on_yield_bps);
 
-  /// @notice Emitted when sUSDSC TVL snapshot is captured.
+  /// @notice Emitted when sUSDSC TVL snapshot is captured (legacy; see EarnVaultTVLSnapshotCaptured).
   /// @param lastSusdscTVL         Latest sUSDSC vault TVL snapshot.
   /// @param lastSnapshotTimestamp Timestamp when the snapshot was captured.
   /// @param lastSnapshotBlockNumber Block number when the snapshot was captured.
   event SusdscTVLSnapshotCaptured(
     uint256 lastSusdscTVL, uint256 lastSnapshotTimestamp, uint256 lastSnapshotBlockNumber
+  );
+
+  /// @notice Emitted when both vault TVLs are captured (Phase 1: sUSDSC + EarnVault).
+  /// @param lastSusdscTVL         Latest sUSDSC vault TVL snapshot.
+  /// @param lastEarnTVL           Latest EarnVault TVL (totalPrincipal) snapshot.
+  /// @param lastSnapshotTimestamp Timestamp when the snapshot was captured.
+  /// @param lastSnapshotBlockNumber Block number when the snapshot was captured.
+  event EarnVaultTVLSnapshotCaptured(
+    uint256 lastSusdscTVL,
+    uint256 lastEarnTVL,
+    uint256 lastSnapshotTimestamp,
+    uint256 lastSnapshotBlockNumber
   );
 
   /// @notice Emitted when snapshot maximum age is updated.
