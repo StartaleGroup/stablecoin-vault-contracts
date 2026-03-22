@@ -208,25 +208,7 @@ contract RewardRedistributor is
     lastEarnTVL = earnVault.totalPrincipal();
     lastSnapshotTimestamp = block.timestamp;
     lastSnapshotBlockNumber = block.number;
-    emit IRewardRedistributorEventsAndErrors.SusdscTVLSnapshotCaptured(
-      lastSusdscTVL, lastSnapshotTimestamp, lastSnapshotBlockNumber
-    );
-    emit IRewardRedistributorEventsAndErrors.EarnVaultTVLSnapshotCaptured(
-      lastSusdscTVL, lastEarnTVL, lastSnapshotTimestamp, lastSnapshotBlockNumber
-    );
-  }
-
-  /// @notice Capture sUSDSC vault TVL for next distribution (legacy; prefer snapshotVaultTVLs).
-  /// @dev Kept for backward compatibility. New code should use snapshotVaultTVLs() to snapshot both vaults.
-  function snapshotSusdscTVL() external onlyRole(OPERATOR_ROLE) whenNotPaused {
-    lastSusdscTVL = susdscVault.totalAssets();
-    lastEarnTVL = earnVault.totalPrincipal();
-    lastSnapshotTimestamp = block.timestamp;
-    lastSnapshotBlockNumber = block.number;
-    emit IRewardRedistributorEventsAndErrors.SusdscTVLSnapshotCaptured(
-      lastSusdscTVL, lastSnapshotTimestamp, lastSnapshotBlockNumber
-    );
-    emit IRewardRedistributorEventsAndErrors.EarnVaultTVLSnapshotCaptured(
+    emit IRewardRedistributorEventsAndErrors.VaultTVLsSnapshotCaptured(
       lastSusdscTVL, lastEarnTVL, lastSnapshotTimestamp, lastSnapshotBlockNumber
     );
   }

@@ -58,7 +58,7 @@ contract RewardRedistributorTest is Test {
   function testConservationAndSplit() public {
     // Take snapshot first (needed for preview and distribute)
     vm.prank(operator);
-    rr.snapshotSusdscTVL();
+    rr.snapshotVaultTVLs();
     vm.roll(block.number + 1); // Advance to next block
 
     // pending yield: 100_000
@@ -129,7 +129,7 @@ contract RewardRedistributorTest is Test {
       ext.addPending(100); // 100 wei of USDSC - still tiny but avoids underflow
       // Take new snapshot for each distribution
       vm.prank(operator);
-      rr.snapshotSusdscTVL();
+      rr.snapshotVaultTVLs();
       vm.roll(block.number + 1); // Advance to next block
       vm.prank(operator);
       rr.distribute();
@@ -201,7 +201,7 @@ contract RewardRedistributorTest is Test {
     // Verify new operator can call distribute()
     ext.addPending(1000e6);
     vm.prank(newOperator);
-    rr.snapshotSusdscTVL();
+    rr.snapshotVaultTVLs();
     vm.roll(block.number + 1); // Advance to next block
     vm.prank(newOperator);
     rr.distribute(); // Should succeed
@@ -762,7 +762,7 @@ contract RewardRedistributorTest is Test {
 
       // Take new snapshot for each distribution
       vm.prank(operator);
-      rr.snapshotSusdscTVL();
+      rr.snapshotVaultTVLs();
       vm.roll(block.number + 1); // Advance to next block
       vm.prank(operator);
       rr.distribute();
@@ -887,7 +887,7 @@ contract RewardRedistributorTest is Test {
     // Test T_earn == 0: set EarnVault principal to 0 then snapshot so lastEarnTVL is 0
     earnV.setPrincipal(0);
     vm.prank(operator);
-    rr.snapshotSusdscTVL();
+    rr.snapshotVaultTVLs();
     vm.roll(block.number + 1);
     ext.addPending(20_000e6);
 
@@ -902,7 +902,7 @@ contract RewardRedistributorTest is Test {
     usdsc.burn(address(sVault), usdsc.balanceOf(address(sVault)));
 
     vm.prank(operator);
-    rr.snapshotSusdscTVL();
+    rr.snapshotVaultTVLs();
     vm.roll(block.number + 1);
 
     (,, toEarn, toYield,,, tEarn, tYield) = rr.previewDistribute();
@@ -1478,13 +1478,13 @@ contract RewardRedistributorTest is Test {
 
   /// @notice Helper to take snapshot in block N and advance to block N+1
   /// @dev This ensures snapshot and distribute are in separate transactions:
-  ///      - Transaction 1: snapshotSusdscTVL() in block N
+  ///      - Transaction 1: snapshotVaultTVLs() in block N
   ///      - Transaction 2: distribute() in block N+x (x >= 1)
   ///      Caller must still call distribute() separately after this helper, and must ensure that distribute() is called in a subsequent block (N+1, N+2, etc.), not in the same block as the snapshot. The block advanced by this helper is N+1, but the caller may advance further if needed, as long as the snapshot age is valid.
   function _takeSnapshotAndWait() internal {
     // Transaction 1: Take snapshot in current block
     vm.prank(operator);
-    rr.snapshotSusdscTVL();
+    rr.snapshotVaultTVLs();
 
     // Advance to next block so distribute() will be in a different block
     vm.roll(block.number + 1);
@@ -1492,54 +1492,55 @@ contract RewardRedistributorTest is Test {
 
   // ========== SNAPSHOT FUNCTIONALITY TESTS ==========
 
-  function test_SnapshotSusdscTVL_CapturesCorrectTVL() public {
+  function test_SnapshotVaultTVLs_CapturesCorrectTVL() public {
     uint256 initialTVL = sVault.totalAssets();
     assertEq(initialTVL, 1_000_000e6, 'Initial TVL should be 1M');
     uint256 currentBlock = block.number;
     uint256 currentTimestamp = block.timestamp;
 
     vm.prank(operator);
-    rr.snapshotSusdscTVL();
+    rr.snapshotVaultTVLs();
 
     assertEq(rr.lastSusdscTVL(), initialTVL, 'Snapshot should capture correct TVL');
     assertEq(rr.lastSnapshotTimestamp(), currentTimestamp, 'Snapshot should capture current timestamp');
     assertEq(rr.lastSnapshotBlockNumber(), currentBlock, 'Snapshot should capture current block number');
   }
 
-  function test_SnapshotSusdscTVL_EmitsEvent() public {
-    uint256 expectedTVL = sVault.totalAssets();
+  function test_SnapshotVaultTVLs_EmitsEvent() public {
+    uint256 expectedSusdscTVL = sVault.totalAssets();
+    uint256 expectedEarnTVL = earnV.totalPrincipal();
     uint256 expectedTimestamp = block.timestamp;
     uint256 expectedBlockNumber = block.number;
 
     vm.prank(operator);
     vm.expectEmit(true, true, true, true);
-    emit IRewardRedistributorEventsAndErrors.SusdscTVLSnapshotCaptured(
-      expectedTVL, expectedTimestamp, expectedBlockNumber
+    emit IRewardRedistributorEventsAndErrors.VaultTVLsSnapshotCaptured(
+      expectedSusdscTVL, expectedEarnTVL, expectedTimestamp, expectedBlockNumber
     );
-    rr.snapshotSusdscTVL();
+    rr.snapshotVaultTVLs();
   }
 
-  function test_SnapshotSusdscTVL_OnlyOperator() public {
+  function test_SnapshotVaultTVLs_OnlyOperator() public {
     address nonOperator = makeAddr('nonOperator');
 
     vm.prank(nonOperator);
     vm.expectRevert();
-    rr.snapshotSusdscTVL();
+    rr.snapshotVaultTVLs();
   }
 
-  function test_SnapshotSusdscTVL_RevertsWhenPaused() public {
+  function test_SnapshotVaultTVLs_RevertsWhenPaused() public {
     vm.prank(admin);
     rr.pause(true);
 
     vm.prank(operator);
     vm.expectRevert();
-    rr.snapshotSusdscTVL();
+    rr.snapshotVaultTVLs();
   }
 
-  function test_SnapshotSusdscTVL_UpdatesOnMultipleCalls() public {
+  function test_SnapshotVaultTVLs_UpdatesOnMultipleCalls() public {
     // First snapshot
     vm.prank(operator);
-    rr.snapshotSusdscTVL();
+    rr.snapshotVaultTVLs();
     uint256 firstTVL = rr.lastSusdscTVL();
     uint256 firstTimestamp = rr.lastSnapshotTimestamp();
 
@@ -1549,37 +1550,37 @@ contract RewardRedistributorTest is Test {
     // Second snapshot
     vm.warp(block.timestamp + 1 minutes);
     vm.prank(operator);
-    rr.snapshotSusdscTVL();
+    rr.snapshotVaultTVLs();
 
     assertEq(rr.lastSusdscTVL(), firstTVL + 500_000e6, 'Second snapshot should capture new TVL');
     assertGt(rr.lastSnapshotTimestamp(), firstTimestamp, 'Second snapshot should have later timestamp');
   }
 
-  function test_SnapshotSusdscTVL_InitialStateIsZero() public {
+  function test_SnapshotVaultTVLs_InitialStateIsZero() public {
     assertEq(rr.lastSusdscTVL(), 0, 'Initial snapshot TVL should be zero');
     assertEq(rr.lastSnapshotTimestamp(), 0, 'Initial snapshot timestamp should be zero');
   }
 
-  function test_SnapshotSusdscTVL_CapturesZeroTVL() public {
+  function test_SnapshotVaultTVLs_CapturesZeroTVL() public {
     // Remove all funds from vault
     uint256 vaultBalance = usdsc.balanceOf(address(sVault));
     usdsc.burn(address(sVault), vaultBalance);
     assertEq(sVault.totalAssets(), 0, 'Vault should have zero TVL');
 
     vm.prank(operator);
-    rr.snapshotSusdscTVL();
+    rr.snapshotVaultTVLs();
 
     assertEq(rr.lastSusdscTVL(), 0, 'Snapshot should capture zero TVL');
     assertEq(rr.lastSnapshotTimestamp(), block.timestamp, 'Snapshot should capture current timestamp');
   }
 
-  function test_SnapshotSusdscTVL_CapturesLargeTVL() public {
+  function test_SnapshotVaultTVLs_CapturesLargeTVL() public {
     // Add large amount to vault
     usdsc.mint(address(sVault), 100_000_000e6); // 100M
     assertEq(sVault.totalAssets(), 101_000_000e6, 'Vault should have 101M TVL');
 
     vm.prank(operator);
-    rr.snapshotSusdscTVL();
+    rr.snapshotVaultTVLs();
 
     assertEq(rr.lastSusdscTVL(), 101_000_000e6, 'Snapshot should capture large TVL');
   }
@@ -1647,7 +1648,7 @@ contract RewardRedistributorTest is Test {
   function test_Distribute_RevertsWhenSnapshotTooOld() public {
     // Take snapshot
     vm.prank(operator);
-    rr.snapshotSusdscTVL();
+    rr.snapshotVaultTVLs();
     uint256 snapshotTime = rr.lastSnapshotTimestamp();
 
     // Advance to next block first (required)
@@ -1672,7 +1673,7 @@ contract RewardRedistributorTest is Test {
   function test_Distribute_SucceedsWhenSnapshotWithinValidRange() public {
     // Take snapshot
     vm.prank(operator);
-    rr.snapshotSusdscTVL();
+    rr.snapshotVaultTVLs();
 
     // Advance to next block
     vm.roll(block.number + 1);
@@ -1690,7 +1691,7 @@ contract RewardRedistributorTest is Test {
   function test_Distribute_SucceedsAtMaxAgeBoundary() public {
     // Take snapshot
     vm.prank(operator);
-    rr.snapshotSusdscTVL();
+    rr.snapshotVaultTVLs();
     uint256 snapshotTime = rr.lastSnapshotTimestamp();
 
     // Advance to next block
@@ -1709,7 +1710,7 @@ contract RewardRedistributorTest is Test {
   function test_Distribute_RevertsWhenMaxAgeUpdatedAndSnapshotTooOld() public {
     // Take snapshot
     vm.prank(operator);
-    rr.snapshotSusdscTVL();
+    rr.snapshotVaultTVLs();
     uint256 snapshotTime = rr.lastSnapshotTimestamp();
 
     // Reduce max age to 1 hour
@@ -1748,7 +1749,7 @@ contract RewardRedistributorTest is Test {
   function test_Distribute_RevertsWhenSameBlock() public {
     // Take snapshot
     vm.prank(operator);
-    rr.snapshotSusdscTVL();
+    rr.snapshotVaultTVLs();
     uint256 snapshotBlock = rr.lastSnapshotBlockNumber();
 
     // Try to distribute in same block
@@ -1766,7 +1767,7 @@ contract RewardRedistributorTest is Test {
   function test_Distribute_SucceedsAfterNextBlock() public {
     // Take snapshot
     vm.prank(operator);
-    rr.snapshotSusdscTVL();
+    rr.snapshotVaultTVLs();
     uint256 snapshotBlock = rr.lastSnapshotBlockNumber();
 
     // Advance to next block
@@ -1786,7 +1787,7 @@ contract RewardRedistributorTest is Test {
   function test_Distribute_SucceedsAfterMultipleBlocks() public {
     // Take snapshot
     vm.prank(operator);
-    rr.snapshotSusdscTVL();
+    rr.snapshotVaultTVLs();
     uint256 snapshotBlock = rr.lastSnapshotBlockNumber();
 
     // Advance multiple blocks (x > 1)
@@ -1810,7 +1811,7 @@ contract RewardRedistributorTest is Test {
 
     // Take snapshot
     vm.prank(operator);
-    rr.snapshotSusdscTVL();
+    rr.snapshotVaultTVLs();
     uint256 snapshotTVL = rr.lastSusdscTVL();
     uint256 snapshotTime = rr.lastSnapshotTimestamp();
     assertEq(snapshotTVL, 10_000_000e6, 'Snapshot should capture 10M TVL');
@@ -1841,7 +1842,7 @@ contract RewardRedistributorTest is Test {
 
     // Take snapshot with 10M TVL
     vm.prank(operator);
-    rr.snapshotSusdscTVL();
+    rr.snapshotVaultTVLs();
     uint256 snapshotTVL = rr.lastSusdscTVL();
     assertEq(snapshotTVL, 10_000_000e6, 'Snapshot should capture 10M TVL');
 
@@ -1874,7 +1875,7 @@ contract RewardRedistributorTest is Test {
 
     // Step 1: Operator takes snapshot in block N
     vm.prank(operator);
-    rr.snapshotSusdscTVL();
+    rr.snapshotVaultTVLs();
     uint256 snapshotTVL = rr.lastSusdscTVL();
     uint256 snapshotTime = rr.lastSnapshotTimestamp();
     assertEq(snapshotTVL, 10_000_000e6, 'Snapshot should capture 10M TVL');
@@ -1912,7 +1913,7 @@ contract RewardRedistributorTest is Test {
     assertEq(sVault.totalAssets(), 10_000_000e6, 'sUSDSC TVL 10M');
 
     vm.prank(operator);
-    rr.snapshotSusdscTVL();
+    rr.snapshotVaultTVLs();
     uint256 earnSnapshot = rr.lastEarnTVL();
     assertEq(earnSnapshot, 1_000_000e6, 'Snapshot should capture 1M EarnVault');
 
@@ -1965,7 +1966,7 @@ contract RewardRedistributorTest is Test {
 
     // Operator workflow: snapshot first
     vm.prank(operator);
-    rr.snapshotSusdscTVL();
+    rr.snapshotVaultTVLs();
     uint256 snapshotTime = rr.lastSnapshotTimestamp();
     uint256 snapshotTVL = rr.lastSusdscTVL();
 
@@ -2004,7 +2005,7 @@ contract RewardRedistributorTest is Test {
 
     // First distribution cycle
     vm.prank(operator);
-    rr.snapshotSusdscTVL();
+    rr.snapshotVaultTVLs();
     uint256 firstSnapshotTime = rr.lastSnapshotTimestamp();
     uint256 firstSnapshotBlock = rr.lastSnapshotBlockNumber();
     vm.roll(block.number + 1); // Advance to next block
@@ -2025,7 +2026,7 @@ contract RewardRedistributorTest is Test {
 
     // Take new snapshot for third distribution
     vm.prank(operator);
-    rr.snapshotSusdscTVL();
+    rr.snapshotVaultTVLs();
     vm.roll(block.number + 1); // Advance to next block
 
     vm.prank(operator);
@@ -2040,7 +2041,7 @@ contract RewardRedistributorTest is Test {
 
     // Operator takes snapshot
     vm.prank(operator);
-    rr.snapshotSusdscTVL();
+    rr.snapshotVaultTVLs();
     uint256 snapshotTime = rr.lastSnapshotTimestamp();
     uint256 snapshotTVL = rr.lastSusdscTVL();
 
@@ -2093,24 +2094,25 @@ contract RewardRedistributorTest is Test {
 
   // ========== EVENT EMISSION TESTS ==========
 
-  function test_Events_SusdscTVLSnapshotCaptured_EmitsCorrectParameters() public {
-    uint256 expectedTVL = sVault.totalAssets();
+  function test_Events_VaultTVLsSnapshotCaptured_EmitsCorrectParameters() public {
+    uint256 expectedSusdscTVL = sVault.totalAssets();
+    uint256 expectedEarnTVL = earnV.totalPrincipal();
     uint256 expectedTimestamp = block.timestamp;
     uint256 expectedBlockNumber = block.number;
 
     vm.recordLogs();
     vm.prank(operator);
-    rr.snapshotSusdscTVL();
+    rr.snapshotVaultTVLs();
 
     Vm.Log[] memory logs = vm.getRecordedLogs();
-    // Phase 1: snapshot emits SusdscTVLSnapshotCaptured + EarnVaultTVLSnapshotCaptured
-    assertGe(logs.length, 1, 'Should emit at least one event');
-    // Decode first event (SusdscTVLSnapshotCaptured: 3 args)
+    assertEq(logs.length, 1, 'Should emit exactly one event (VaultTVLsSnapshotCaptured)');
+    // Decode VaultTVLsSnapshotCaptured (4 args: lastSusdscTVL, lastEarnTVL, timestamp, blockNumber)
     bytes memory eventData = logs[0].data;
-    (uint256 capturedTVL, uint256 capturedTimestamp, uint256 capturedBlockNumber) =
-      abi.decode(eventData, (uint256, uint256, uint256));
+    (uint256 capturedSusdscTVL, uint256 capturedEarnTVL, uint256 capturedTimestamp, uint256 capturedBlockNumber) =
+      abi.decode(eventData, (uint256, uint256, uint256, uint256));
 
-    assertEq(capturedTVL, expectedTVL, 'Event should contain correct TVL');
+    assertEq(capturedSusdscTVL, expectedSusdscTVL, 'Event should contain correct sUSDSC TVL');
+    assertEq(capturedEarnTVL, expectedEarnTVL, 'Event should contain correct EarnVault TVL');
     assertEq(capturedTimestamp, expectedTimestamp, 'Event should contain correct timestamp');
     assertEq(capturedBlockNumber, expectedBlockNumber, 'Event should contain correct block number');
   }
@@ -2118,18 +2120,18 @@ contract RewardRedistributorTest is Test {
   function test_Events_MultipleSnapshots_EmitsMultipleEvents() public {
     vm.recordLogs();
 
-    // First snapshot (emits SusdscTVLSnapshotCaptured + EarnVaultTVLSnapshotCaptured)
+    // First snapshot
     vm.prank(operator);
-    rr.snapshotSusdscTVL();
+    rr.snapshotVaultTVLs();
 
     vm.warp(block.timestamp + 1 minutes);
 
     // Second snapshot
     vm.prank(operator);
-    rr.snapshotSusdscTVL();
+    rr.snapshotVaultTVLs();
 
     Vm.Log[] memory logs = vm.getRecordedLogs();
-    assertEq(logs.length, 4, 'Should emit two events per snapshot (legacy + EarnVaultTVLSnapshotCaptured)');
+    assertEq(logs.length, 2, 'Should emit one VaultTVLsSnapshotCaptured event per snapshot');
   }
 
   // ========== COMPREHENSIVE ERROR TESTS ==========
@@ -2148,7 +2150,7 @@ contract RewardRedistributorTest is Test {
 
   function test_Errors_MustSnapshotInPreviousBlocks_SameBlock() public {
     vm.prank(operator);
-    rr.snapshotSusdscTVL();
+    rr.snapshotVaultTVLs();
     uint256 snapshotBlock = rr.lastSnapshotBlockNumber();
 
     ext.addPending(100_000e6);
@@ -2168,7 +2170,7 @@ contract RewardRedistributorTest is Test {
     // This shouldn't happen in practice, but test that snapshot works
     vm.warp(0);
     vm.prank(operator);
-    rr.snapshotSusdscTVL();
+    rr.snapshotVaultTVLs();
 
     assertEq(rr.lastSnapshotTimestamp(), 0, 'Snapshot timestamp should be 0');
     assertEq(rr.lastSusdscTVL(), sVault.totalAssets(), 'Snapshot TVL should be correct');
@@ -2178,7 +2180,7 @@ contract RewardRedistributorTest is Test {
     // Test snapshot at very large timestamp
     vm.warp(type(uint256).max - 1000);
     vm.prank(operator);
-    rr.snapshotSusdscTVL();
+    rr.snapshotVaultTVLs();
 
     assertEq(rr.lastSnapshotTimestamp(), type(uint256).max - 1000, 'Snapshot timestamp should be correct');
   }
@@ -2186,12 +2188,12 @@ contract RewardRedistributorTest is Test {
   function test_EdgeCase_MultipleSnapshotsBeforeDistribution() public {
     // Take multiple snapshots, only last one matters
     vm.prank(operator);
-    rr.snapshotSusdscTVL();
+    rr.snapshotVaultTVLs();
     uint256 firstSnapshotBlock = rr.lastSnapshotBlockNumber();
 
     vm.roll(block.number + 1);
     vm.prank(operator);
-    rr.snapshotSusdscTVL();
+    rr.snapshotVaultTVLs();
     uint256 secondSnapshotBlock = rr.lastSnapshotBlockNumber();
 
     // Distribution should use second snapshot
@@ -2213,7 +2215,7 @@ contract RewardRedistributorTest is Test {
 
     // Take snapshot
     vm.prank(operator);
-    rr.snapshotSusdscTVL();
+    rr.snapshotVaultTVLs();
     uint256 snapshotTVL = rr.lastSusdscTVL();
     assertEq(snapshotTVL, 10_000_000e6, 'Snapshot should capture 10M TVL');
 
@@ -2232,11 +2234,11 @@ contract RewardRedistributorTest is Test {
     // Note: previewDistribute doesn't validate snapshot age, it just uses the snapshot TVL
   }
 
-  function test_SnapshotSusdscTVL_CapturesBlockNumberCorrectly() public {
+  function test_SnapshotVaultTVLs_CapturesBlockNumberCorrectly() public {
     uint256 blockBefore = block.number;
 
     vm.prank(operator);
-    rr.snapshotSusdscTVL();
+    rr.snapshotVaultTVLs();
 
     assertEq(rr.lastSnapshotBlockNumber(), blockBefore, 'Should capture block number correctly');
 
@@ -2245,7 +2247,7 @@ contract RewardRedistributorTest is Test {
     uint256 blockBefore2 = block.number;
 
     vm.prank(operator);
-    rr.snapshotSusdscTVL();
+    rr.snapshotVaultTVLs();
 
     assertEq(rr.lastSnapshotBlockNumber(), blockBefore2, 'Should capture new block number');
     assertGt(rr.lastSnapshotBlockNumber(), blockBefore, 'Block number should increase');

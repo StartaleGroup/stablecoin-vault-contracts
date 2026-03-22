@@ -95,7 +95,7 @@ net = minted - feeToStartale
 
 S_base = IERC20(USDSC_ADDRESS).totalSupply() - minted  // For actual distribution
 
-// TVL calculations (Phase 1: both from snapshot — use snapshotVaultTVLs() or snapshotSusdscTVL())
+// TVL calculations (Phase 1: both from snapshot — use snapshotVaultTVLs())
 T_earn = lastEarnTVL
 T_yield = lastSusdscTVL
 
@@ -215,13 +215,13 @@ Each setter function emits its corresponding event, making it easy to track indi
 
 ### EarnVault Integration
 
-- **TVL Source**: Snapshot `lastEarnTVL` (captured by `snapshotVaultTVLs()` or `snapshotSusdscTVL()`). Phase 1: split uses snapshot to prevent JIT inflating `toEarn`.
+- **TVL Source**: Snapshot `lastEarnTVL` (captured by `snapshotVaultTVLs()`). Phase 1: split uses snapshot to prevent JIT inflating `toEarn`.
 - **Yield Delivery**: Transfer → `earnVault.onYield(amount)`
 - **Funding Invariant**: Must maintain sufficient balance for claims
 
 ### sUSDSC Vault Integration
 
-- **TVL Source**: Snapshot `lastSusdscTVL` (captured by `snapshotVaultTVLs()` or `snapshotSusdscTVL()`).
+- **TVL Source**: Snapshot `lastSusdscTVL` (captured by `snapshotVaultTVLs()`).
 - **Yield Delivery**: Raw transfer (increases PPS)
 - **ERC-4626 Standard**: Standard vault interface
 
@@ -380,7 +380,7 @@ The RewardRedistributor has comprehensive test coverage including:
 
 ### Phase 1: EarnVault TVL snapshot (JIT mitigation)
 
-**Fix**: Snapshot both vault TVLs for the split. Added `lastEarnTVL`; `snapshotVaultTVLs()` (and `snapshotSusdscTVL()`) now capture both sUSDSC and EarnVault TVL. `_calculateSplit()` uses `lastEarnTVL` for `T_earn` instead of live `earnVault.totalPrincipal()`. This prevents a just-in-time deposit into EarnVault from inflating `toEarn`; the split is based on snapshot only. Operator runbook updated to prefer `snapshotVaultTVLs()` and to minimise the window between snapshot and distribute.
+**Fix**: Snapshot both vault TVLs for the split. Added `lastEarnTVL`; `snapshotVaultTVLs()` now captures both sUSDSC and EarnVault TVL. `_calculateSplit()` uses `lastEarnTVL` for `T_earn` instead of live `earnVault.totalPrincipal()`. This prevents a just-in-time deposit into EarnVault from inflating `toEarn`; the split is based on snapshot only. Operator runbook updated to minimise the window between snapshot and distribute.
 
 ### External claimYield() Handling Fix
 

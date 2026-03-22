@@ -51,20 +51,12 @@ interface IRewardRedistributorEventsAndErrors {
   /// @param fee_on_yield_bps  New fee on yield (bps).
   event FeeUpdated(uint16 fee_on_yield_bps);
 
-  /// @notice Emitted when sUSDSC TVL snapshot is captured (legacy; see EarnVaultTVLSnapshotCaptured).
-  /// @param lastSusdscTVL         Latest sUSDSC vault TVL snapshot.
-  /// @param lastSnapshotTimestamp Timestamp when the snapshot was captured.
-  /// @param lastSnapshotBlockNumber Block number when the snapshot was captured.
-  event SusdscTVLSnapshotCaptured(
-    uint256 lastSusdscTVL, uint256 lastSnapshotTimestamp, uint256 lastSnapshotBlockNumber
-  );
-
-  /// @notice Emitted when both vault TVLs are captured (Phase 1: sUSDSC + EarnVault).
+  /// @notice Emitted when both vault TVLs are captured by snapshotVaultTVLs().
   /// @param lastSusdscTVL         Latest sUSDSC vault TVL snapshot.
   /// @param lastEarnTVL           Latest EarnVault TVL (totalPrincipal) snapshot.
   /// @param lastSnapshotTimestamp Timestamp when the snapshot was captured.
   /// @param lastSnapshotBlockNumber Block number when the snapshot was captured.
-  event EarnVaultTVLSnapshotCaptured(
+  event VaultTVLsSnapshotCaptured(
     uint256 lastSusdscTVL,
     uint256 lastEarnTVL,
     uint256 lastSnapshotTimestamp,
