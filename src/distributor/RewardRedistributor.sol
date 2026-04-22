@@ -96,7 +96,7 @@ contract RewardRedistributor is
   uint256 public lastSnapshotTimestamp;
 
   /// @dev Maximum age for snapshot validity (e.g., 4 hours).
-  uint256 public snapshotMaxAge = 4 hours;
+  uint256 public snapshotMaxAge = 15 minutes;
 
   /// @notice Initializes the redistributor.
   /// @param usdscAddress    USDSC token address (implements both IERC20 and IMYieldToOne interfaces).
