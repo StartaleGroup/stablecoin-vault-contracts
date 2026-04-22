@@ -95,7 +95,7 @@ contract RewardRedistributor is
   /// @dev Latest snapshot timestamp.
   uint256 public lastSnapshotTimestamp;
 
-  /// @dev Maximum age for snapshot validity (e.g., 4 hours).
+  /// @dev Maximum age for snapshot validity (default: 5 minutes).
   uint256 public snapshotMaxAge = 5 minutes;
 
   /// @notice Initializes the redistributor.

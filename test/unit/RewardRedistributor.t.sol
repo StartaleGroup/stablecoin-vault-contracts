@@ -1588,7 +1588,7 @@ contract RewardRedistributorTest is Test {
   // ========== SNAPSHOT MAX AGE TESTS ==========
 
   function test_SetSnapshotMaxAge_DefaultValue() public {
-    assertEq(rr.snapshotMaxAge(), 4 hours, 'Default should be 4 hours');
+    assertEq(rr.snapshotMaxAge(), 5 minutes, 'Default should be 5 minutes');
   }
 
   function test_SetSnapshotMaxAge_CanSetToMinimum() public {
@@ -1653,8 +1653,8 @@ contract RewardRedistributorTest is Test {
 
     // Advance to next block first (required)
     vm.roll(block.number + 1);
-    // Advance time past max age (4 hours default)
-    vm.warp(snapshotTime + 4 hours + 1 seconds);
+    // Advance time past max age (5 minutes default)
+    vm.warp(snapshotTime + 5 minutes + 1 seconds);
 
     ext.addPending(100_000e6);
 
@@ -1662,8 +1662,8 @@ contract RewardRedistributorTest is Test {
       abi.encodeWithSelector(
         IRewardRedistributorEventsAndErrors.SnapshotTooOld.selector,
         snapshotTime,
-        snapshotTime + 4 hours + 1 seconds,
-        4 hours
+        snapshotTime + 5 minutes + 1 seconds,
+        5 minutes
       )
     );
     vm.prank(operator);
@@ -1674,11 +1674,12 @@ contract RewardRedistributorTest is Test {
     // Take snapshot
     vm.prank(operator);
     rr.snapshotVaultTVLs();
+    uint256 snapshotTime = rr.lastSnapshotTimestamp();
 
     // Advance to next block
     vm.roll(block.number + 1);
     // Advance time to middle of valid range (before max age)
-    vm.warp(block.timestamp + 2 hours);
+    vm.warp(snapshotTime + 2 minutes);
 
     ext.addPending(100_000e6);
 
@@ -1697,7 +1698,7 @@ contract RewardRedistributorTest is Test {
     // Advance to next block
     vm.roll(block.number + 1);
     // Advance time to exactly max age
-    vm.warp(snapshotTime + 4 hours);
+    vm.warp(snapshotTime + 5 minutes);
 
     ext.addPending(100_000e6);
 
@@ -1719,7 +1720,7 @@ contract RewardRedistributorTest is Test {
 
     // Advance to next block first (required)
     vm.roll(block.number + 1);
-    // Advance time past new max age (1 hour) but within old max age (4 hours)
+    // Advance time past the updated snapshot max age (1 hour)
     vm.warp(snapshotTime + 1 hours + 1 seconds);
 
     ext.addPending(100_000e6);
