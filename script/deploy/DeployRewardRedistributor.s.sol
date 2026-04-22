@@ -133,8 +133,8 @@ contract DeployRewardRedistributor is Script, DeployHelpers {
     console.log('Initial lastSnapshotBlockNumber = 0: OK');
     require(rewardRedistributor.lastSnapshotTimestamp() == 0, 'Initial lastSnapshotTimestamp should be 0');
     console.log('Initial lastSnapshotTimestamp = 0: OK');
-    require(rewardRedistributor.snapshotMaxAge() == 15 minutes, 'snapshotMaxAge should be 15 minutes');
-    console.log('snapshotMaxAge = 15 minutes: OK');
+    require(rewardRedistributor.snapshotMaxAge() == 5 minutes, 'snapshotMaxAge should be 15 minutes');
+    console.log('snapshotMaxAge = 5 minutes: OK');
 
     console.log('\n=== All Verifications Passed ===');
   }
