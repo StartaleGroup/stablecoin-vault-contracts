@@ -24,7 +24,7 @@ contract DeployRewardRedistributor is Script, DeployHelpers {
   RewardRedistributor public rewardRedistributor;
 
   // Salt for CREATE3 deployment
-  string public constant CONTRACT_NAME = 'RewardRedistributor_112025';
+  string public constant CONTRACT_NAME = 'RewardRedistributor_042226';
 
   function setUp() public {
     // Load environment variables
@@ -133,8 +133,8 @@ contract DeployRewardRedistributor is Script, DeployHelpers {
     console.log('Initial lastSnapshotBlockNumber = 0: OK');
     require(rewardRedistributor.lastSnapshotTimestamp() == 0, 'Initial lastSnapshotTimestamp should be 0');
     console.log('Initial lastSnapshotTimestamp = 0: OK');
-    require(rewardRedistributor.snapshotMaxAge() == 4 hours, 'snapshotMaxAge should be 4 hours');
-    console.log('snapshotMaxAge = 4 hours: OK');
+    require(rewardRedistributor.snapshotMaxAge() == 5 minutes, 'snapshotMaxAge should be 15 minutes');
+    console.log('snapshotMaxAge = 5 minutes: OK');
 
     console.log('\n=== All Verifications Passed ===');
   }

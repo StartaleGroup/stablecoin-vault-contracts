@@ -8,36 +8,35 @@ This document describes the standard operating procedures for the operator role 
 
 ### Normal Distribution Cycle
 
-1. **Take Snapshot** (`snapshotSusdscTVL()`)
-   - Call this first to capture the current sUSDSC vault TVL, timestamp, and block number
+1. **Take Snapshot** (`snapshotVaultTVLs()`)
+   - Call this first to capture **both** EarnVault and sUSDSC vault TVLs, timestamp, and block number
    - Must be called by operator with `OPERATOR_ROLE`
    - Contract must not be paused
-   - Emits `SusdscTVLSnapshotCaptured` event with TVL, timestamp, and block number
+   - Emits `VaultTVLsSnapshotCaptured` with TVLs, timestamp, block number
 
-2. **Wait for Next Block**
+2. **Wait for Next Block — minimise window**
    - **Requirement**: Must be in a different block than the snapshot (block.number > lastSnapshotBlockNumber)
-   - This prevents same-block TVL manipulation attacks
-   - You can check `lastSnapshotBlockNumber()` to see which block the snapshot was taken in
+   - **Best practice:** Call `distribute()` in the **next block** (or as soon as possible after) to minimise the window for post-snapshot deposits
+   - This prevents same-block TVL manipulation and reduces JIT capture opportunity
    - Current block number must be `> lastSnapshotBlockNumber`
-   - **Note**: This is a block-based requirement, not a time-based wait
 
 3. **Distribute Yield** (`distribute()`)
-   - Call after snapshot is in a previous block
+   - Call after snapshot is in a previous block (ideally next block)
    - Must be called by operator with `OPERATOR_ROLE`
    - Contract must not be paused
-   - Automatically claims yield from extension and distributes to vaults
+   - Automatically claims yield from extension and distributes to vaults using **snapshot** TVLs for the split
    - Emits `Distributed` event
 
 4. **Repeat for Next Cycle**
-   - For each new distribution, take a fresh snapshot first
+   - For each new distribution, take a fresh snapshot first (`snapshotVaultTVLs()`)
    - Wait for next block, then distribute
 
 ### Example Timeline
 
 ```
-Block N:   snapshotSusdscTVL()     [Snapshot taken in block N]
-Block N+1: distribute()            [Distribution succeeds in next block]
-Block M:   snapshotSusdscTVL()     [New snapshot for next distribution]
+Block N:   snapshotVaultTVLs()     [Snapshot both vaults in block N]
+Block N+1: distribute()            [Distribution in next block — minimal window]
+Block M:   snapshotVaultTVLs()     [New snapshot for next distribution]
 Block M+1: distribute()            [Next distribution]
 ```
 
@@ -65,12 +64,12 @@ Error: LastSnapshotInvalid()
 - `lastSnapshotTimestamp` is 0 or `lastSnapshotBlockNumber` is 0
 
 **Recovery:**
-1. Call `snapshotSusdscTVL()` immediately
+1. Call `snapshotVaultTVLs()` immediately
 2. Wait for next block (advance to block.number + 1)
 3. Call `distribute()`
 
 **Prevention:**
-- Always take snapshot before distributing
+- Always take snapshot before distributing (`snapshotVaultTVLs()`)
 - Use monitoring to alert if `lastSnapshotTimestamp == 0` or `lastSnapshotBlockNumber == 0`
 
 ---
@@ -110,7 +109,7 @@ Error: SnapshotTooOld(<snapshot_timestamp>, <current_timestamp>, <max_age>)
 - Snapshot is stale and no longer valid
 
 **Recovery:**
-1. Call `snapshotSusdscTVL()` to take a fresh snapshot
+1. Call `snapshotVaultTVLs()` to take a fresh snapshot
 2. Wait for next block
 3. Call `distribute()`
 
@@ -130,11 +129,11 @@ Error: EnforcedPause()
 
 **Cause:**
 - Admin paused the contract
-- Both `snapshotSusdscTVL()` and `distribute()` require contract to be unpaused
+- Both `snapshotVaultTVLs()` and `distribute()` require contract to be unpaused
 
 **Recovery:**
 1. Contact admin to unpause: `pause(false)`
-2. After unpause, take fresh snapshot: `snapshotSusdscTVL()`
+2. After unpause, take fresh snapshot: `snapshotVaultTVLs()`
 3. Wait for next block
 4. Call `distribute()`
 
@@ -154,7 +153,7 @@ Error: AccessControlUnauthorizedAccount(<operator_address>, OPERATOR_ROLE)
 
 **Cause:**
 - Admin revoked operator's `OPERATOR_ROLE`
-- Operator can no longer call `snapshotSusdscTVL()` or `distribute()`
+- Operator can no longer call `snapshotVaultTVLs()` or `distribute()`
 
 **Recovery:**
 1. Contact admin to restore `OPERATOR_ROLE`
@@ -311,7 +310,7 @@ Error: YieldRecipientChanged(<current_recipient>)
 
 **Recovery:**
 1. Admin unpauses: `pause(false)`
-2. Operator takes fresh snapshot: `snapshotSusdscTVL()`
+2. Operator takes fresh snapshot: `snapshotVaultTVLs()`
 3. Wait for next block
 4. Distribute: `distribute()`
 
@@ -476,7 +475,8 @@ if (minted > 0) {
 
 ### Function Call Order
 ```
-1. snapshotSusdscTVL()  [Wait for next block]  2. distribute()
+1. snapshotVaultTVLs()  [Wait for next block — minimise window]
+2. distribute()
 ```
 
 ### Block Requirements

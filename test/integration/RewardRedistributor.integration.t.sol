@@ -122,7 +122,7 @@ contract RewardRedistributorIntegrationTest is Test {
   /// @notice Helper to take snapshot and wait for next block
   function _takeSnapshotAndWait() internal {
     vm.prank(operator);
-    rr.snapshotSusdscTVL();
+    rr.snapshotVaultTVLs();
     vm.roll(block.number + 1); // Advance to next block
   }
 
@@ -661,7 +661,7 @@ contract RewardRedistributorIntegrationTest is Test {
 
     // Take snapshot for the new redistributor
     vm.prank(operator);
-    rrEmpty.snapshotSusdscTVL();
+    rrEmpty.snapshotVaultTVLs();
     vm.roll(block.number + 1); // Advance to next block
 
     uint256 startaleBalanceBefore = usdsc.balanceOf(startale);
