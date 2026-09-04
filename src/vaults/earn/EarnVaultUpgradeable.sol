@@ -497,7 +497,7 @@ contract EarnVaultUpgradeable is
     return $.isBlacklisted[user];
   }
 
-  function claimable(address user) external view returns (uint256) {
+  function claimable(address user) external view virtual returns (uint256) {
     EarnVaultStorage storage $ = _getStorage();
     uint256 p = $.principal[user];
     if (p == 0) return $.accrued[user];
@@ -512,7 +512,7 @@ contract EarnVaultUpgradeable is
   }
 
   /// @notice Get user's total value (principal + claimable interest)
-  function totalValue(address user) external view returns (uint256) {
+  function totalValue(address user) external view virtual returns (uint256) {
     EarnVaultStorage storage $ = _getStorage();
     uint256 p = $.principal[user];
     return p + this.claimable(user);
@@ -522,6 +522,7 @@ contract EarnVaultUpgradeable is
   function getUserInfo(address user)
     external
     view
+    virtual
     returns (uint256 userPrincipal, uint256 userClaimable, uint256 userTotal, uint256 userLastIndex)
   {
     EarnVaultStorage storage $ = _getStorage();
@@ -584,6 +585,7 @@ contract EarnVaultUpgradeable is
   function getAllClaimables(address user)
     external
     view
+    virtual
     returns (uint256 usdscClaimable, address[] memory boostTokens, uint256[] memory boostAmounts)
   {
     EarnVaultStorage storage $ = _getStorage();
@@ -618,7 +620,7 @@ contract EarnVaultUpgradeable is
   /// @dev Internal helper to handle deposit logic (shared by deposit() and depositWithPermit())
   /// @param user Address of the user depositing
   /// @param amount Amount of USDSC tokens to deposit
-  function _deposit(address user, uint256 amount) internal {
+  function _deposit(address user, uint256 amount) internal virtual {
     EarnVaultStorage storage $ = _getStorage();
     _settle(user);
 
