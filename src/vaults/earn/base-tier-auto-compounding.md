@@ -140,3 +140,28 @@ One operational refinement, not a blocker: very small (dust) accounts may cost m
 The "cold" row is not a recurring cost — it only applies the *first* time a given (user, token) pair is ever settled after a boost token becomes active (Ethereum's zero→non-zero `SSTORE` penalty on `userBoostIndex`/`userBoostAccrued`, paid once, ever, per pair — this part of the cost genuinely doesn't recur, unlike the EIP-2929 cold-access portion, which does). Every subsequent daily run for that population hits the "steady state" row instead. So the realistic ongoing operational cost is **~56 batched transactions/day** at current population size with boost tokens active (or as few as 23 if no boost tokens are active that cycle) — still comfortably cheap in absolute terms on an L2 with a 2-second block time and low gas prices, just meaningfully more than the originally-cited (optimistic) 15/7. Filtering the batch to only addresses with `pendingYield(user) > 0` before submitting (skip no-ops) shrinks this further in practice, since not all 31,799 wallets are passive.
 
 Not estimated here, and explicitly out of scope for this note: L1 data-posting cost. OP Stack chains post batch calldata to Ethereum L1 separately from the L2 execution gas counted above, priced independently. Get a live quote from Soneium's fee estimation before finalizing production batch sizes, and consider packing addresses tightly (20 bytes, manually decoded, instead of ABI's 32-byte-padded encoding) to reduce both L2 calldata gas and L1 data-posting cost for a given batch.
+
+## Batch-shrinking: off-chain filtering vs. an on-chain skip layer (2026-09-08)
+
+Two complementary but distinct levers for shrinking the real daily `compoundMany()` cost below the worst-case numbers above — not implemented yet, both are follow-ups, not blockers. Precision on what each one actually buys, since they solve different problems:
+
+**Off-chain filtering (the one that matters for calldata/L1 cost).** Before building each day's batch, filter to only addresses with genuine pending yield — checkable off-chain via `pendingYield(user) > 0` (equivalently, `globalIndex > userIndex[user]`). This is the *only* lever that shrinks the actual submitted array, and therefore the only lever that reduces L2 calldata gas and L1 data-posting cost — the cost this doc explicitly flags as unestimated and worth a live check. Two things worth querying against real population data before assuming the full 31,799-wallet count needs daily keeper coverage:
+- A user who already interacted with the vault today (deposit/withdraw/claim) already self-compounded via their own transaction — they don't need the keeper at all that cycle.
+- "How many of the 31,799 wallets are actually passive" is an open, checkable question (e.g. via a last-interaction-timestamp query across the population) — the real daily `compoundMany` count is very plausibly substantially smaller than the full wallet count, not just smaller by the dust-account fraction.
+
+**On-chain skip logic (a safety net, not a replacement).** Even with good off-chain filtering, there's a staleness window between when the batch list is built and when the transaction lands — a user could deposit in that gap, or get included in two overlapping keeper batches by mistake. `compoundMany()` already skips (doesn't revert on) blacklisted or zero-pending addresses; the same reasoning extends to an already-settled address slipping into a batch. Sketch of a tighter, explicit early-skip (not yet implemented):
+
+```solidity
+function compoundMany(address[] calldata users) external whenNotPaused nonReentrant {
+  EarnVaultStorage storage $ = _getStorage();
+  uint256 gi = $.globalIndex; // read once, reused for the whole batch - not re-read per user
+  for (uint256 i = 0; i < users.length; i++) {
+    address user = users[i];
+    if ($.userIndex[user] >= gi) continue; // already settled - skip before touching anything else
+    if ($.isBlacklisted[user]) continue;   // skip, don't revert the whole batch over one entry
+    // ... existing boost-settle + principal-fold logic, using the cached `gi` ...
+  }
+}
+```
+
+**Correct the gas accounting before treating this as a big win.** `_settle()` already partially self-skips today: when `globalIndex == userIndex[user]`, the `if (gi > ui)` branch never runs, so an already-settled user avoids the `principal`/`totalPrincipal` writes regardless of whether there's an explicit early check. Going through the *existing* logic, an already-settled user in a batch costs roughly: blacklist check (~2,100) + `principal` SLOAD (~2,100) + `userIndex` SLOAD (~2,100) + a near-free no-op `userIndex` rewrite (~100) ≈ **~4,500 gas**, not the full per-user cost of an actual fold. An explicit early check (the sketch above) gets an already-settled user down to **~2,100 gas** — just the one `userIndex` read needed to make the skip decision, before touching `principal` or the blacklist mapping at all. Real, but roughly half, not the dramatic saving it might sound like at first — precisely because `_settle`'s existing structure already avoids the expensive part (the actual `principal`/`totalPrincipal` SSTOREs). The bigger lever for cost reduction remains the off-chain filtering above, since that's what actually shrinks the array and the calldata.
