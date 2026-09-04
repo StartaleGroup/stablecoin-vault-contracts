@@ -113,13 +113,13 @@ The first pass at this implementation edited `EarnVaultUpgradeable.sol` (V1) dir
 
 Between two `onYield()` calls, `globalIndex` doesn't move, so `owed` is zero and compounding in that window is a wasted transaction that still costs gas — the ceiling on usefulness is once per `onYield()` cycle (currently 3 hours), not a floor. But going anywhere near that ceiling buys almost nothing: compounding frequency has strongly diminishing returns relative to the underlying yield rate. At a representative 6% APR:
 
-| Compounding interval | Effective annual yield |
-|---|---|
-| Continuous (theoretical limit) | 6.1837% |
-| Every 3 hours (matching `onYield`) | 6.1826% |
-| Daily | 6.1831% |
-| Weekly | 6.1755% |
-| Monthly | 6.1520% |
+| Compounding interval | n (times/year) | Effective annual yield | vs. continuous |
+|---|---|---|---|
+| Continuous | ∞ | 6.18365% | — |
+| Every 3 hours | 2,920 | 6.18359% | −0.006 bps |
+| Daily | 365 | 6.18313% | −0.052 bps |
+| Weekly | 52 | 6.18000% | −0.365 bps |
+| Monthly | 12 | 6.16778% | −1.587 bps |
 
 Daily vs. every-3-hours differs in the fifth decimal place. **Recommendation: run the keeper daily, not every 3 hours** — it captures essentially all of the compounding benefit while cutting keeper transaction volume 8x. Weekly is defensible too if gas cost matters more than the extra ~1bps/year. This has nothing to do with correctly capturing yield — that stays `onYield()`'s job at whatever cadence the redistributor already uses. Active users (anyone who deposits/withdraws/claims) already compound for free via their own transactions calling `_settle()`; the keeper's cadence only matters for the passive segment.
 
