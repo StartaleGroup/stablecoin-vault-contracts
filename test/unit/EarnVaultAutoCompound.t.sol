@@ -12,6 +12,7 @@ import {ITransparentUpgradeableProxy} from '@openzeppelin/contracts/proxy/transp
 import {ERC1967Proxy} from '@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol';
 import {IERC20Permit} from '@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol';
 import {Test} from 'forge-std/Test.sol';
+import {Vm} from 'forge-std/Vm.sol';
 import {console2} from 'forge-std/console2.sol';
 
 /// @title EarnVault auto-compounding (base-tier, V2) tests
@@ -238,6 +239,42 @@ contract EarnVaultAutoCompoundTest is Test {
     assertEq(vault.principal(alice), principalAfterFirstCompound, 'a second compound() with nothing pending must change nothing');
   }
 
+  function test_Compounded_EmitsOnImplicitCompoundingViaDepositWithdrawClaim_NotJustExplicitCompound() public {
+    // Regression test: Compounded must fire from EVERY settlement that actually folds
+    // something in - deposit()/withdraw()/claim() included - not only the explicit
+    // compound()/compoundMany() entry points. This is centralized in _settle() itself now.
+
+    // deposit()
+    _deposit(alice, 1000e6);
+    _distributeYield(100e6);
+    uint256 alicePending = vault.pendingYield(alice);
+    vm.expectEmit(true, false, false, true, address(vault));
+    emit EarnVaultV2.Compounded(alice, alicePending);
+    _deposit(alice, 1e6); // triggers _settle() via deposit, no explicit compound() call
+
+    // withdraw()
+    _distributeYield(100e6);
+    uint256 alicePendingBeforeWithdraw = vault.pendingYield(alice);
+    vm.expectEmit(true, false, false, true, address(vault));
+    emit EarnVaultV2.Compounded(alice, alicePendingBeforeWithdraw);
+    vm.prank(alice);
+    vault.withdraw(1e6);
+
+    // claim() - give alice a boost reward so claim() has something to pay out and doesn't
+    // revert with NothingToClaim(), then verify it still emits Compounded for the pending
+    // USDSC yield it folds in along the way.
+    MockUSDSC boostToken = new MockUSDSC();
+    boostToken.mint(address(vault), 10e18);
+    vm.prank(operator);
+    vault.onBoostReward(address(boostToken), 10e18);
+    _distributeYield(100e6);
+    uint256 alicePendingBeforeClaim = vault.pendingYield(alice);
+    vm.expectEmit(true, false, false, true, address(vault));
+    emit EarnVaultV2.Compounded(alice, alicePendingBeforeClaim);
+    vm.prank(alice);
+    vault.claim();
+  }
+
   function test_Compound_RevertsForBlacklistedUser() public {
     _deposit(alice, 1000e6);
     _distributeYield(100e6);
@@ -297,6 +334,35 @@ contract EarnVaultAutoCompoundTest is Test {
   function test_CompoundMany_EmptyArrayIsNoop() public {
     address[] memory users = new address[](0);
     vault.compoundMany(users); // must not revert
+  }
+
+  function test_Compound_DoesNotEmitCompoundedWhenOwedRoundsToZero() public {
+    // A depositor holding a negligible fraction of totalPrincipal can have their prorated
+    // share of a yield distribution floor to exactly 0 at RAY precision - gi > ui holds (the
+    // fold branch runs) but the computed `owed` itself is 0. Regression test for the emit
+    // guard in _settle(): Compounded must NOT fire in that case, exactly matching the old
+    // diff-based _compound() wrapper's `if (amount > 0)` check.
+    _deposit(alice, 1); // 1 wei of USDSC - a negligible share of totalPrincipal
+    _deposit(bob, 1_000_000e6); // bob dominates totalPrincipal so alice's prorated cut rounds to 0
+
+    _distributeYield(100e6);
+
+    // Confirm this genuinely exercises the edge case: gi > ui (something is nominally owed)
+    // but it floors to exactly 0.
+    assertGt(vault.globalIndex(), vault.userIndex(alice), 'gi > ui must hold for this to test the guard at all');
+    assertEq(vault.pendingYield(alice), 0, "alice's prorated share should floor to exactly 0");
+
+    uint256 alicePrincipalBefore = vault.principal(alice);
+    bytes32 compoundedTopic0 = keccak256('Compounded(address,uint256)');
+
+    vm.recordLogs();
+    vault.compound(alice);
+    Vm.Log[] memory logs = vm.getRecordedLogs();
+
+    for (uint256 i = 0; i < logs.length; i++) {
+      assertTrue(logs[i].topics[0] != compoundedTopic0, 'Compounded must not emit when owed rounds to zero');
+    }
+    assertEq(vault.principal(alice), alicePrincipalBefore, 'principal must be unchanged when owed floors to zero');
   }
 
   // ========================================================================

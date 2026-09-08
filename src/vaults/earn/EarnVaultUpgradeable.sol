@@ -245,8 +245,13 @@ contract EarnVaultUpgradeable is
 
   /// @notice Withdraw any amount up to principal amount
   /// @param amount Amount of principal to withdraw (max: user's principal)
-  /// @dev Automatically claims ALL accrued interest (USDSC + boost rewards) when withdrawing
-  /// @dev User can only withdraw their principal, but gets all rewards automatically
+  /// @dev Settles the caller first (via the virtual _settle()), then automatically claims
+  ///      whatever ends up in `accrued` (USDSC) plus all boost rewards. _settle() is virtual:
+  ///      an override may route some or all settled USDSC yield into `principal` instead of
+  ///      `accrued` (see EarnVaultV2), in which case that portion isn't paid out by this
+  ///      withdrawal - it simply becomes part of the user's remaining principal balance.
+  /// @dev User can only withdraw their principal, but gets everything left in `accrued` (if
+  ///      any) plus all boost rewards automatically
   function withdraw(uint256 amount) external virtual whenNotPaused nonReentrant {
     EarnVaultStorage storage $ = _getStorage();
     _checkNotBlacklisted(msg.sender);
@@ -275,8 +280,12 @@ contract EarnVaultUpgradeable is
     emit Withdraw(msg.sender, amount);
   }
 
-  /// @notice Claim all accrued interest to caller's address
-  /// @dev Settles user's position and transfers all accrued yield (USDSC + boost rewards)
+  /// @notice Claim whatever is in `accrued` plus all boost rewards to caller's address
+  /// @dev Settles the caller first (via the virtual _settle()), then pays out `accrued`
+  ///      (USDSC) and all boost rewards. _settle() is virtual: an override may route some or
+  ///      all settled USDSC yield into `principal` instead of `accrued` (see EarnVaultV2), in
+  ///      which case that portion is never paid out by claim() - it becomes part of principal
+  ///      instead, realized only via withdraw().
   function claim() external virtual whenNotPaused nonReentrant {
     EarnVaultStorage storage $ = _getStorage();
     _checkNotBlacklisted(msg.sender);

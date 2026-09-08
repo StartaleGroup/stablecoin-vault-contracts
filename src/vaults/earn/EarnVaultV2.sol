@@ -17,6 +17,16 @@ import {Math} from 'lib/openzeppelin-contracts/contracts/utils/math/Math.sol';
 ///      is left untouched and stays the frozen, currently-live reference; do not add feature
 ///      logic there going forward - extend it here, or in a further V3/V4/... subclass of this
 ///      contract, mirroring this same pattern.
+/// @dev Known, accepted inefficiency: withdraw()/claim() (inherited unchanged from V1) call
+///      _settle() - which already settles every active boost token here - and then call the
+///      inherited _claimBoostRewards(), whose BoostRewardsLib.claimBoostReward() internally
+///      re-runs settleBoost() per token before paying out. That re-run computes a zero delta
+///      (the index is already caught up) but still costs a bounded number of extra SLOADs
+///      (at most MAX_BOOST_TOKENS = 10). Not fixed here: claimBoostReward() combines
+///      settle-then-pay in one library call used by both V1 and V2, so avoiding this would
+///      mean either modifying the shared library (widening blast radius onto V1's own
+///      behavior) or duplicating its payout logic here - not worth it for a bounded,
+///      low-single-digit-thousand-gas cost.
 contract EarnVaultV2 is EarnVaultUpgradeable {
   using SafeERC20 for IERC20;
 
@@ -49,7 +59,7 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
   /// @param user Address whose pending yield should be compounded into principal
   function compound(address user) external whenNotPaused nonReentrant {
     _checkNotBlacklisted(user);
-    _compound(user);
+    _settle(user);
   }
 
   /// @notice Batched version of compound() - settles pending USDSC yield for many users in one tx
@@ -61,7 +71,7 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
     for (uint256 i = 0; i < users.length; i++) {
       address user = users[i];
       if ($.isBlacklisted[user]) continue;
-      _compound(user);
+      _settle(user);
     }
   }
 
@@ -177,23 +187,18 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
     emit Deposit(user, amount);
   }
 
-  /// @dev Internal helper to settle a user's pending USDSC yield into principal and emit
-  ///      Compounded if (and only if) anything was actually folded in
-  /// @param user Address to compound
-  function _compound(address user) internal returns (uint256 amount) {
-    EarnVaultStorage storage $ = _getStorage();
-    uint256 principalBefore = $.principal[user];
-    _settle(user);
-    amount = $.principal[user] - principalBefore;
-    if (amount > 0) emit Compounded(user, amount);
-  }
-
   /// @dev Settles user's USDSC yield by folding it directly into principal (auto-compounding),
   ///      and settles boost rewards for all active tokens using the principal held up to this
   ///      point in time - i.e. BEFORE any USDSC yield gets folded in below. Must run boost
   ///      settlement first: boost rewards are weighted by principal, and if this folded USDSC
   ///      yield into principal first, a subsequent boost settlement would over-credit rewards
   ///      for a period the user only held the smaller, pre-compound principal.
+  /// @dev Emits Compounded whenever anything is actually folded in - from EVERY call site
+  ///      (deposit/withdraw/claim/compound/compoundMany all route through this one function),
+  ///      not just the explicit compound()/compoundMany() entry points. Centralizing the
+  ///      emission here, rather than in a wrapper only the keeper-facing functions call,
+  ///      means an off-chain indexer sees every instance of compounding, including the ones
+  ///      that happen implicitly as a side effect of a user's own deposit/withdraw/claim.
   /// @param user Address to settle
   function _settle(address user) internal virtual override {
     EarnVaultStorage storage $ = _getStorage();
@@ -218,6 +223,7 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
       uint256 owed = Math.mulDiv(p, gi - ui, $.RAY);
       $.principal[user] += owed;
       $.totalPrincipal += owed;
+      if (owed > 0) emit Compounded(user, owed);
     }
     $.userIndex[user] = gi;
   }
