@@ -164,6 +164,33 @@ contract IdentityRegistryEarnVaultV2IntegrationTest is Test {
     assertEq(vault.principal(user), 100e6);
   }
 
+  /// @dev Backs the claim that only a backend signature can bind the vault's address: a user
+  ///      cannot switchAddress() to it, because the vault cannot produce a valid signature (no
+  ///      isValidSignature; the ERC-1271 staticcall hits its reverting fallback). Tried with both a
+  ///      well-formed ECDSA signature from an unrelated key and an arbitrary non-ECDSA blob.
+  function test_E2E_UserCannotSwitchAddressToVault() public {
+    bytes32 identityId = keccak256('identity-1');
+    address user = makeAddr('user1');
+    _register(identityId, user);
+    vm.warp(block.timestamp + SWITCH_COOLDOWN);
+
+    uint256 nonce = registry.nonces(identityId);
+    uint64 expiry = uint64(block.timestamp + 1 hours);
+    bytes32 structHash = keccak256(abi.encode(registry.SWITCH_TYPEHASH(), identityId, address(vault), nonce, expiry));
+    (, uint256 otherKey) = makeAddrAndKey('someKey');
+    (uint8 v, bytes32 r, bytes32 s) = vm.sign(otherKey, _digest(structHash));
+
+    vm.prank(user);
+    vm.expectRevert(IIdentityRegistryEventsAndErrors.InvalidSignature.selector);
+    registry.switchAddress(identityId, address(vault), nonce, expiry, abi.encodePacked(r, s, v));
+
+    vm.prank(user);
+    vm.expectRevert(IIdentityRegistryEventsAndErrors.InvalidSignature.selector);
+    registry.switchAddress(identityId, address(vault), nonce, expiry, hex'deadbeef');
+
+    assertEq(registry.registeredAddress(identityId), user);
+  }
+
   /// @dev The registry does not track the vault, so the vault's address CAN be registered (it
   ///      takes a backend signature). EarnVaultV2 is what refuses to credit principal to itself,
   ///      and it fails the whole batch closed - nothing moves.

@@ -116,7 +116,8 @@ interface IIdentityRegistryEventsAndErrors {
   error AddressAlreadyBound();
 
   /// @notice Thrown when an address being registered/switched to is this registry itself - never a
-  ///         valid payout destination (the EarnVault's own address is rejected by EarnVaultV2)
+  ///         valid payout destination (the EarnVault's own address is instead rejected at credit
+  ///         time, by EarnVaultV2.onBoostCredit())
   error ReservedAddress();
 
   /// @notice Thrown when switchAddress()/initiateRecovery()/migrationCorrection() is called with

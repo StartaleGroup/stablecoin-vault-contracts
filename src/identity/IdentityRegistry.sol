@@ -160,7 +160,8 @@ contract IdentityRegistry is IIdentityRegistryEventsAndErrors, Ownable2Step, Pau
   /// @dev Permissionless to submit - authorization is entirely a backend signer's signature, msg.sender
   ///      is never checked. No signature from `addr` itself is required (see spec section 5.1): at
   ///      signup the AA is Startale-created, and at migration-backfill time the address already
-  ///      holds the user's principal - requiring a target signature would make both flows impossible.
+  ///      holds the user's principal - requiring a target signature would make both flows
+  ///      impractical (every backfilled user would have to sign before being registered).
   /// @param identityId Opaque identifier for the loyalty identity
   /// @param addr Address to register for this identity
   /// @param nonce Must equal nonces[identityId] - guards against signature replay and lets a leaked,
@@ -409,13 +410,15 @@ contract IdentityRegistry is IIdentityRegistryEventsAndErrors, Ownable2Step, Pau
   }
 
   /// @notice Cancel a pending recovery for an identity
-  /// @dev Owner-only escape hatch. Without it a pending recovery can deadlock permanently:
-  ///      initiateRecovery() refuses while one is pending, finalizeRecovery() reverts forever if
-  ///      the target was bound to another identity during the delay, and the other
-  ///      paths that clear it (switchAddress()/migrationCorrection()) need the lost key or a
-  ///      grace window that is closed post-launch. Not whenNotPaused - it only removes state, and
-  ///      may be needed mid-incident. The nonce was already consumed at initiation, so a fresh
-  ///      initiateRecovery() needs a new attestation at the current nonce.
+  /// @dev Owner-only escape hatch for two cases the other paths can't handle: (1) the target got
+  ///      bound to another identity during the delay, so finalizeRecovery() reverts for as long as
+  ///      it stays bound while initiateRecovery() refuses a replacement; (2) the recovery was
+  ///      initiated to the wrong address, which would otherwise finalize to it after the delay.
+  ///      The other paths that clear a pending recovery (switchAddress()/migrationCorrection())
+  ///      need the lost key or an open, unused migration grace window.
+  /// @dev Not whenNotPaused - it only removes state, and may be needed mid-incident. The nonce was
+  ///      already consumed at initiation, so a fresh initiateRecovery() needs a new attestation at
+  ///      the current nonce.
   /// @param identityId Opaque identifier for the loyalty identity
   function cancelRecovery(bytes32 identityId) external onlyOwner {
     if (pendingRecoveryAddress[identityId] == address(0)) revert RecoveryNotPending();
@@ -435,8 +438,8 @@ contract IdentityRegistry is IIdentityRegistryEventsAndErrors, Ownable2Step, Pau
   }
 
   /// @notice Remove a backend signer
-  /// @dev At least one backend signer must always remain - register/registerBatch/recovery would
-  ///      otherwise become permanently unauthorizable.
+  /// @dev At least one backend signer must remain - with none, register/registerBatch/recovery/
+  ///      migrationCorrection would be unauthorizable until the owner added a signer back.
   /// @param signer Address to remove from the valid backend signer set
   function removeBackendSigner(address signer) external onlyOwner {
     if (!isBackendSigner[signer]) revert BackendSignerNotFound();

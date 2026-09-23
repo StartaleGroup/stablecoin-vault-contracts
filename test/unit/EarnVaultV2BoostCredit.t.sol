@@ -6,6 +6,7 @@ import {EarnVaultUpgradeable} from '../../src/vaults/earn/EarnVaultUpgradeable.s
 import {EarnVaultV2} from '../../src/vaults/earn/EarnVaultV2.sol';
 import {MockUSDSC} from '../mocks/MockUSDSC.sol';
 import {Initializable} from '@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol';
+import {ERC1967Proxy} from '@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol';
 import {ProxyAdmin} from '@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol';
 import {TransparentUpgradeableProxy} from '@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol';
 import {ITransparentUpgradeableProxy} from '@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol';
@@ -171,6 +172,261 @@ contract EarnVaultV2BoostCreditTest is Test {
       impl,
       abi.encodeCall(EarnVaultV2.initializeV2, (boostKeeper, address(0)))
     );
+  }
+
+  function _v1InitData() internal view returns (bytes memory) {
+    return abi.encodeWithSelector(
+      EarnVaultUpgradeable.initialize.selector, address(usdsc), owner, redistributor, treasury, pauser, operator
+    );
+  }
+
+  /// @dev Fresh deploy (no V1 history): OZ v5's TransparentUpgradeableProxy runs its constructor
+  ///      calldata BEFORE it creates the ProxyAdmin and writes the admin slot, so initializeV2
+  ///      cannot be passed there - it reverts NotProxyAdmin and the deploy fails loudly.
+  function test_InitializeV2_FreshProxy_CannotRunInConstructorData() public {
+    address impl = address(new EarnVaultV2());
+    vm.expectRevert(EarnVaultV2.NotProxyAdmin.selector);
+    new TransparentUpgradeableProxy(
+      impl, admin, abi.encodeCall(EarnVaultV2.initializeV2, (boostKeeper, address(registryMock)))
+    );
+  }
+
+  /// @dev The supported fresh-deploy path: construct the proxy with the base initialize(), then
+  ///      ProxyAdmin.upgradeAndCall to the SAME implementation with initializeV2.
+  function test_InitializeV2_FreshProxy_InitializeThenUpgradeAndCallToSameImpl() public {
+    address impl = address(new EarnVaultV2());
+    TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(impl, admin, _v1InitData());
+    bytes32 adminSlot = bytes32(uint256(keccak256('eip1967.proxy.admin')) - 1);
+    ProxyAdmin pa = ProxyAdmin(address(uint160(uint256(vm.load(address(proxy), adminSlot)))));
+    EarnVaultV2 v2 = EarnVaultV2(payable(address(proxy)));
+    assertEq(v2.owner(), owner);
+    assertEq(v2.boostKeeper(), address(0));
+
+    vm.prank(admin);
+    pa.upgradeAndCall(
+      ITransparentUpgradeableProxy(address(proxy)),
+      impl,
+      abi.encodeCall(EarnVaultV2.initializeV2, (boostKeeper, address(registryMock)))
+    );
+    assertEq(v2.boostKeeper(), boostKeeper);
+    assertEq(v2.identityRegistry(), address(registryMock));
+  }
+
+  /// @dev Behind a proxy with NO ERC-1967 admin (the UUPS shape: plain ERC1967Proxy), the admin
+  ///      slot is zero, so initializeV2 rejects every caller - even the owner. Pins the current
+  ///      Transparent-proxy behaviour: changing the gate (e.g. for UUPS) must update this test. It
+  ///      does not by itself detect a proxy migration.
+  function test_InitializeV2_ProxyWithoutAdmin_RejectsEvenOwner() public {
+    ERC1967Proxy proxy = new ERC1967Proxy(address(new EarnVaultV2()), _v1InitData());
+    EarnVaultV2 v2 = EarnVaultV2(payable(address(proxy)));
+    assertEq(vm.load(address(proxy), bytes32(uint256(keccak256('eip1967.proxy.admin')) - 1)), bytes32(0));
+
+    vm.prank(owner);
+    vm.expectRevert(EarnVaultV2.NotProxyAdmin.selector);
+    v2.initializeV2(boostKeeper, address(registryMock));
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // initializeV2 gate - exhaustive cases. The gate is the only thing standing between an operator
+  // mistake and an attacker minting unlimited principal, so every path is pinned here.
+  // ---------------------------------------------------------------------------------------------
+
+  bytes32 internal constant IMPL_SLOT = bytes32(uint256(keccak256('eip1967.proxy.implementation')) - 1);
+  bytes32 internal constant ADMIN_SLOT = bytes32(uint256(keccak256('eip1967.proxy.admin')) - 1);
+
+  /// @dev A live V1 proxy (not yet upgraded) whose ProxyAdmin is owned by `proxyAdminOwner`.
+  function _deployV1(address proxyAdminOwner) internal returns (TransparentUpgradeableProxy proxy, ProxyAdmin pa) {
+    proxy = new TransparentUpgradeableProxy(address(new EarnVaultUpgradeable()), proxyAdminOwner, _v1InitData());
+    pa = ProxyAdmin(address(uint160(uint256(vm.load(address(proxy), ADMIN_SLOT)))));
+  }
+
+  function _initData(address keeper, address registry) internal pure returns (bytes memory) {
+    return abi.encodeCall(EarnVaultV2.initializeV2, (keeper, registry));
+  }
+
+  /// @dev Root of trust: upgradeAndCall is ProxyAdmin-owner-only, so a stranger cannot use the
+  ///      one path that reaches initializeV2.
+  function test_InitializeV2Gate_StrangerCannotUseProxyAdminUpgradeAndCall() public {
+    (TransparentUpgradeableProxy proxy, ProxyAdmin pa) = _deployV1(admin);
+    address stranger = makeAddr('stranger');
+    address impl = address(new EarnVaultV2());
+
+    vm.prank(stranger);
+    vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, stranger));
+    pa.upgradeAndCall(ITransparentUpgradeableProxy(address(proxy)), impl, _initData(stranger, stranger));
+
+    assertEq(EarnVaultV2(payable(address(proxy))).getVersion(), 'EarnVaultV1');
+  }
+
+  /// @dev Any caller other than the ProxyAdmin - including the vault owner, the ProxyAdmin's own
+  ///      owner, the proxy itself and address(0) - is rejected in the uninitialized window.
+  function testFuzz_InitializeV2Gate_RejectsEveryDirectCallerInUninitializedWindow(address caller) public {
+    (EarnVaultV2 v2, ProxyAdmin pa,) = _upgradeWithoutInit();
+    vm.assume(caller != address(pa));
+
+    vm.prank(caller);
+    vm.expectRevert(EarnVaultV2.NotProxyAdmin.selector);
+    v2.initializeV2(caller, caller);
+    assertEq(v2.boostKeeper(), address(0));
+  }
+
+  function test_InitializeV2Gate_RejectsNamedPrivilegedCallersInUninitializedWindow() public {
+    (EarnVaultV2 v2,,) = _upgradeWithoutInit();
+    address[5] memory callers = [owner, admin, pauser, operator, boostKeeper];
+    for (uint256 i = 0; i < callers.length; i++) {
+      vm.prank(callers[i]);
+      vm.expectRevert(EarnVaultV2.NotProxyAdmin.selector);
+      v2.initializeV2(callers[i], callers[i]);
+    }
+    assertEq(v2.boostKeeper(), address(0));
+  }
+
+  /// @dev After a successful upgrade+init, nobody can re-run it by any route.
+  function test_InitializeV2Gate_LockedForEveryoneAfterSuccessfulInit() public {
+    address[3] memory callers = [makeAddr('attacker'), owner, admin];
+    for (uint256 i = 0; i < callers.length; i++) {
+      vm.prank(callers[i]);
+      vm.expectRevert(Initializable.InvalidInitialization.selector);
+      vault.initializeV2(callers[i], callers[i]);
+    }
+    address pa = address(uint160(uint256(vm.load(address(vault), ADMIN_SLOT))));
+    vm.prank(pa);
+    vm.expectRevert(TransparentUpgradeableProxy.ProxyDeniedAdminAccess.selector);
+    vault.initializeV2(pa, pa);
+
+    assertEq(vault.boostKeeper(), boostKeeper);
+    assertEq(vault.identityRegistry(), address(registryMock));
+  }
+
+  /// @dev Atomicity: if initializeV2 reverts inside upgradeAndCall, the upgrade itself rolls back -
+  ///      the proxy is still exactly V1, not a half-upgraded V2 with no keeper.
+  function test_InitializeV2Gate_RevertingInitRollsBackTheWholeUpgrade() public {
+    (TransparentUpgradeableProxy proxy, ProxyAdmin pa) = _deployV1(admin);
+    address v1Impl = address(uint160(uint256(vm.load(address(proxy), IMPL_SLOT))));
+    address v2Impl = address(new EarnVaultV2());
+
+    vm.prank(admin);
+    vm.expectRevert(IEarnVaultEventsAndErrors.CanNotBeZeroAddress.selector);
+    pa.upgradeAndCall(ITransparentUpgradeableProxy(address(proxy)), v2Impl, _initData(address(0), address(0)));
+
+    assertEq(address(uint160(uint256(vm.load(address(proxy), IMPL_SLOT)))), v1Impl);
+    assertEq(EarnVaultV2(payable(address(proxy))).getVersion(), 'EarnVaultV1');
+  }
+
+  /// @dev Upgrade-without-init only disables boost credit; the vault itself keeps working.
+  /// @dev Backs "the rest of the vault works": deposit, yield indexing, compounding and
+  ///      withdrawal all behave normally while boost credit is uninitialized.
+  function test_InitializeV2Gate_UninitializedVaultStillDepositsIndexesYieldCompoundsAndWithdraws() public {
+    (EarnVaultV2 v2,,) = _upgradeWithoutInit();
+    address user = makeAddr('depositor');
+    usdsc.mint(user, 500e6);
+
+    vm.startPrank(user);
+    usdsc.approve(address(v2), 500e6);
+    v2.deposit(500e6);
+    vm.stopPrank();
+    assertEq(v2.principal(user), 500e6);
+
+    usdsc.mint(address(v2), 10e6);
+    vm.prank(redistributor);
+    v2.onYield(10e6);
+    assertApproxEqAbs(v2.pendingYield(user), 10e6, 1);
+
+    v2.compound(user);
+    assertApproxEqAbs(v2.principal(user), 510e6, 1);
+    assertEq(v2.pendingYield(user), 0);
+
+    vm.prank(user);
+    v2.withdraw(200e6);
+    assertApproxEqAbs(v2.principal(user), 310e6, 1);
+    assertEq(usdsc.balanceOf(user), 200e6);
+    assertEq(v2.boostKeeper(), address(0));
+  }
+
+  /// @dev Second recovery path from upgrade-without-init: the vault owner configures boost credit
+  ///      through the existing owner-only setters. An attacker cannot use them.
+  function test_InitializeV2Gate_UninitializedVaultCanBeConfiguredByOwnerSettersOnly() public {
+    (EarnVaultV2 v2,,) = _upgradeWithoutInit();
+    address attacker = makeAddr('attacker');
+
+    vm.startPrank(attacker);
+    vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, attacker));
+    v2.setBoostKeeper(attacker);
+    vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, attacker));
+    v2.setIdentityRegistry(attacker);
+    vm.stopPrank();
+
+    vm.startPrank(owner);
+    v2.setBoostKeeper(boostKeeper);
+    v2.setIdentityRegistry(address(registryMock));
+    vm.stopPrank();
+
+    bytes32 identityId = keccak256('identity-1');
+    address user = makeAddr('user1');
+    _registerMock(identityId, user);
+    usdsc.mint(address(v2), 100e6);
+    bytes32[] memory ids = new bytes32[](1);
+    ids[0] = identityId;
+    uint256[] memory amounts = new uint256[](1);
+    amounts[0] = 100e6;
+    vm.prank(boostKeeper);
+    v2.onBoostCredit(1, ids, amounts);
+    assertEq(v2.principal(user), 100e6);
+  }
+
+  /// @dev The exact front-run the gate exists for: attacker races the uninitialized window, fails,
+  ///      and the legitimate upgradeAndCall afterwards installs the real keeper, not the attacker.
+  function test_InitializeV2Gate_FrontRunAttemptFailsThenLegitimateInitWins() public {
+    (EarnVaultV2 v2, ProxyAdmin pa, address impl) = _upgradeWithoutInit();
+    address attacker = makeAddr('attacker');
+
+    vm.prank(attacker);
+    vm.expectRevert(EarnVaultV2.NotProxyAdmin.selector);
+    v2.initializeV2(attacker, attacker);
+
+    vm.prank(admin);
+    pa.upgradeAndCall(ITransparentUpgradeableProxy(address(v2)), impl, _initData(boostKeeper, address(registryMock)));
+
+    assertEq(v2.boostKeeper(), boostKeeper);
+    assertEq(v2.identityRegistry(), address(registryMock));
+
+    bytes32[] memory ids = new bytes32[](0);
+    uint256[] memory amounts = new uint256[](0);
+    vm.prank(attacker);
+    vm.expectRevert(EarnVaultV2.NotBoostKeeper.selector);
+    v2.onBoostCredit(1, ids, amounts);
+  }
+
+  /// @dev The reviewer's original scenario: one key owns both the ProxyAdmin and the vault. The
+  ///      admin-slot gate still works (an owner() gate would have reverted here too).
+  function test_InitializeV2Gate_WorksWhenSameKeyOwnsProxyAdminAndVault() public {
+    (TransparentUpgradeableProxy proxy, ProxyAdmin pa) = _deployV1(owner);
+    assertEq(pa.owner(), owner);
+    assertEq(EarnVaultV2(payable(address(proxy))).owner(), owner);
+
+    // deploy BEFORE the prank - an inline `new` in the args would consume it
+    address impl = address(new EarnVaultV2());
+    vm.prank(owner);
+    pa.upgradeAndCall(ITransparentUpgradeableProxy(address(proxy)), impl, _initData(boostKeeper, address(registryMock)));
+    assertEq(EarnVaultV2(payable(address(proxy))).boostKeeper(), boostKeeper);
+  }
+
+  /// @dev ProxyAdmin ownership moved (e.g. to a multisig): the gate keys on the ProxyAdmin
+  ///      contract, not on who owns it, so the new owner can upgrade+init and the old one cannot.
+  function test_InitializeV2Gate_FollowsProxyAdminOwnershipTransfer() public {
+    (TransparentUpgradeableProxy proxy, ProxyAdmin pa) = _deployV1(admin);
+    address multisig = makeAddr('multisig');
+    vm.prank(admin);
+    pa.transferOwnership(multisig);
+    address impl = address(new EarnVaultV2());
+
+    vm.prank(admin);
+    vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, admin));
+    pa.upgradeAndCall(ITransparentUpgradeableProxy(address(proxy)), impl, _initData(boostKeeper, address(registryMock)));
+
+    vm.prank(multisig);
+    pa.upgradeAndCall(ITransparentUpgradeableProxy(address(proxy)), impl, _initData(boostKeeper, address(registryMock)));
+    assertEq(EarnVaultV2(payable(address(proxy))).boostKeeper(), boostKeeper);
   }
 
   function test_InitializeV2_ImplementationContractCannotBeInitialized() public {
@@ -388,6 +644,26 @@ contract EarnVaultV2BoostCreditTest is Test {
     vault.onBoostCredit(3, ids, amounts);
   }
 
+  /// @dev Backs the @param cycleId note: cycleId 0 reverts StaleCycle even for a never-credited
+  ///      identity (lastCreditedCycle defaults to 0), so cycle numbering must start at 1.
+  function test_OnBoostCredit_CycleIdZeroRevertsEvenOnFirstCredit() public {
+    bytes32 identityId = keccak256('identity-1');
+    _registerMock(identityId, makeAddr('user1'));
+    usdsc.mint(address(vault), 100e6);
+    bytes32[] memory ids = new bytes32[](1);
+    ids[0] = identityId;
+    uint256[] memory amounts = new uint256[](1);
+    amounts[0] = 100e6;
+
+    vm.prank(boostKeeper);
+    vm.expectRevert(EarnVaultV2.StaleCycle.selector);
+    vault.onBoostCredit(0, ids, amounts);
+
+    vm.prank(boostKeeper);
+    vault.onBoostCredit(1, ids, amounts);
+    assertEq(vault.lastCreditedCycle(identityId), 1);
+  }
+
   function test_OnBoostCredit_RevertsOnLowerCycleIdThanLastCredited() public {
     bytes32 identityId = keccak256('identity-1');
     address user = makeAddr('user1');
@@ -527,6 +803,36 @@ contract EarnVaultV2BoostCreditTest is Test {
     assertEq(vault.totalPrincipal(), expectedPrincipal);
     assertEq(vault.claimReserve(), depositAmount + yieldAmount + boostAmount);
     assertEq(vault.pendingYield(user), 0);
+  }
+
+  /// @dev Backs the initializeV2 NatSpec claim: even a keeper with a registry it controls can
+  ///      credit at most the USDSC held above claimReserve - never existing users' funds. Here the
+  ///      only surplus is a 30e6 donation: 30e6 + 1 reverts, exactly 30e6 succeeds, and afterwards
+  ///      the vault is exactly fully reserved and the depositor is untouched.
+  function test_OnBoostCredit_CreditIsBoundedByUnreservedSurplus() public {
+    address depositor = makeAddr('depositor');
+    _depositAsUser(depositor, 500e6);
+    usdsc.mint(address(vault), 30e6); // donation: the only USDSC above claimReserve
+
+    bytes32 identityId = keccak256('keeper-controlled-identity');
+    address beneficiary = makeAddr('beneficiary');
+    _registerMock(identityId, beneficiary);
+    bytes32[] memory ids = new bytes32[](1);
+    ids[0] = identityId;
+    uint256[] memory amounts = new uint256[](1);
+
+    amounts[0] = 30e6 + 1;
+    vm.prank(boostKeeper);
+    vm.expectRevert(IEarnVaultEventsAndErrors.InsufficientFunding.selector);
+    vault.onBoostCredit(1, ids, amounts);
+
+    amounts[0] = 30e6;
+    vm.prank(boostKeeper);
+    vault.onBoostCredit(1, ids, amounts);
+
+    assertEq(vault.principal(beneficiary), 30e6);
+    assertEq(vault.principal(depositor), 500e6);
+    assertEq(vault.claimReserve(), usdsc.balanceOf(address(vault)));
   }
 
   function test_OnBoostCredit_RevertsOnInsufficientBalance_WithNonZeroClaimReserveFromRealDeposit() public {

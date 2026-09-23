@@ -16,11 +16,12 @@ import {Math} from 'lib/openzeppelin-contracts/contracts/utils/math/Math.sol';
 ///         settlement, instead of sitting in a separately-claimable `accrued` balance. See
 ///         base-tier-auto-compounding.md for the full design rationale.
 /// @dev Also adds a boostKeeper role and a settable IIdentityRegistry reference (own ERC-7201
-///      namespace, separate from V1's base storage) for onBoostCredit() - upgrading a V1 proxy
-///      to this implementation now requires calling initializeV2(initialBoostKeeper,
-///      initialIdentityRegistry) via reinitializer(2). V1 itself is left untouched and stays the
-///      frozen, currently-live reference; do not add feature logic there going forward - extend
-///      it here, or in a further V3/V4/... subclass of this contract, mirroring this same pattern.
+///      namespace, separate from V1's base storage) for onBoostCredit() - a V1 proxy is upgraded
+///      to this implementation with ProxyAdmin.upgradeAndCall carrying
+///      initializeV2(initialBoostKeeper, initialIdentityRegistry) (reinitializer(2)). V1 stays the
+///      frozen, currently-live reference - its only changes were `virtual` modifiers and NatSpec
+///      so this contract can override it, with no behaviour change; do not add feature logic there
+///      going forward - extend it here, or in a further V3/V4/... subclass of this contract.
 /// @dev Known, accepted inefficiency: withdraw()/claim() (inherited unchanged from V1) call
 ///      _settle() - which already settles every active boost token here - and then call the
 ///      inherited _claimBoostRewards(), whose BoostRewardsLib.claimBoostReward() internally
@@ -84,19 +85,35 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
 
   /// @notice Initialize the boostKeeper/identityRegistry roles added on top of V1 (reinitializer for upgrades)
   /// @dev SECURITY: callable only by the proxy's ERC-1967 admin, i.e. the ProxyAdmin contract.
-  ///      A TransparentUpgradeableProxy lets its admin reach the implementation ONLY through
-  ///      upgradeToAndCall (every other admin call reverts ProxyDeniedAdminAccess), so this can run
-  ///      solely as the calldata of `ProxyAdmin.upgradeAndCall(proxy, v2Impl,
-  ///      abi.encodeCall(EarnVaultV2.initializeV2, (...)))` - atomic with the upgrade, never
-  ///      front-runnable. Without this gate, an upgrade with empty calldata would leave an open
-  ///      window for anyone to call this first, make themselves boostKeeper with a registry they
-  ///      control, and mint unlimited principal via onBoostCredit().
-  /// @dev If an upgrade does land without this call, the vault is still safe (boostKeeper is
-  ///      address(0), so onlyBoostKeeper rejects every caller) and recoverable: repeat
-  ///      upgradeAndCall to the same implementation with this call as calldata.
+  ///      An OZ v5 TransparentUpgradeableProxy lets its admin reach the implementation only via
+  ///      upgradeToAndCall (any other admin call reverts ProxyDeniedAdminAccess), and OZ v5's
+  ///      ProxyAdmin only issues that from upgradeAndCall. So this runs only as the calldata of
+  ///      `ProxyAdmin.upgradeAndCall(proxy, v2Impl, abi.encodeCall(EarnVaultV2.initializeV2, (...)))`,
+  ///      atomically with the upgrade, and cannot be front-run.
+  /// @dev What the gate prevents: without it, after an upgrade with empty calldata anyone could call
+  ///      this first and install themselves as boostKeeper with a registry they control. The
+  ///      funding check in onBoostCredit() bounds what they could credit to USDSC held above
+  ///      claimReserve (e.g. donations, or funding transferred ahead of a separate credit call),
+  ///      and the owner could replace both via setBoostKeeper()/setIdentityRegistry() - but it is
+  ///      still an attacker-controlled role and must not be possible.
+  /// @dev If an upgrade lands without this call, boost credit is simply disabled (boostKeeper is
+  ///      address(0), so onlyBoostKeeper rejects every caller; the rest of the vault works). To
+  ///      recover, either repeat upgradeAndCall to the same implementation with this call, or have
+  ///      the owner call setBoostKeeper() and setIdentityRegistry().
   /// @dev Deliberately NOT `msg.sender == owner()`: under upgradeAndCall, msg.sender here is the
-  ///      ProxyAdmin contract, never this vault's owner, so that gate would always revert.
-  ///      Assumes a TransparentUpgradeableProxy - revisit if this vault ever moves to UUPS.
+  ///      ProxyAdmin contract, not this vault's owner, so that gate would revert every upgrade.
+  ///      (The ProxyAdmin can't usefully be the owner either: the proxy blocks it from calling any
+  ///      vault function, including acceptOwnership().)
+  /// @dev Fresh deploy (no V1 history): do NOT pass this as the proxy's constructor calldata - OZ
+  ///      v5's TransparentUpgradeableProxy runs that calldata before it creates the ProxyAdmin, so
+  ///      the admin slot is still zero and this reverts NotProxyAdmin. Construct the proxy with the
+  ///      base initialize(), then ProxyAdmin.upgradeAndCall to the same implementation with this.
+  /// @dev Assumes upgrades go through a TransparentUpgradeableProxy's ProxyAdmin. Where the caller
+  ///      is not the ERC-1967 admin - a proxy with no admin (the admin slot is zero), or a UUPS-style
+  ///      upgrade path where the owner calls upgradeToAndCall - this rejects the call and any
+  ///      upgradeToAndCall carrying it reverts as a whole. Such a move needs this gate replaced
+  ///      (owner() would then be the right check); test_InitializeV2_ProxyWithoutAdmin_RejectsEvenOwner
+  ///      pins the current behaviour, so changing the gate also requires updating that test.
   /// @param initialBoostKeeper Address authorized to call onBoostCredit()
   /// @param initialIdentityRegistry IIdentityRegistry used to resolve identityId -> address
   function initializeV2(address initialBoostKeeper, address initialIdentityRegistry) public reinitializer(2) {
@@ -130,8 +147,8 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
   }
 
   /// @notice Update the IIdentityRegistry reference
-  /// @dev Settable, not immutable - risk-bearing: a bad value silently misroutes an entire
-  ///      cycle's boost credit. Owner-gated, event on change.
+  /// @dev Settable, not immutable - risk-bearing: a wrong registry that returns valid-looking
+  ///      addresses misroutes every credit made while it is set. Owner-gated, event on change.
   /// @param newRegistry New IIdentityRegistry address
   function setIdentityRegistry(address newRegistry) external onlyOwner {
     if (newRegistry == address(0)) revert IEarnVaultEventsAndErrors.CanNotBeZeroAddress();
@@ -158,8 +175,8 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
   ///      replay guard a Merkle-based distributor would have gotten for free via a claimed
   ///      mapping; dropping Merkle means it must be explicit. An unregistered identityId or an
   ///      unset registry reverts the whole batch (fail-closed) rather than silently skipping.
-  ///      Gated whenNotPaused like every other principal-mutating function (deposit()/compound()/
-  ///      compoundMany()/onBoostReward()).
+  ///      Gated whenNotPaused, like the other principal-changing entry points (deposit()/
+  ///      withdraw()/claim()/compound()/compoundMany()).
   /// @dev Blacklisted addresses revert the whole batch (fail-closed), unlike compoundMany()'s
   ///      skip-and-continue - consistent with this function's existing all-or-nothing discipline
   ///      for insufficient-balance/unregistered-identity/stale-cycle. Checked AFTER resolving
@@ -204,8 +221,9 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
       if (user == address(0)) revert IdentityNotRegistered();
       // The ONLY guard against the vault crediting principal to itself - IdentityRegistry
       // deliberately does not track the vault's address. Enforced here, in the contract that
-      // would be harmed. Binding the vault needs a backend signature (switchAddress() can't:
-      // the vault has no ERC-1271), and a misbinding fails the whole batch closed, moving nothing.
+      // would be harmed. Binding the vault needs a backend signature (switchAddress() can't: the
+      // vault cannot produce a valid signature - no isValidSignature, and its fallback reverts),
+      // and a misbinding fails the whole batch closed, moving nothing.
       if (user == address(this)) revert IdentityNotRegistered();
       _checkNotBlacklisted(user);
 
