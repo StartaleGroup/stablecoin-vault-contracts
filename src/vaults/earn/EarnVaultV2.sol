@@ -5,6 +5,7 @@ import {IIdentityRegistry} from '../../interfaces/identity/IIdentityRegistry.sol
 import {IEarnVaultEventsAndErrors} from '../../interfaces/vaults/earn/IEarnVaultEventsAndErrors.sol';
 import {BoostRewardsLib} from './BoostRewardsLib.sol';
 import {EarnVaultUpgradeable} from './EarnVaultUpgradeable.sol';
+import {ERC1967Utils} from 'lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Utils.sol';
 import {IERC20} from 'lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol';
 import {SafeERC20} from 'lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol';
 import {Math} from 'lib/openzeppelin-contracts/contracts/utils/math/Math.sol';
@@ -66,6 +67,7 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
   event BoostCycleCredited(uint256 indexed cycleId, uint256 entryCount, uint256 total);
 
   error NotBoostKeeper();
+  error NotProxyAdmin();
   error LengthMismatch();
   error StaleCycle();
   error IdentityNotRegistered();
@@ -81,20 +83,24 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
   }
 
   /// @notice Initialize the boostKeeper/identityRegistry roles added on top of V1 (reinitializer for upgrades)
-  /// @dev SECURITY: this function is `public` with no caller gating - reinitializer(2) only
-  ///      ensures it can run once, not who runs it. It MUST be called in the same transaction as
-  ///      the proxy upgrade itself, i.e. bundled as the calldata argument to `upgradeAndCall`
-  ///      (mirroring how every test in this repo upgrades: `upgradeAndCall(proxy, newImpl,
-  ///      abi.encodeWithSelector(EarnVaultV2.initializeV2.selector, ...))`). NEVER upgrade with
-  ///      empty calldata and call this separately afterwards - the implementation is live and
-  ///      callable the instant the upgrade transaction lands, so any gap between upgrade and
-  ///      initialization is an open window for anyone to front-run this call and set themselves
-  ///      as boostKeeper with an identityRegistry they control, letting them mint themselves
-  ///      unlimited principal via onBoostCredit() the moment onlyBoostKeeper would otherwise
-  ///      start applying.
+  /// @dev SECURITY: callable only by the proxy's ERC-1967 admin, i.e. the ProxyAdmin contract.
+  ///      A TransparentUpgradeableProxy lets its admin reach the implementation ONLY through
+  ///      upgradeToAndCall (every other admin call reverts ProxyDeniedAdminAccess), so this can run
+  ///      solely as the calldata of `ProxyAdmin.upgradeAndCall(proxy, v2Impl,
+  ///      abi.encodeCall(EarnVaultV2.initializeV2, (...)))` - atomic with the upgrade, never
+  ///      front-runnable. Without this gate, an upgrade with empty calldata would leave an open
+  ///      window for anyone to call this first, make themselves boostKeeper with a registry they
+  ///      control, and mint unlimited principal via onBoostCredit().
+  /// @dev If an upgrade does land without this call, the vault is still safe (boostKeeper is
+  ///      address(0), so onlyBoostKeeper rejects every caller) and recoverable: repeat
+  ///      upgradeAndCall to the same implementation with this call as calldata.
+  /// @dev Deliberately NOT `msg.sender == owner()`: under upgradeAndCall, msg.sender here is the
+  ///      ProxyAdmin contract, never this vault's owner, so that gate would always revert.
+  ///      Assumes a TransparentUpgradeableProxy - revisit if this vault ever moves to UUPS.
   /// @param initialBoostKeeper Address authorized to call onBoostCredit()
   /// @param initialIdentityRegistry IIdentityRegistry used to resolve identityId -> address
   function initializeV2(address initialBoostKeeper, address initialIdentityRegistry) public reinitializer(2) {
+    if (msg.sender != ERC1967Utils.getAdmin()) revert NotProxyAdmin();
     if (initialBoostKeeper == address(0) || initialIdentityRegistry == address(0)) {
       revert IEarnVaultEventsAndErrors.CanNotBeZeroAddress();
     }
@@ -158,6 +164,9 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
   ///      skip-and-continue - consistent with this function's existing all-or-nothing discipline
   ///      for insufficient-balance/unregistered-identity/stale-cycle. Checked AFTER resolving
   ///      the identityId to an address via the registry, since blacklisting is keyed by address.
+  /// @dev A zero-amount entry is NOT a no-op: it still passes every check, consumes the
+  ///      identity's cycleId (a later non-zero credit for the same cycle then reverts StaleCycle)
+  ///      and emits BoostCredited. The off-chain engine must drop zero amounts before batching.
   /// @param cycleId Monotonic per-identity cycle identifier for this credit. Must be >= 1 - since
   ///        lastCreditedCycle[identityId] defaults to 0 for a never-credited identity and the
   ///        guard below is `cycleId <= lastCreditedCycle`, a cycleId of 0 would always revert
@@ -193,11 +202,10 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
 
       address user = registry.registeredAddress(identityId);
       if (user == address(0)) revert IdentityNotRegistered();
-      // Belt-and-braces alongside IdentityRegistry's own reserved-address check on its
-      // `earnVault` field (see setEarnVault()/_isReserved() there): if that registration-side
-      // guard is ever bypassed or misconfigured (e.g. setEarnVault() pointed at a stale vault
-      // address after an upgrade), this makes it structurally impossible for the vault to ever
-      // credit principal to itself, rather than relying solely on the other contract's wiring.
+      // The ONLY guard against the vault crediting principal to itself - IdentityRegistry
+      // deliberately does not track the vault's address. Enforced here, in the contract that
+      // would be harmed. Binding the vault needs a backend signature (switchAddress() can't:
+      // the vault has no ERC-1271), and a misbinding fails the whole batch closed, moving nothing.
       if (user == address(this)) revert IdentityNotRegistered();
       _checkNotBlacklisted(user);
 
@@ -250,6 +258,11 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
   ///         principal - i.e. what compound()/deposit()/withdraw()/claim() would fold in if
   ///         called right now
   function pendingYield(address user) external view returns (uint256) {
+    return _pendingYield(user);
+  }
+
+  /// @dev Internal body of pendingYield(), so views here don't pay for an external self-call
+  function _pendingYield(address user) internal view returns (uint256) {
     EarnVaultStorage storage $ = _getStorage();
     uint256 p = $.principal[user];
     if (p == 0) return 0;
@@ -273,7 +286,7 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
   ///      yield hasn't been folded into principal yet but still belongs to them
   function totalValue(address user) external view virtual override returns (uint256) {
     EarnVaultStorage storage $ = _getStorage();
-    return $.principal[user] + $.accrued[user] + this.pendingYield(user);
+    return $.principal[user] + $.accrued[user] + _pendingYield(user);
   }
 
   /// @notice Get user's complete account info in one call
@@ -292,13 +305,7 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
     userLastIndex = $.userIndex[user];
     userClaimable = $.accrued[user];
 
-    uint256 pending = 0;
-    uint256 gi = $.globalIndex;
-    if (userPrincipal > 0 && gi > userLastIndex) {
-      pending = Math.mulDiv(userPrincipal, gi - userLastIndex, $.RAY);
-    }
-
-    userTotal = userPrincipal + userClaimable + pending;
+    userTotal = userPrincipal + userClaimable + _pendingYield(user);
   }
 
   /// @notice Get version info
@@ -324,7 +331,7 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
     EarnVaultStorage storage $ = _getStorage();
     _checkNotBlacklisted(user);
 
-    usdscClaimable = $.accrued[user] + this.pendingYield(user);
+    usdscClaimable = $.accrued[user] + _pendingYield(user);
 
     boostTokens = new address[]($.activeBoostTokens.length);
     boostAmounts = new uint256[]($.activeBoostTokens.length);

@@ -109,8 +109,10 @@ contract IdentityRegistry is IIdentityRegistryEventsAndErrors, Ownable2Step, Pau
 
   /// @notice Enumerable list of addresses whose EIP-712 signature authorizes
   ///         register()/registerBatch()/initiateRecovery() - any ONE of them signing is sufficient
-  /// @dev Multiple independent signers (rather than one) let ops rotate/distribute the signing
-  ///      key without a window where in-flight signed attestations become invalid.
+  /// @dev Multiple independent signers (rather than one) let ops rotate a key without a window
+  ///      where NO valid signer exists: add the new signer, cut the backend over, then remove the
+  ///      old one. Removing a signer immediately invalidates every not-yet-submitted signature it
+  ///      produced - intended, since removal is also the response to a compromised key.
   address[] public backendSigners;
 
   /// @notice addr => whether addr is currently a valid backend signer (source of truth for
@@ -128,9 +130,6 @@ contract IdentityRegistry is IIdentityRegistryEventsAndErrors, Ownable2Step, Pau
   ///         migration's own imperfection (see spec section 7). Default of 0 means the window
   ///         has never been opened.
   uint64 public migrationGraceEnd;
-
-  /// @notice EarnVault address - reserved, cannot be registered/switched to as a payout destination
-  address public earnVault;
 
   // ================================================================
   // CONSTRUCTOR
@@ -235,7 +234,7 @@ contract IdentityRegistry is IIdentityRegistryEventsAndErrors, Ownable2Step, Pau
       if (identityOf[addr] != bytes32(0)) revert AddressAlreadyBound();
       if (_isReserved(addr)) revert ReservedAddress();
 
-      nonces[identityId] = 1;
+      nonces[identityId] += 1;
       _bind(identityId, addr);
 
       emit IdentityRegistered(identityId, addr);
@@ -389,16 +388,15 @@ contract IdentityRegistry is IIdentityRegistryEventsAndErrors, Ownable2Step, Pau
 
   /// @notice Finalize a pending recovery once its delay has elapsed
   /// @dev Permissionless - the authorization already happened at initiateRecovery(). Re-checks
-  ///      that newAddr is still unbound and still non-reserved: either could have changed during
-  ///      the delay window (an unrelated register()/switchAddress(), or the owner repointing
-  ///      earnVault to what was newAddr).
+  ///      that newAddr is still unbound, since an unrelated register()/switchAddress() could have
+  ///      bound it during the delay window. No reserved-address re-check: the only reserved
+  ///      address is this registry's own, which is constant and already rejected at initiation.
   /// @param identityId Opaque identifier for the loyalty identity
   function finalizeRecovery(bytes32 identityId) external whenNotPaused {
     address newAddr = pendingRecoveryAddress[identityId];
     if (newAddr == address(0)) revert RecoveryNotPending();
     if (block.timestamp < recoveryFinalizeAfter[identityId]) revert RecoveryDelayNotElapsed();
     if (identityOf[newAddr] != bytes32(0)) revert AddressAlreadyBound();
-    if (_isReserved(newAddr)) revert ReservedAddress();
 
     address oldAddr = registeredAddress[identityId];
 
@@ -408,6 +406,20 @@ contract IdentityRegistry is IIdentityRegistryEventsAndErrors, Ownable2Step, Pau
     _rebind(identityId, oldAddr, newAddr);
 
     emit RecoveryFinalized(identityId, oldAddr, newAddr);
+  }
+
+  /// @notice Cancel a pending recovery for an identity
+  /// @dev Owner-only escape hatch. Without it a pending recovery can deadlock permanently:
+  ///      initiateRecovery() refuses while one is pending, finalizeRecovery() reverts forever if
+  ///      the target was bound to another identity during the delay, and the other
+  ///      paths that clear it (switchAddress()/migrationCorrection()) need the lost key or a
+  ///      grace window that is closed post-launch. Not whenNotPaused - it only removes state, and
+  ///      may be needed mid-incident. The nonce was already consumed at initiation, so a fresh
+  ///      initiateRecovery() needs a new attestation at the current nonce.
+  /// @param identityId Opaque identifier for the loyalty identity
+  function cancelRecovery(bytes32 identityId) external onlyOwner {
+    if (pendingRecoveryAddress[identityId] == address(0)) revert RecoveryNotPending();
+    _cancelPendingRecovery(identityId);
   }
 
   // ================================================================
@@ -467,17 +479,6 @@ contract IdentityRegistry is IIdentityRegistryEventsAndErrors, Ownable2Step, Pau
     migrationGraceEnd = newEnd;
   }
 
-  /// @notice Update the EarnVault address - reserved, cannot be registered/switched to
-  /// @dev Reverts if newVault is already someone's registered payout address: leaving that
-  ///      identity permanently bound to what is now a reserved contract address would strand
-  ///      future boost with no claim path.
-  /// @param newVault New EarnVault address
-  function setEarnVault(address newVault) external onlyOwner {
-    if (identityOf[newVault] != bytes32(0)) revert AddressAlreadyBound();
-    emit EarnVaultChanged(msg.sender, earnVault, newVault);
-    earnVault = newVault;
-  }
-
   /// @notice Pause register()/registerBatch()/switchAddress()/recovery/migrationCorrection()
   /// @dev Never blocks any view - see spec section 6. Callable by pauser only.
   function pause() external {
@@ -511,12 +512,12 @@ contract IdentityRegistry is IIdentityRegistryEventsAndErrors, Ownable2Step, Pau
   // INTERNAL
   // ================================================================
 
-  /// @dev True if `addr` is this registry or the configured EarnVault - neither is a valid
-  ///      payout/principal-holding destination. earnVault defaults to address(0), which is
-  ///      already independently rejected by the CanNotBeZeroAddress check before this is ever
-  ///      evaluated.
+  /// @dev True if `addr` is this registry itself - never a valid payout destination. The
+  ///      EarnVault is deliberately NOT tracked here: EarnVaultV2.onBoostCredit() rejects crediting
+  ///      its own address, so the contract that would be harmed enforces it, with no extra
+  ///      storage, setter or deployment-ordering constraint on this side.
   function _isReserved(address addr) internal view returns (bool) {
-    return addr == address(this) || addr == earnVault;
+    return addr == address(this);
   }
 
   /// @dev Binds a never-before-registered identity to addr and starts its switch-cooldown clock.

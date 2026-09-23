@@ -10,6 +10,16 @@ import {ITransparentUpgradeableProxy} from '@openzeppelin/contracts/proxy/transp
 import {StdInvariant} from 'forge-std/StdInvariant.sol';
 import {Test} from 'forge-std/Test.sol';
 
+/// @notice Minimal IIdentityRegistry stand-in: the invariant suite targets the vault's own
+///         accounting, not the registry's binding rules (covered by IdentityRegistry.t.sol)
+contract InvariantIdentityRegistryMock {
+  mapping(bytes32 => address) public registeredAddress;
+
+  function set(bytes32 identityId, address addr) external {
+    registeredAddress[identityId] = addr;
+  }
+}
+
 /// @title EarnVaultV2Handler
 /// @notice Bounded fuzz-target actions for the invariant suite below, mirroring the
 ///         Handler pattern already used by SUSDSCVaultInvariants.t.sol. Every action is
@@ -21,21 +31,39 @@ contract EarnVaultV2Handler is Test {
   MockUSDSC public boostToken;
   address public redistributor;
   address public operator;
+  address public boostKeeper;
+  uint256 public boostCycleId;
+
+  /// @notice Upper bound on per-user settlements performed so far (each floors <= 1 wei of
+  ///         yield in the vault's favour). Over-counting only loosens the dust bound below.
+  uint256 public settleOps;
+  /// @notice onYield() calls so far (each index update floors < 1 wei in the vault's favour)
+  uint256 public yieldOps;
 
   address[] public users;
   uint256 public constant MAX_USERS = 15;
   uint256 public constant MAX_AMOUNT = 1_000_000e6;
 
-  constructor(EarnVaultV2 _vault, MockUSDSC _usdsc, MockUSDSC _boostToken, address _redistributor, address _operator) {
+  constructor(
+    EarnVaultV2 _vault,
+    MockUSDSC _usdsc,
+    MockUSDSC _boostToken,
+    address _redistributor,
+    address _operator,
+    address _boostKeeper,
+    InvariantIdentityRegistryMock _registry
+  ) {
     vault = _vault;
     usdsc = _usdsc;
     boostToken = _boostToken;
     redistributor = _redistributor;
     operator = _operator;
+    boostKeeper = _boostKeeper;
 
     for (uint256 i = 0; i < MAX_USERS; i++) {
       address user = makeAddr(string(abi.encodePacked('handlerUser', i)));
       users.push(user);
+      _registry.set(_identityId(i), user);
       usdsc.mint(user, MAX_AMOUNT);
       vm.prank(user);
       usdsc.approve(address(vault), type(uint256).max);
@@ -49,6 +77,7 @@ contract EarnVaultV2Handler is Test {
     if (balance == 0) return;
     amount = bound(amount, 1, balance);
 
+    settleOps++;
     vm.prank(user);
     vault.deposit(amount);
   }
@@ -60,6 +89,7 @@ contract EarnVaultV2Handler is Test {
     if (p == 0) return;
     amount = bound(amount, 1, p);
 
+    settleOps++;
     vm.prank(user);
     vault.withdraw(amount);
   }
@@ -67,6 +97,7 @@ contract EarnVaultV2Handler is Test {
   function claim(uint256 userIndex) external {
     userIndex = bound(userIndex, 0, users.length - 1);
     address user = users[userIndex];
+    settleOps++;
 
     // claim() reverts with NothingToClaim() if there's nothing to pay out - avoid wasting a
     // fuzz run on a known-guaranteed revert by checking first.
@@ -87,6 +118,7 @@ contract EarnVaultV2Handler is Test {
 
   function compound(uint256 userIndex) external {
     userIndex = bound(userIndex, 0, users.length - 1);
+    settleOps++;
     vault.compound(users[userIndex]); // permissionless, never reverts on a no-op
   }
 
@@ -96,6 +128,7 @@ contract EarnVaultV2Handler is Test {
     for (uint256 i = 0; i < count; i++) {
       batch[i] = users[i];
     }
+    settleOps += count;
     vault.compoundMany(batch);
   }
 
@@ -106,8 +139,36 @@ contract EarnVaultV2Handler is Test {
     // Mint exactly `amount` more so the balance stays ahead of claimReserve + amount,
     // matching how a real yield redistributor funds the vault before calling onYield().
     usdsc.mint(address(vault), amount);
+    yieldOps++;
     vm.prank(redistributor);
     vault.onYield(amount);
+  }
+
+  function _identityId(uint256 i) internal pure returns (bytes32) {
+    return keccak256(abi.encodePacked('handlerIdentity', i));
+  }
+
+  /// @dev Credits a batch of distinct identities (contiguous from a random offset, wrapping), so
+  ///      it never trips the duplicate-in-batch StaleCycle revert; cycleId strictly increases
+  ///      per call, so it never trips the replay guard either. Amounts may be zero on purpose.
+  function onBoostCredit(uint256 offsetSeed, uint256 countSeed, uint256 amountSeed) external {
+    uint256 count = bound(countSeed, 1, users.length);
+    uint256 offset = bound(offsetSeed, 0, users.length - 1);
+    bytes32[] memory ids = new bytes32[](count);
+    uint256[] memory amounts = new uint256[](count);
+    uint256 total = 0;
+    for (uint256 i = 0; i < count; i++) {
+      ids[i] = _identityId((offset + i) % users.length);
+      amounts[i] = bound(uint256(keccak256(abi.encode(amountSeed, i))), 0, MAX_AMOUNT / 10);
+      total += amounts[i];
+    }
+
+    // Fund first, exactly like the real keeper flow (transfer USDSC in, then call).
+    usdsc.mint(address(vault), total);
+    boostCycleId++;
+    settleOps += count;
+    vm.prank(boostKeeper);
+    vault.onBoostCredit(boostCycleId, ids, amounts);
   }
 
   function onBoostReward(uint256 amount) external {
@@ -124,7 +185,7 @@ contract EarnVaultV2Handler is Test {
 /// @notice Deploys EarnVaultV2 directly (steady-state fuzzing, not the upgrade boundary -
 ///         that's covered separately by EarnVaultAutoCompound.t.sol's upgrade-path tests) and
 ///         runs arbitrary sequences of deposit/withdraw/claim/compound/compoundMany/onYield/
-///         onBoostReward via the handler above, checking these properties hold after every
+///         onBoostReward/onBoostCredit via the handler above, checking these properties hold after every
 ///         sequence regardless of ordering.
 contract EarnVaultV2Invariants is StdInvariant, Test {
   EarnVaultV2 internal vault;
@@ -158,19 +219,22 @@ contract EarnVaultV2Invariants is StdInvariant, Test {
     address proxyAdminAddress = address(uint160(uint256(vm.load(address(proxy), adminSlot))));
     ProxyAdmin proxyAdmin = ProxyAdmin(proxyAdminAddress);
 
+    InvariantIdentityRegistryMock registry = new InvariantIdentityRegistryMock();
+    address boostKeeper = makeAddr('boostKeeper');
+
     EarnVaultV2 v2Implementation = new EarnVaultV2();
     vm.prank(admin);
     proxyAdmin.upgradeAndCall(
       ITransparentUpgradeableProxy(address(proxy)),
       address(v2Implementation),
-      abi.encodeWithSelector(EarnVaultV2.initializeV2.selector, makeAddr('boostKeeper'), makeAddr('identityRegistry'))
+      abi.encodeWithSelector(EarnVaultV2.initializeV2.selector, boostKeeper, address(registry))
     );
 
     vault = EarnVaultV2(payable(address(proxy)));
 
-    handler = new EarnVaultV2Handler(vault, usdsc, boostToken, redistributor, operator);
+    handler = new EarnVaultV2Handler(vault, usdsc, boostToken, redistributor, operator, boostKeeper, registry);
 
-    bytes4[] memory selectors = new bytes4[](7);
+    bytes4[] memory selectors = new bytes4[](8);
     selectors[0] = EarnVaultV2Handler.deposit.selector;
     selectors[1] = EarnVaultV2Handler.withdraw.selector;
     selectors[2] = EarnVaultV2Handler.claim.selector;
@@ -178,6 +242,7 @@ contract EarnVaultV2Invariants is StdInvariant, Test {
     selectors[4] = EarnVaultV2Handler.compoundMany.selector;
     selectors[5] = EarnVaultV2Handler.onYield.selector;
     selectors[6] = EarnVaultV2Handler.onBoostReward.selector;
+    selectors[7] = EarnVaultV2Handler.onBoostCredit.selector;
 
     targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
     targetContract(address(handler));
@@ -204,9 +269,17 @@ contract EarnVaultV2Invariants is StdInvariant, Test {
       sumAccrued += vault.accrued(user);
       sumPending += vault.pendingYield(user);
     }
-    // Each independent settlement floors at RAY precision, so a few wei of dust can
-    // accumulate across many users/rounds over an invariant run's full depth.
-    assertApproxEqAbs(vault.claimReserve(), vault.totalPrincipal() + sumAccrued + sumPending, handler.MAX_USERS() * 2);
+    uint256 owed = vault.totalPrincipal() + sumAccrued + sumPending;
+    uint256 reserve = vault.claimReserve();
+    // Solvency, exact: every rounding step floors in the vault's favour, so the reserve can
+    // never fall below what users are owed - not even by 1 wei.
+    assertGe(reserve, owed, 'claimReserve below accounted user value');
+    // Dust is bounded, not fixed: <= 1 wei per settlement, < 1 wei per index update, plus up
+    // to 1 wei per user from pendingYield()'s own floor in the sum above. A fixed tolerance
+    // is depth-dependent and fails spuriously on long runs.
+    assertLe(
+      reserve - owed, handler.settleOps() + handler.yieldOps() + handler.MAX_USERS(), 'rounding dust exceeds bound'
+    );
   }
 
   /// @notice The vault must always hold enough USDSC to cover claimReserve - the funding

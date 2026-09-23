@@ -37,11 +37,6 @@ contract IdentityRegistryEarnVaultV2IntegrationTest is Test {
   function setUp() public {
     usdsc = new MockUSDSC();
 
-    (backendSigner, backendSignerKey) = makeAddrAndKey('backendSigner');
-    address[] memory signers = new address[](1);
-    signers[0] = backendSigner;
-    registry = new IdentityRegistry(registryAdmin, signers, registryPauser, SWITCH_COOLDOWN);
-
     EarnVaultUpgradeable v1Implementation = new EarnVaultUpgradeable();
     TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(
       address(v1Implementation),
@@ -54,6 +49,11 @@ contract IdentityRegistryEarnVaultV2IntegrationTest is Test {
     address proxyAdminAddress = address(uint160(uint256(vm.load(address(proxy), adminSlot))));
     ProxyAdmin proxyAdmin = ProxyAdmin(proxyAdminAddress);
 
+    (backendSigner, backendSignerKey) = makeAddrAndKey('backendSigner');
+    address[] memory signers = new address[](1);
+    signers[0] = backendSigner;
+    registry = new IdentityRegistry(registryAdmin, signers, registryPauser, SWITCH_COOLDOWN);
+
     EarnVaultV2 v2Implementation = new EarnVaultV2();
     vm.prank(admin);
     proxyAdmin.upgradeAndCall(
@@ -63,9 +63,6 @@ contract IdentityRegistryEarnVaultV2IntegrationTest is Test {
     );
 
     vault = EarnVaultV2(payable(address(proxy)));
-
-    vm.prank(registryAdmin);
-    registry.setEarnVault(address(vault));
   }
 
   function _domainSeparator() internal view returns (bytes32) {
@@ -167,17 +164,30 @@ contract IdentityRegistryEarnVaultV2IntegrationTest is Test {
     assertEq(vault.principal(user), 100e6);
   }
 
-  function test_E2E_RegisteringVaultAddressAsPayoutTargetReverts() public {
-    // registry.setEarnVault() was called in setUp() - the vault's own address must be
-    // unusable as a registration target, since crediting boost into the contract that
-    // pays it out has no meaning.
+  /// @dev The registry does not track the vault, so the vault's address CAN be registered (it
+  ///      takes a backend signature). EarnVaultV2 is what refuses to credit principal to itself,
+  ///      and it fails the whole batch closed - nothing moves.
+  function test_E2E_VaultAddressRegisteredAsPayoutTarget_OnBoostCreditRejectsIt() public {
     bytes32 identityId = keccak256('identity-1');
     uint256 nonce = registry.nonces(identityId);
     uint64 expiry = uint64(block.timestamp + 1 hours);
     bytes32 structHash = keccak256(abi.encode(registry.REGISTER_TYPEHASH(), identityId, address(vault), nonce, expiry));
     (uint8 v, bytes32 r, bytes32 s) = vm.sign(backendSignerKey, _digest(structHash));
-
-    vm.expectRevert(IIdentityRegistryEventsAndErrors.ReservedAddress.selector);
     registry.register(identityId, address(vault), nonce, expiry, abi.encodePacked(r, s, v));
+    assertEq(registry.registeredAddress(identityId), address(vault));
+
+    usdsc.mint(address(vault), 100e6);
+    bytes32[] memory ids = new bytes32[](1);
+    ids[0] = identityId;
+    uint256[] memory amounts = new uint256[](1);
+    amounts[0] = 100e6;
+
+    vm.prank(boostKeeper);
+    vm.expectRevert(EarnVaultV2.IdentityNotRegistered.selector);
+    vault.onBoostCredit(1, ids, amounts);
+
+    assertEq(vault.principal(address(vault)), 0);
+    assertEq(vault.totalPrincipal(), 0);
+    assertEq(vault.lastCreditedCycle(identityId), 0);
   }
 }

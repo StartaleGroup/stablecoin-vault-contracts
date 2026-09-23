@@ -302,18 +302,20 @@ contract IdentityRegistryTest is Test {
   }
 
   function test_BackendSigners_RemovedSignerCanNoLongerAuthorize() public {
+    bytes32 identityId = keccak256('identity-1');
+    address addr = makeAddr('user1');
+    uint64 expiry = uint64(block.timestamp + 1 hours);
+
+    // signed BEFORE removal and not yet submitted - removal must still invalidate it
+    // (the rotation/compromise property documented on backendSigners)
+    bytes memory staleSig = _signRegister(identityId, addr, 0, expiry, backendSignerKey);
+
     (address signer2, uint256 signer2Key) = makeAddrAndKey('signer2');
     vm.startPrank(admin);
     registry.addBackendSigner(signer2);
     registry.removeBackendSigner(backendSigner);
     vm.stopPrank();
 
-    bytes32 identityId = keccak256('identity-1');
-    address addr = makeAddr('user1');
-    uint64 expiry = uint64(block.timestamp + 1 hours);
-
-    // signature from the now-removed original signer must be rejected
-    bytes memory staleSig = _signRegister(identityId, addr, 0, expiry, backendSignerKey);
     vm.expectRevert(IIdentityRegistryEventsAndErrors.InvalidSignature.selector);
     registry.register(identityId, addr, 0, expiry, staleSig);
 
@@ -349,30 +351,13 @@ contract IdentityRegistryTest is Test {
     assertEq(registry.migrationGraceEnd(), end);
   }
 
-  function test_SetEarnVault_ReservesFromRegistration() public {
-    address vault = makeAddr('earnVault');
-    vm.prank(admin);
-    registry.setEarnVault(vault);
-
+  function test_Register_RevertsOnRegistryOwnAddress() public {
     bytes32 identityId = keccak256('identity-1');
     uint64 expiry = uint64(block.timestamp + 1 hours);
-
-    bytes memory sigToVault = _signRegister(identityId, vault, 0, expiry, backendSignerKey);
-    vm.expectRevert(IIdentityRegistryEventsAndErrors.ReservedAddress.selector);
-    registry.register(identityId, vault, 0, expiry, sigToVault);
 
     bytes memory sigToSelf = _signRegister(identityId, address(registry), 0, expiry, backendSignerKey);
     vm.expectRevert(IIdentityRegistryEventsAndErrors.ReservedAddress.selector);
     registry.register(identityId, address(registry), 0, expiry, sigToSelf);
-  }
-
-  function test_SetEarnVault_RevertsWhenTargetAlreadyRegistered() public {
-    address addr = makeAddr('user1');
-    _register(keccak256('identity-1'), addr);
-
-    vm.prank(admin);
-    vm.expectRevert(IIdentityRegistryEventsAndErrors.AddressAlreadyBound.selector);
-    registry.setEarnVault(addr);
   }
 
   // ================================================================
@@ -576,12 +561,10 @@ contract IdentityRegistryTest is Test {
   }
 
   function test_RegisterBatch_RevertsOnReservedAddressEntry() public {
-    address vault = makeAddr('earnVault');
-    vm.prank(admin);
-    registry.setEarnVault(vault);
+    address reserved = address(registry);
 
     (bytes32[] memory ids, address[] memory addrs) = _batchArrays(3);
-    addrs[1] = vault;
+    addrs[1] = reserved;
     uint64 expiry = uint64(block.timestamp + 1 hours);
     bytes memory sig = _signRegisterBatch(ids, addrs, expiry, 0, backendSignerKey);
 
@@ -762,9 +745,7 @@ contract IdentityRegistryTest is Test {
   }
 
   function test_SwitchAddress_RevertsOnReservedAddress() public {
-    address vault = makeAddr('earnVault');
-    vm.prank(admin);
-    registry.setEarnVault(vault);
+    address reserved = address(registry);
 
     bytes32 identityId = keccak256('identity-1');
     address oldAddr = makeAddr('user1');
@@ -774,11 +755,11 @@ contract IdentityRegistryTest is Test {
     // ReservedAddress is checked before signature verification, so any key works here.
     uint256 nonce = registry.nonces(identityId);
     uint64 expiry = uint64(block.timestamp + 1 hours);
-    bytes memory sig = _signSwitch(identityId, vault, nonce, expiry, backendSignerKey);
+    bytes memory sig = _signSwitch(identityId, reserved, nonce, expiry, backendSignerKey);
 
     vm.prank(oldAddr);
     vm.expectRevert(IIdentityRegistryEventsAndErrors.ReservedAddress.selector);
-    registry.switchAddress(identityId, vault, nonce, expiry, sig);
+    registry.switchAddress(identityId, reserved, nonce, expiry, sig);
   }
 
   function test_SwitchAddress_CooldownReArmsAfterSwitch() public {
@@ -1050,19 +1031,17 @@ contract IdentityRegistryTest is Test {
   }
 
   function test_MigrationCorrection_RevertsOnReservedAddress() public {
-    address vault = makeAddr('earnVault');
-    vm.startPrank(admin);
-    registry.setEarnVault(vault);
+    address reserved = address(registry);
+    vm.prank(admin);
     registry.setMigrationGraceEnd(uint64(block.timestamp + 30 days));
-    vm.stopPrank();
 
     bytes32 identityId = keccak256('identity-1');
     _register(identityId, makeAddr('user1'));
     uint256 nonce = registry.nonces(identityId);
     uint64 expiry = uint64(block.timestamp + 1 hours);
-    bytes memory sig = _signMigrationCorrection(identityId, vault, nonce, expiry, backendSignerKey);
+    bytes memory sig = _signMigrationCorrection(identityId, reserved, nonce, expiry, backendSignerKey);
     vm.expectRevert(IIdentityRegistryEventsAndErrors.ReservedAddress.selector);
-    registry.migrationCorrection(identityId, vault, nonce, expiry, sig);
+    registry.migrationCorrection(identityId, reserved, nonce, expiry, sig);
   }
 
   function test_MigrationCorrection_RevertsOnExpiredSignature() public {
@@ -1233,17 +1212,15 @@ contract IdentityRegistryTest is Test {
   }
 
   function test_InitiateRecovery_RevertsOnReservedAddress() public {
-    address vault = makeAddr('earnVault');
-    vm.prank(admin);
-    registry.setEarnVault(vault);
+    address reserved = address(registry);
 
     bytes32 identityId = keccak256('identity-1');
     _register(identityId, makeAddr('user1'));
     uint256 nonce = registry.nonces(identityId);
     uint64 expiry = uint64(block.timestamp + 1 hours);
-    bytes memory sig = _signRecovery(identityId, vault, nonce, expiry, backendSignerKey);
+    bytes memory sig = _signRecovery(identityId, reserved, nonce, expiry, backendSignerKey);
     vm.expectRevert(IIdentityRegistryEventsAndErrors.ReservedAddress.selector);
-    registry.initiateRecovery(identityId, vault, nonce, expiry, sig);
+    registry.initiateRecovery(identityId, reserved, nonce, expiry, sig);
   }
 
   function test_InitiateRecovery_RevertsOnExpiredSignature() public {
@@ -1340,24 +1317,95 @@ contract IdentityRegistryTest is Test {
     registry.finalizeRecovery(identityId);
   }
 
-  function test_FinalizeRecovery_RevertsWhenTargetBecameReservedDuringDelay() public {
-    bytes32 identityId = keccak256('identity-1');
-    address oldAddr = makeAddr('user1');
-    address newAddr = makeAddr('user1-recovered');
-    _register(identityId, oldAddr);
-
+  function _initiateRecovery(bytes32 identityId, address newAddr) internal {
     uint256 nonce = registry.nonces(identityId);
     uint64 expiry = uint64(block.timestamp + 1 hours);
     bytes memory sig = _signRecovery(identityId, newAddr, nonce, expiry, backendSignerKey);
     registry.initiateRecovery(identityId, newAddr, nonce, expiry, sig);
+  }
 
-    // owner repoints earnVault to the pending recovery target mid-delay
+  function test_CancelRecovery_OwnerClearsPendingAndEmits() public {
+    bytes32 identityId = keccak256('identity-1');
+    _register(identityId, makeAddr('user1'));
+    _initiateRecovery(identityId, makeAddr('user1-recovered'));
+
+    vm.expectEmit(true, true, true, true);
+    emit IIdentityRegistryEventsAndErrors.RecoveryCancelled(identityId);
     vm.prank(admin);
-    registry.setEarnVault(newAddr);
+    registry.cancelRecovery(identityId);
 
+    assertEq(registry.pendingRecoveryAddress(identityId), address(0));
+    assertEq(registry.recoveryFinalizeAfter(identityId), 0);
+
+    // the cancelled recovery can no longer be finalized, even after its delay
     vm.warp(block.timestamp + registry.RECOVERY_DELAY());
-    vm.expectRevert(IIdentityRegistryEventsAndErrors.ReservedAddress.selector);
+    vm.expectRevert(IIdentityRegistryEventsAndErrors.RecoveryNotPending.selector);
     registry.finalizeRecovery(identityId);
+    assertEq(registry.registeredAddress(identityId), makeAddr('user1'));
+  }
+
+  function test_CancelRecovery_RevertsForNonOwner() public {
+    bytes32 identityId = keccak256('identity-1');
+    _register(identityId, makeAddr('user1'));
+    _initiateRecovery(identityId, makeAddr('user1-recovered'));
+
+    address attacker = makeAddr('attacker');
+    vm.prank(attacker);
+    vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, attacker));
+    registry.cancelRecovery(identityId);
+  }
+
+  function test_CancelRecovery_RevertsWhenNothingPending() public {
+    bytes32 identityId = keccak256('identity-1');
+    _register(identityId, makeAddr('user1'));
+    vm.prank(admin);
+    vm.expectRevert(IIdentityRegistryEventsAndErrors.RecoveryNotPending.selector);
+    registry.cancelRecovery(identityId);
+  }
+
+  function test_CancelRecovery_CallableWhilePaused() public {
+    bytes32 identityId = keccak256('identity-1');
+    _register(identityId, makeAddr('user1'));
+    _initiateRecovery(identityId, makeAddr('user1-recovered'));
+
+    vm.prank(pauser);
+    registry.pause();
+    vm.prank(admin);
+    registry.cancelRecovery(identityId);
+    assertEq(registry.pendingRecoveryAddress(identityId), address(0));
+  }
+
+  /// @dev Target gets bound to another identity during the delay, so finalizeRecovery()
+  ///      reverts forever and initiateRecovery() refuses while one is pending. cancelRecovery()
+  ///      is the only way out, after which a fresh recovery to a valid target works.
+  function test_CancelRecovery_UnsticksRecoveryWhoseTargetWasBoundDuringDelay() public {
+    bytes32 identityId = keccak256('identity-1');
+    address oldAddr = makeAddr('user1');
+    address badTarget = makeAddr('user1-recovered');
+    address goodTarget = makeAddr('user1-recovered-2');
+    _register(identityId, oldAddr);
+    _initiateRecovery(identityId, badTarget);
+
+    _register(keccak256('identity-2'), badTarget);
+    vm.warp(block.timestamp + registry.RECOVERY_DELAY());
+    vm.expectRevert(IIdentityRegistryEventsAndErrors.AddressAlreadyBound.selector);
+    registry.finalizeRecovery(identityId);
+
+    uint256 nonce = registry.nonces(identityId);
+    uint64 expiry = uint64(block.timestamp + 1 hours);
+    bytes memory sig = _signRecovery(identityId, goodTarget, nonce, expiry, backendSignerKey);
+    vm.expectRevert(IIdentityRegistryEventsAndErrors.RecoveryAlreadyPending.selector);
+    registry.initiateRecovery(identityId, goodTarget, nonce, expiry, sig);
+
+    vm.prank(admin);
+    registry.cancelRecovery(identityId);
+
+    registry.initiateRecovery(identityId, goodTarget, nonce, expiry, sig);
+    vm.warp(block.timestamp + registry.RECOVERY_DELAY());
+    registry.finalizeRecovery(identityId);
+
+    assertEq(registry.registeredAddress(identityId), goodTarget);
+    assertEq(registry.identityOf(oldAddr), bytes32(0));
   }
 
   function test_SwitchAddress_CancelsPendingRecovery() public {

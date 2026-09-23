@@ -41,10 +41,12 @@ interface IIdentityRegistryEventsAndErrors {
   /// @param newAddr Address the identity is now registered to
   event MigrationCorrected(bytes32 indexed identityId, address indexed oldAddr, address indexed newAddr);
 
-  /// @notice Emitted when a pending recovery is cancelled by a successful switchAddress()
+  /// @notice Emitted when a pending recovery is cancelled - by a successful switchAddress()/
+  ///         migrationCorrection(), or by the owner via cancelRecovery()
   /// @dev A user proving direct control via switchAddress() moots any recovery in flight -
   ///      whether that recovery was legitimate (user regained access another way) or the
-  ///      product of a compromised backend signer.
+  ///      product of a compromised backend signer. cancelRecovery() covers a recovery that can
+  ///      no longer finalize (target bound to another identity meanwhile) or was initiated to a wrong address.
   /// @param identityId Opaque identifier for the loyalty identity
   event RecoveryCancelled(bytes32 indexed identityId);
 
@@ -75,12 +77,6 @@ interface IIdentityRegistryEventsAndErrors {
   /// @param oldEnd Previous migration grace end timestamp
   /// @param newEnd New migration grace end timestamp
   event MigrationGraceEndChanged(address indexed actor, uint64 oldEnd, uint64 newEnd);
-
-  /// @notice Emitted when the EarnVault address (a reserved registration target) is changed
-  /// @param actor Address that initiated the change (msg.sender)
-  /// @param oldVault Previous EarnVault address
-  /// @param newVault New EarnVault address
-  event EarnVaultChanged(address indexed actor, address indexed oldVault, address indexed newVault);
 
   // ========================================
   // Errors
@@ -119,8 +115,8 @@ interface IIdentityRegistryEventsAndErrors {
   /// @notice Thrown when an address being registered/switched to is already bound to a different identity
   error AddressAlreadyBound();
 
-  /// @notice Thrown when an address being registered/switched to is this registry or the EarnVault -
-  ///         neither is a valid boost-payout or principal-holding destination
+  /// @notice Thrown when an address being registered/switched to is this registry itself - never a
+  ///         valid payout destination (the EarnVault's own address is rejected by EarnVaultV2)
   error ReservedAddress();
 
   /// @notice Thrown when switchAddress()/initiateRecovery()/migrationCorrection() is called with
@@ -145,7 +141,7 @@ interface IIdentityRegistryEventsAndErrors {
   /// @notice Thrown when initiateRecovery() is called for an identity with an already-pending recovery
   error RecoveryAlreadyPending();
 
-  /// @notice Thrown when finalizeRecovery() is called for an identity with no pending recovery
+  /// @notice Thrown when finalizeRecovery()/cancelRecovery() is called for an identity with no pending recovery
   error RecoveryNotPending();
 
   /// @notice Thrown when finalizeRecovery() is called before the recovery delay has elapsed

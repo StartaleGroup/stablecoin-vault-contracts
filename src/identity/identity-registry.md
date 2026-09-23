@@ -2,7 +2,19 @@
 
 For the coding agent working in the vaults repo. Self-contained: you shouldn't need the surrounding design docs to build from this. Companion: `4-review-checklist-open-loose-ends.md` (open items), `3-contract-implementation-design.md` (system architecture).
 
-Last updated: 2026-09-17.
+Last updated: 2026-09-17 (status note and §10 revised 2026-09-23).
+
+> **Status (2026-09-23):** this is the pre-implementation spec `IdentityRegistry.sol` was built from, kept for design rationale. **Where the two differ, the contract and its NatSpec are authoritative.** Known divergences:
+>
+> - **§1, §6, §9, §11 — no `VipBoostDistributor`.** It was dropped; boost is pushed as principal by `EarnVaultV2.onBoostCredit()`, which calls `registeredAddress()` once per batch entry. §11's "the vault never calls this contract" no longer holds.
+> - **§4, §5.4 — signer set, not one signer.** `backendSigners` is a bounded set (`MAX_BACKEND_SIGNERS = 10`, any one signature suffices), managed via `addBackendSigner`/`removeBackendSigner`. Storage also gained `batchNonce` and the pending-recovery mappings.
+> - **§5.1 — only the registry itself is reserved.** The registry does not track the EarnVault address. The "can't pay the vault itself" guard lives solely in `EarnVaultV2.onBoostCredit()` (`user == address(this)` reverts the whole batch), in the contract that would be harmed, with no extra storage, setter or deployment-ordering constraint here. Binding the vault's address needs a backend signature (`switchAddress` can't, since the vault has no ERC-1271).
+> - **§5.2 — `switchAddress` IS `msg.sender`-gated** to the current registered address, reversing "do not gate on `msg.sender`": `identityId` is public, so a signature-only design let anyone redirect any identity to an address they control. The `newAddr` signature is still required on top, as squatting prevention. AA gas sponsorship is unaffected (the AA itself is `msg.sender`).
+> - **§5.3 — recovery cancellation.** Added owner-only `cancelRecovery`; `switchAddress` and `migrationCorrection` also cancel a pending recovery.
+> - **§7 — grace window is a separate function.** Because of the §5.2 gate, a user whose backfilled address is wrong cannot call `switchAddress` at all, so the one-time correction is a backend-signed `migrationCorrection()` (once per identity, while `migrationGraceEnd` is open) instead of a cooldown-exempt `switchAddress`.
+> - **§10 — rewritten below** for the current contracts.
+>
+> The companion docs referenced below are not in this repo.
 
 ---
 
@@ -133,7 +145,10 @@ function switchAddress(
 ```solidity
 function initiateRecovery(bytes32 identityId, address newAddr, ...) external;  // backendSigner-signed
 function finalizeRecovery(bytes32 identityId) external;                        // after 72h delay
+function cancelRecovery(bytes32 identityId) external;                          // onlyOwner escape hatch
 ```
+
+`cancelRecovery` exists because a pending recovery can otherwise deadlock: `initiateRecovery` refuses while one is pending, and `finalizeRecovery` reverts forever if the target was bound elsewhere or became reserved during the delay (or ops simply picked the wrong target).
 
 Separate from `switchAddress` — different threat model, different authorization. Emits on initiation so the app can notify the old address. 72h delay is independent of the 48h switch cooldown; both clocks coexist.
 
@@ -185,12 +200,10 @@ Pause blocks `register`, `registerBatch`, `switchAddress`, recovery. **Pause mus
 
 ## 10. Deployment and integration order
 
-Order is forced by the distributor's immutable reference:
-
-1. Deploy `IdentityRegistry`.
-2. Deploy `VipBoostDistributor` with the registry address.
-3. **Run the full backfill before the first `postRoot`** — early cycles would otherwise pay nobody, since unregistered identities revert on claim.
-4. Hand the engine team the Phase-0 derivation fixture and the event ABI. Registration and switch events are what the engine indexes to attribute principal over time.
+1. Deploy `IdentityRegistry(owner, backendSigners, pauser, switchCooldown)`. It holds no vault reference, so there is nothing to wire before the backfill.
+2. Upgrade the proxy to `EarnVaultV2` with **one** `ProxyAdmin.upgradeAndCall(proxy, v2Impl, initializeV2(boostKeeper, registry))`. `initializeV2` only accepts the ProxyAdmin as caller, so it cannot be run any other way; if an upgrade lands without it, the vault stays safe (no boostKeeper) and you simply repeat `upgradeAndCall` to the same implementation with it.
+3. **Run the full backfill (`registerBatch`) before the first `onBoostCredit`** — an unregistered identity reverts the whole credit batch.
+4. Hand the engine team the event ABI (registration/switch/recovery events for attribution; `BoostCredited`/`BoostCycleCredited` for reconciliation). The engine must drop zero-amount entries before batching: a zero entry still consumes that identity's `cycleId`.
 
 ---
 
