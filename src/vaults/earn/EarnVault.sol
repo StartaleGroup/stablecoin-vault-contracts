@@ -269,7 +269,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     catch {
       revert IEarnVaultEventsAndErrors.PermitFailed();
     }
-    
+
     _deposit(tokenOwner, amount);
   }
 
@@ -583,7 +583,9 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     // Settle boost rewards for all active tokens BEFORE updating principal
     for (uint256 i = 0; i < activeBoostTokens.length; i++) {
       address token = activeBoostTokens[i];
-      BoostRewardsLib.settleBoost(user, token, principal[user], boostGlobalIndex[token], userBoostIndex, userBoostAccrued);
+      BoostRewardsLib.settleBoost(
+        user, token, principal[user], boostGlobalIndex[token], userBoostIndex, userBoostAccrued
+      );
     }
 
     USDSC.safeTransferFrom(user, address(this), amount);
@@ -616,13 +618,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
       address token = activeBoostTokens[i];
       // settleBoost is called internally by claimBoostReward
       uint256 claimedAmount = BoostRewardsLib.claimBoostReward(
-        user,
-        token,
-        p,
-        boostGlobalIndex[token],
-        userBoostIndex,
-        userBoostAccrued,
-        boostClaimReserve
+        user, token, p, boostGlobalIndex[token], userBoostIndex, userBoostAccrued, boostClaimReserve
       );
       if (claimedAmount > 0) {
         hasBoostClaim = true;

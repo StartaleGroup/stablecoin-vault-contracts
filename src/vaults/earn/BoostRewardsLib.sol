@@ -114,7 +114,7 @@ library BoostRewardsLib {
       userBoostIndex[user][token] = boostGlobalIndex;
       return;
     }
-    
+
     uint256 ui = userBoostIndex[user][token];
 
     // Settle accrued rewards if global index has increased
@@ -122,7 +122,7 @@ library BoostRewardsLib {
       uint256 owed = Math.mulDiv(principal, boostGlobalIndex - ui, RAY);
       userBoostAccrued[user][token] += owed;
     }
-    
+
     // Always update index for consistency
     userBoostIndex[user][token] = boostGlobalIndex;
   }
@@ -204,5 +204,4 @@ library BoostRewardsLib {
     }
     return userBoostAccrued[user][token];
   }
-
 }

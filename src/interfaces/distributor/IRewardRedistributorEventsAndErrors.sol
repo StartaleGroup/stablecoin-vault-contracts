@@ -57,10 +57,7 @@ interface IRewardRedistributorEventsAndErrors {
   /// @param lastSnapshotTimestamp Timestamp when the snapshot was captured.
   /// @param lastSnapshotBlockNumber Block number when the snapshot was captured.
   event VaultTVLsSnapshotCaptured(
-    uint256 lastSusdscTVL,
-    uint256 lastEarnTVL,
-    uint256 lastSnapshotTimestamp,
-    uint256 lastSnapshotBlockNumber
+    uint256 lastSusdscTVL, uint256 lastEarnTVL, uint256 lastSnapshotTimestamp, uint256 lastSnapshotBlockNumber
   );
 
   /// @notice Emitted when snapshot maximum age is updated.
