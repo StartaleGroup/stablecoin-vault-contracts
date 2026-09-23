@@ -160,7 +160,11 @@ contract EarnVaultV2Invariants is StdInvariant, Test {
 
     EarnVaultV2 v2Implementation = new EarnVaultV2();
     vm.prank(admin);
-    proxyAdmin.upgradeAndCall(ITransparentUpgradeableProxy(address(proxy)), address(v2Implementation), '');
+    proxyAdmin.upgradeAndCall(
+      ITransparentUpgradeableProxy(address(proxy)),
+      address(v2Implementation),
+      abi.encodeWithSelector(EarnVaultV2.initializeV2.selector, makeAddr('boostKeeper'), makeAddr('identityRegistry'))
+    );
 
     vault = EarnVaultV2(payable(address(proxy)));
 
