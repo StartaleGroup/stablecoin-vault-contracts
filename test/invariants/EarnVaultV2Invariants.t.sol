@@ -37,6 +37,10 @@ contract EarnVaultV2Handler is Test {
   /// @notice Upper bound on per-user settlements performed so far (each floors <= 1 wei of
   ///         yield in the vault's favour). Over-counting only loosens the dust bound below.
   uint256 public settleOps;
+  /// @notice Two INELIGIBLE identities mixed into credit batches: one bound to the vault itself,
+  ///         one bound to an always-blacklisted address. onBoostCredit() must skip both.
+  address public blacklistedAddr;
+  uint256 public constant INELIGIBLE_IDENTITIES = 2;
   /// @notice onYield() calls so far (each index update floors < 1 wei in the vault's favour)
   uint256 public yieldOps;
 
@@ -59,6 +63,9 @@ contract EarnVaultV2Handler is Test {
     redistributor = _redistributor;
     operator = _operator;
     boostKeeper = _boostKeeper;
+    blacklistedAddr = makeAddr('handlerBlacklisted');
+    _registry.set(_identityId(MAX_USERS), address(_vault));
+    _registry.set(_identityId(MAX_USERS + 1), blacklistedAddr);
 
     for (uint256 i = 0; i < MAX_USERS; i++) {
       address user = makeAddr(string(abi.encodePacked('handlerUser', i)));
@@ -152,13 +159,15 @@ contract EarnVaultV2Handler is Test {
   ///      it never trips the duplicate-in-batch StaleCycle revert; cycleId strictly increases
   ///      per call, so it never trips the replay guard either. Amounts may be zero on purpose.
   function onBoostCredit(uint256 offsetSeed, uint256 countSeed, uint256 amountSeed) external {
-    uint256 count = bound(countSeed, 1, users.length);
-    uint256 offset = bound(offsetSeed, 0, users.length - 1);
+    // pool = every user identity plus the two ineligible ones; contiguous distinct window
+    uint256 pool = users.length + INELIGIBLE_IDENTITIES;
+    uint256 count = bound(countSeed, 1, pool);
+    uint256 offset = bound(offsetSeed, 0, pool - 1);
     bytes32[] memory ids = new bytes32[](count);
     uint256[] memory amounts = new uint256[](count);
     uint256 total = 0;
     for (uint256 i = 0; i < count; i++) {
-      ids[i] = _identityId((offset + i) % users.length);
+      ids[i] = _identityId((offset + i) % pool);
       amounts[i] = bound(uint256(keccak256(abi.encode(amountSeed, i))), 0, MAX_AMOUNT / 10);
       total += amounts[i];
     }
@@ -233,6 +242,9 @@ contract EarnVaultV2Invariants is StdInvariant, Test {
     vault = EarnVaultV2(payable(address(proxy)));
 
     handler = new EarnVaultV2Handler(vault, usdsc, boostToken, redistributor, operator, boostKeeper, registry);
+    address blacklisted = handler.blacklistedAddr(); // read BEFORE the prank - an external call would consume it
+    vm.prank(owner);
+    vault.setBlacklisted(blacklisted, true);
 
     bytes4[] memory selectors = new bytes4[](8);
     selectors[0] = EarnVaultV2Handler.deposit.selector;
@@ -284,6 +296,13 @@ contract EarnVaultV2Invariants is StdInvariant, Test {
 
   /// @notice The vault must always hold enough USDSC to cover claimReserve - the funding
   ///         invariant carried over unchanged from V1.
+  /// @notice Skipped entries never credit anyone: the vault's own address and the blacklisted
+  ///         address (both mixed into every credit pool) never hold principal.
+  function invariant_IneligibleAddressesNeverCredited() external view {
+    assertEq(vault.principal(address(vault)), 0);
+    assertEq(vault.principal(handler.blacklistedAddr()), 0);
+  }
+
   function invariant_VaultBalanceCoversClaimReserve() external view {
     assertGe(usdsc.balanceOf(address(vault)), vault.claimReserve());
   }

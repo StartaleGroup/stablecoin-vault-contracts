@@ -62,10 +62,30 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
   event BoostKeeperChanged(address indexed actor, address indexed oldKeeper, address indexed newKeeper);
   event IdentityRegistryChanged(address indexed actor, address indexed oldRegistry, address indexed newRegistry);
   event BoostCredited(bytes32 indexed identityId, address indexed addr, uint256 amount, uint256 indexed cycleId);
-  /// @notice Emitted once per onBoostCredit() call, after every entry in the batch has been
-  ///         credited - lets the off-chain reward engine confirm "did all of cycle N's batches
-  ///         land?" with a single indexed query instead of aggregating every BoostCredited event
-  event BoostCycleCredited(uint256 indexed cycleId, uint256 entryCount, uint256 total);
+  /// @notice Why onBoostCredit() skipped an entry instead of crediting it
+  /// @dev VaultAddress: the identity resolves to this vault's own address. Blacklisted: it
+  ///      resolves to a blacklisted address (blacklisting can happen at any time after binding).
+  enum BoostSkipReason {
+    VaultAddress,
+    Blacklisted
+  }
+
+  /// @notice Emitted for an entry onBoostCredit() skipped instead of crediting. Its amount stays in
+  ///         the vault as unreserved surplus (recoverable via sweepSurplusToTreasury()), and its
+  ///         cycleId is NOT consumed, so it can be credited later in the same cycle.
+  event BoostCreditSkipped(
+    bytes32 indexed identityId, address indexed addr, uint256 amount, uint256 indexed cycleId, BoostSkipReason reason
+  );
+  /// @notice Emitted once per onBoostCredit() call, after every entry has been processed - lets the
+  ///         off-chain reward engine confirm "did all of cycle N's batches land?" with a single
+  ///         indexed query instead of aggregating every BoostCredited event
+  /// @param entryCount Entries submitted in the batch
+  /// @param total Sum of all submitted amounts (the amount the funding check required)
+  /// @param skippedCount Entries skipped (see BoostCreditSkipped); entryCount - skippedCount were credited
+  /// @param skippedTotal Sum of skipped amounts - left in the vault as unreserved surplus
+  event BoostCycleCredited(
+    uint256 indexed cycleId, uint256 entryCount, uint256 total, uint256 skippedCount, uint256 skippedTotal
+  );
 
   error NotBoostKeeper();
   error NotProxyAdmin();
@@ -177,10 +197,16 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
   ///      unset registry reverts the whole batch (fail-closed) rather than silently skipping.
   ///      Gated whenNotPaused, like the other principal-changing entry points (deposit()/
   ///      withdraw()/claim()/compound()/compoundMany()).
-  /// @dev Blacklisted addresses revert the whole batch (fail-closed), unlike compoundMany()'s
-  ///      skip-and-continue - consistent with this function's existing all-or-nothing discipline
-  ///      for insufficient-balance/unregistered-identity/stale-cycle. Checked AFTER resolving
-  ///      the identityId to an address via the registry, since blacklisting is keyed by address.
+  /// @dev All-or-nothing for funding and replay (insufficient balance, stale cycleId, unregistered
+  ///      identity or unset registry revert the whole batch), but per-entry for eligibility: an
+  ///      entry resolving to this vault's own address or to a blacklisted address is SKIPPED -
+  ///      BoostCreditSkipped is emitted, nothing is credited, and its cycleId is not consumed, so
+  ///      it can be credited later in the same cycle once eligible. Mirrors compoundMany()'s
+  ///      skip-blacklisted behaviour, so one ineligible identity (bound to the vault, or blacklisted
+  ///      after binding) cannot fail every other identity's credit. The funding check still covers
+  ///      skipped amounts; they stay as unreserved surplus, recoverable via sweepSurplusToTreasury().
+  ///      Eligibility is checked AFTER resolving the identityId via the registry, since blacklisting
+  ///      is keyed by address.
   /// @dev A zero-amount entry is NOT a no-op: it still passes every check, consumes the
   ///      identity's cycleId (a later non-zero credit for the same cycle then reverts StaleCycle)
   ///      and emits BoostCredited. The off-chain engine must drop zero amounts before batching.
@@ -210,33 +236,56 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
     uint256 bal = $.USDSC.balanceOf(address(this));
     if (bal < $.claimReserve + total) revert IEarnVaultEventsAndErrors.InsufficientFunding();
 
+    uint256 skippedCount = 0;
+    uint256 skippedTotal = 0;
     for (uint256 i = 0; i < identityIds.length; i++) {
-      bytes32 identityId = identityIds[i];
-      uint256 amount = amounts[i];
-
-      if (cycleId <= $$.lastCreditedCycle[identityId]) revert StaleCycle();
-      $$.lastCreditedCycle[identityId] = cycleId;
-
-      address user = registry.registeredAddress(identityId);
-      if (user == address(0)) revert IdentityNotRegistered();
-      // The ONLY guard against the vault crediting principal to itself - IdentityRegistry
-      // deliberately does not track the vault's address. Enforced here, in the contract that
-      // would be harmed. Binding the vault needs a backend signature (switchAddress() can't: the
-      // vault cannot produce a valid signature - no isValidSignature, and its fallback reverts),
-      // and a misbinding fails the whole batch closed, moving nothing.
-      if (user == address(this)) revert IdentityNotRegistered();
-      _checkNotBlacklisted(user);
-
-      _settle(user);
-
-      $.principal[user] += amount;
-      $.totalPrincipal += amount;
-      $.claimReserve += amount;
-
-      emit BoostCredited(identityId, user, amount, cycleId);
+      if (!_creditBoostEntry(registry, cycleId, identityIds[i], amounts[i])) {
+        skippedCount++;
+        skippedTotal += amounts[i];
+      }
     }
 
-    emit BoostCycleCredited(cycleId, identityIds.length, total);
+    emit BoostCycleCredited(cycleId, identityIds.length, total, skippedCount, skippedTotal);
+  }
+
+  /// @dev Processes one onBoostCredit() entry. Reverts (failing the whole batch) on a stale cycleId
+  ///      or an unregistered identity; returns false - having emitted BoostCreditSkipped and
+  ///      changed nothing else - when the identity resolves to this vault or to a blacklisted
+  ///      address; otherwise credits the entry and returns true.
+  function _creditBoostEntry(
+    IIdentityRegistry registry,
+    uint256 cycleId,
+    bytes32 identityId,
+    uint256 amount
+  ) internal returns (bool credited) {
+    BoostCreditStorage storage $$ = _getBoostCreditStorage();
+    if (cycleId <= $$.lastCreditedCycle[identityId]) revert StaleCycle();
+
+    address user = registry.registeredAddress(identityId);
+    if (user == address(0)) revert IdentityNotRegistered();
+
+    // Per-entry eligibility skips; it does not fail the batch. The vault's own address is the ONLY
+    // guard against crediting principal to itself (IdentityRegistry does not track the vault; any
+    // user can bind to it via switchAddress()). An address can become blacklisted any time after
+    // binding. Either way the entry is skipped, not credited.
+    EarnVaultStorage storage $ = _getStorage();
+    if (user == address(this) || $.isBlacklisted[user]) {
+      BoostSkipReason reason = user == address(this) ? BoostSkipReason.VaultAddress : BoostSkipReason.Blacklisted;
+      emit BoostCreditSkipped(identityId, user, amount, cycleId, reason);
+      return false;
+    }
+
+    // Replay guard written only on an actual credit - a skip is not a payment.
+    $$.lastCreditedCycle[identityId] = cycleId;
+
+    _settle(user);
+
+    $.principal[user] += amount;
+    $.totalPrincipal += amount;
+    $.claimReserve += amount;
+
+    emit BoostCredited(identityId, user, amount, cycleId);
+    return true;
   }
 
   /// @notice Settle `user`'s pending USDSC yield, folding it into their own principal

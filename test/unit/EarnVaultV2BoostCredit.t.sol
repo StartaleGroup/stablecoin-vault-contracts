@@ -724,37 +724,6 @@ contract EarnVaultV2BoostCreditTest is Test {
     assertEq(vault.principal(user), 0);
   }
 
-  function test_OnBoostCredit_RevertsWholeBatchWhenResolvedUserIsBlacklisted() public {
-    bytes32 idA = keccak256('identity-A');
-    bytes32 idB = keccak256('identity-B');
-    address userA = makeAddr('userA');
-    address userB = makeAddr('userB');
-    _registerMock(idA, userA);
-    _registerMock(idB, userB);
-
-    vm.prank(owner);
-    vault.setBlacklisted(userB, true);
-
-    uint256 amountA = 50e6;
-    uint256 amountB = 75e6;
-    usdsc.mint(address(vault), amountA + amountB);
-
-    bytes32[] memory ids = new bytes32[](2);
-    ids[0] = idA;
-    ids[1] = idB;
-    uint256[] memory amounts = new uint256[](2);
-    amounts[0] = amountA;
-    amounts[1] = amountB;
-
-    vm.prank(boostKeeper);
-    vm.expectRevert(IEarnVaultEventsAndErrors.AddressBlacklisted.selector);
-    vault.onBoostCredit(1, ids, amounts);
-
-    // whole batch reverted - not even the first, non-blacklisted entry should be credited
-    assertEq(vault.principal(userA), 0);
-    assertEq(vault.principal(userB), 0);
-  }
-
   function _depositAsUser(address user, uint256 amount) internal {
     usdsc.mint(user, amount);
     vm.prank(user);
@@ -859,6 +828,234 @@ contract EarnVaultV2BoostCreditTest is Test {
     assertEq(vault.claimReserve(), depositAmount);
   }
 
+  // ---------------------------------------------------------------------------------------------
+  // Per-entry eligibility: entries resolving to the vault itself or to a blacklisted address are
+  // SKIPPED (event emitted, nothing credited, cycleId not consumed); the rest of the batch lands.
+  // ---------------------------------------------------------------------------------------------
+
+  function _batch2(
+    bytes32 a,
+    uint256 amtA,
+    bytes32 b,
+    uint256 amtB
+  ) internal pure returns (bytes32[] memory ids, uint256[] memory amounts) {
+    ids = new bytes32[](2);
+    ids[0] = a;
+    ids[1] = b;
+    amounts = new uint256[](2);
+    amounts[0] = amtA;
+    amounts[1] = amtB;
+  }
+
+  function _batch1(bytes32 a, uint256 amt) internal pure returns (bytes32[] memory ids, uint256[] memory amounts) {
+    ids = new bytes32[](1);
+    ids[0] = a;
+    amounts = new uint256[](1);
+    amounts[0] = amt;
+  }
+
+  function test_OnBoostCredit_SkipsBlacklistedEntry_CreditsTheRest() public {
+    bytes32 idA = keccak256('identity-A');
+    bytes32 idB = keccak256('identity-B');
+    address userA = makeAddr('userA');
+    address userB = makeAddr('userB');
+    _registerMock(idA, userA);
+    _registerMock(idB, userB);
+    vm.prank(owner);
+    vault.setBlacklisted(userB, true);
+
+    usdsc.mint(address(vault), 50e6 + 75e6);
+    (bytes32[] memory ids, uint256[] memory amounts) = _batch2(idA, 50e6, idB, 75e6);
+
+    vm.expectEmit(true, true, true, true);
+    emit EarnVaultV2.BoostCredited(idA, userA, 50e6, 1);
+    vm.expectEmit(true, true, true, true);
+    emit EarnVaultV2.BoostCreditSkipped(idB, userB, 75e6, 1, EarnVaultV2.BoostSkipReason.Blacklisted);
+    vm.expectEmit(true, true, true, true);
+    emit EarnVaultV2.BoostCycleCredited(1, 2, 125e6, 1, 75e6);
+    vm.prank(boostKeeper);
+    vault.onBoostCredit(1, ids, amounts);
+
+    assertEq(vault.principal(userA), 50e6);
+    assertEq(vault.principal(userB), 0);
+    assertEq(vault.lastCreditedCycle(idA), 1);
+    assertEq(vault.lastCreditedCycle(idB), 0, 'skip must not consume the cycleId');
+    assertEq(vault.claimReserve(), 50e6, 'reserve grows only by credited amounts');
+    assertEq(usdsc.balanceOf(address(vault)) - vault.claimReserve(), 75e6, 'skipped amount is surplus');
+  }
+
+  function test_OnBoostCredit_SkipsVaultAddressEntry_CreditsTheRest() public {
+    bytes32 idA = keccak256('identity-A');
+    bytes32 idV = keccak256('bound-to-vault');
+    address userA = makeAddr('userA');
+    _registerMock(idA, userA);
+    _registerMock(idV, address(vault));
+
+    usdsc.mint(address(vault), 50e6 + 40e6);
+    (bytes32[] memory ids, uint256[] memory amounts) = _batch2(idV, 40e6, idA, 50e6);
+
+    vm.expectEmit(true, true, true, true);
+    emit EarnVaultV2.BoostCreditSkipped(idV, address(vault), 40e6, 1, EarnVaultV2.BoostSkipReason.VaultAddress);
+    vm.prank(boostKeeper);
+    vault.onBoostCredit(1, ids, amounts);
+
+    assertEq(vault.principal(address(vault)), 0, 'vault never credits itself');
+    assertEq(vault.principal(userA), 50e6);
+    assertEq(vault.totalPrincipal(), 50e6);
+    assertEq(vault.lastCreditedCycle(idV), 0);
+  }
+
+  function test_OnBoostCredit_SkippedIdentityCanBeCreditedLaterInSameCycle() public {
+    bytes32 idB = keccak256('identity-B');
+    address userB = makeAddr('userB');
+    _registerMock(idB, userB);
+    vm.prank(owner);
+    vault.setBlacklisted(userB, true);
+
+    usdsc.mint(address(vault), 75e6);
+    (bytes32[] memory ids, uint256[] memory amounts) = _batch1(idB, 75e6);
+    vm.prank(boostKeeper);
+    vault.onBoostCredit(4, ids, amounts);
+    assertEq(vault.principal(userB), 0);
+
+    // condition clears; the SAME cycleId is still available because the skip didn't consume it.
+    // The earlier skipped 75e6 is still surplus, so this retry needs no new funding.
+    vm.prank(owner);
+    vault.setBlacklisted(userB, false);
+    vm.prank(boostKeeper);
+    vault.onBoostCredit(4, ids, amounts);
+
+    assertEq(vault.principal(userB), 75e6);
+    assertEq(vault.lastCreditedCycle(idB), 4);
+    assertEq(vault.claimReserve(), usdsc.balanceOf(address(vault)));
+  }
+
+  /// @dev The "ordinary operations" case: an identity credited normally, then its address is
+  ///      blacklisted later. Its next credit is skipped; everyone else's still lands.
+  function test_OnBoostCredit_AddressBlacklistedAfterEarlierCredit_OnlyThatEntrySkipped() public {
+    bytes32 idA = keccak256('identity-A');
+    bytes32 idB = keccak256('identity-B');
+    address userA = makeAddr('userA');
+    address userB = makeAddr('userB');
+    _registerMock(idA, userA);
+    _registerMock(idB, userB);
+
+    usdsc.mint(address(vault), 20e6);
+    (bytes32[] memory ids, uint256[] memory amounts) = _batch2(idA, 10e6, idB, 10e6);
+    vm.prank(boostKeeper);
+    vault.onBoostCredit(1, ids, amounts);
+    assertEq(vault.principal(userB), 10e6);
+
+    vm.prank(owner);
+    vault.setBlacklisted(userB, true);
+
+    usdsc.mint(address(vault), 20e6);
+    vm.prank(boostKeeper);
+    vault.onBoostCredit(2, ids, amounts);
+
+    assertEq(vault.principal(userA), 20e6);
+    assertEq(vault.principal(userB), 10e6, 'blacklisted after binding: cycle 2 skipped');
+    assertEq(vault.lastCreditedCycle(idB), 1);
+  }
+
+  function test_OnBoostCredit_SkippedSurplusIsSweepableAndReserveUntouched() public {
+    address depositor = makeAddr('depositor');
+    _depositAsUser(depositor, 500e6);
+    bytes32 idB = keccak256('identity-B');
+    address userB = makeAddr('userB');
+    _registerMock(idB, userB);
+    vm.prank(owner);
+    vault.setBlacklisted(userB, true);
+
+    usdsc.mint(address(vault), 33e6);
+    (bytes32[] memory ids, uint256[] memory amounts) = _batch1(idB, 33e6);
+    vm.prank(boostKeeper);
+    vault.onBoostCredit(1, ids, amounts);
+
+    uint256 reserveBefore = vault.claimReserve();
+    uint256 treasuryBefore = usdsc.balanceOf(treasury);
+    vm.prank(owner);
+    vault.sweepSurplusToTreasury();
+
+    assertEq(usdsc.balanceOf(treasury) - treasuryBefore, 33e6, 'exactly the skipped amount');
+    assertEq(vault.claimReserve(), reserveBefore);
+    assertEq(usdsc.balanceOf(address(vault)), vault.claimReserve());
+    assertEq(vault.principal(depositor), 500e6);
+  }
+
+  function test_OnBoostCredit_AllEntriesSkipped_BatchSucceedsCreditingNothing() public {
+    bytes32 idV = keccak256('bound-to-vault');
+    bytes32 idB = keccak256('identity-B');
+    address userB = makeAddr('userB');
+    _registerMock(idV, address(vault));
+    _registerMock(idB, userB);
+    vm.prank(owner);
+    vault.setBlacklisted(userB, true);
+
+    usdsc.mint(address(vault), 30e6);
+    (bytes32[] memory ids, uint256[] memory amounts) = _batch2(idV, 10e6, idB, 20e6);
+    vm.expectEmit(true, true, true, true);
+    emit EarnVaultV2.BoostCycleCredited(9, 2, 30e6, 2, 30e6);
+    vm.prank(boostKeeper);
+    vault.onBoostCredit(9, ids, amounts);
+
+    assertEq(vault.totalPrincipal(), 0);
+    assertEq(vault.claimReserve(), 0);
+  }
+
+  /// @dev Replay stays all-or-nothing and is checked BEFORE eligibility: a resubmitted cycle
+  ///      reverts the whole batch even when the offending entry would now be skipped.
+  function test_OnBoostCredit_StaleCycleRevertsEvenForEntryThatWouldBeSkipped() public {
+    bytes32 idB = keccak256('identity-B');
+    address userB = makeAddr('userB');
+    _registerMock(idB, userB);
+    usdsc.mint(address(vault), 20e6);
+    (bytes32[] memory ids, uint256[] memory amounts) = _batch1(idB, 10e6);
+    vm.prank(boostKeeper);
+    vault.onBoostCredit(5, ids, amounts);
+
+    vm.prank(owner);
+    vault.setBlacklisted(userB, true);
+    vm.prank(boostKeeper);
+    vm.expectRevert(EarnVaultV2.StaleCycle.selector);
+    vault.onBoostCredit(5, ids, amounts);
+  }
+
+  /// @dev The funding check stays conservative: it requires the FULL submitted total, including
+  ///      entries that end up skipped.
+  function test_OnBoostCredit_FundingCheckStillCoversSkippedAmounts() public {
+    bytes32 idA = keccak256('identity-A');
+    bytes32 idB = keccak256('identity-B');
+    _registerMock(idA, makeAddr('userA'));
+    _registerMock(idB, makeAddr('userB'));
+    vm.prank(owner);
+    vault.setBlacklisted(makeAddr('userB'), true);
+
+    usdsc.mint(address(vault), 50e6); // only enough for the eligible entry
+    (bytes32[] memory ids, uint256[] memory amounts) = _batch2(idA, 50e6, idB, 75e6);
+    vm.prank(boostKeeper);
+    vm.expectRevert(IEarnVaultEventsAndErrors.InsufficientFunding.selector);
+    vault.onBoostCredit(1, ids, amounts);
+  }
+
+  /// @dev A duplicate of an INELIGIBLE identity is skipped twice (no StaleCycle, since a skip
+  ///      writes nothing); a duplicate of an eligible one still reverts StaleCycle (tested below).
+  function test_OnBoostCredit_DuplicateIneligibleEntryIsSkippedTwice() public {
+    bytes32 idB = keccak256('identity-B');
+    address userB = makeAddr('userB');
+    _registerMock(idB, userB);
+    vm.prank(owner);
+    vault.setBlacklisted(userB, true);
+
+    usdsc.mint(address(vault), 20e6);
+    (bytes32[] memory ids, uint256[] memory amounts) = _batch2(idB, 10e6, idB, 10e6);
+    vm.expectEmit(true, true, true, true);
+    emit EarnVaultV2.BoostCycleCredited(1, 2, 20e6, 2, 20e6);
+    vm.prank(boostKeeper);
+    vault.onBoostCredit(1, ids, amounts);
+    assertEq(vault.principal(userB), 0);
+  }
+
   function test_OnBoostCredit_RevertsWholeBatchOnDuplicateIdentityInSameBatch() public {
     bytes32 idA = keccak256('identity-A');
     address userA = makeAddr('userA');
@@ -883,27 +1080,6 @@ contract EarnVaultV2BoostCreditTest is Test {
     assertEq(vault.lastCreditedCycle(idA), 0);
   }
 
-  function test_OnBoostCredit_RevertsWhenResolvedUserIsVaultItself() public {
-    // If the registry resolves an identity to the vault's own address, the vault must never
-    // credit itself. This check in EarnVaultV2.onBoostCredit() is the ONLY guard - the registry
-    // deliberately does not track the vault's address.
-    bytes32 identityId = keccak256('identity-1');
-    _registerMock(identityId, address(vault));
-
-    usdsc.mint(address(vault), 100e6);
-
-    bytes32[] memory ids = new bytes32[](1);
-    ids[0] = identityId;
-    uint256[] memory amounts = new uint256[](1);
-    amounts[0] = 100e6;
-
-    vm.prank(boostKeeper);
-    vm.expectRevert(EarnVaultV2.IdentityNotRegistered.selector);
-    vault.onBoostCredit(1, ids, amounts);
-
-    assertEq(vault.principal(address(vault)), 0);
-  }
-
   function test_OnBoostCredit_EmitsBoostCycleCreditedSummaryEvent() public {
     bytes32 idA = keccak256('identity-A');
     bytes32 idB = keccak256('identity-B');
@@ -924,7 +1100,7 @@ contract EarnVaultV2BoostCreditTest is Test {
     amounts[1] = amountB;
 
     vm.expectEmit(true, true, true, true);
-    emit EarnVaultV2.BoostCycleCredited(7, 2, amountA + amountB);
+    emit EarnVaultV2.BoostCycleCredited(7, 2, amountA + amountB, 0, 0);
     vm.prank(boostKeeper);
     vault.onBoostCredit(7, ids, amounts);
   }

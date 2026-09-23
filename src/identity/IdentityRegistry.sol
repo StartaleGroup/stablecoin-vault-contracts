@@ -35,16 +35,6 @@ contract IdentityRegistry is IIdentityRegistryEventsAndErrors, Ownable2Step, Pau
   bytes32 public constant REGISTER_BATCH_TYPEHASH =
     keccak256('RegisterBatch(bytes32[] identityIds,address[] addrs,uint64 expiry,uint256 batchNonce)');
 
-  /// @dev EIP-712 typehash for a voluntary address switch. Signed by the NEW address to prove
-  ///      its controller consents to being linked - this does NOT prevent phishing (an attacker
-  ///      who tricks the current owner into switching to an address they control can trivially
-  ///      sign for their own address). It prevents linking a non-consenting third-party address:
-  ///      without it, the current owner could point the identity at any address they don't
-  ///      control, locking that address's real owner out of registering their OWN identity to
-  ///      it for the full switchCooldown, since identityOf enforces global one-address-per-identity.
-  bytes32 public constant SWITCH_TYPEHASH =
-    keccak256('SwitchAddress(bytes32 identityId,address newAddr,uint256 nonce,uint64 expiry)');
-
   /// @dev Bounds the backendSigners array so verification (which tries each entry in turn) stays
   ///      a small, fixed-cost loop rather than an unbounded one. Owner-controlled membership, not
   ///      attacker-controlled, but bounding it is still good practice - mirrors the MAX_BOOST_TOKENS
@@ -63,10 +53,10 @@ contract IdentityRegistry is IIdentityRegistryEventsAndErrors, Ownable2Step, Pau
   ///      the spec. bytes32(0) means "not bound to any identity".
   mapping(address => bytes32 identityId) public identityOf;
 
-  /// @notice identityId => next expected nonce for that identity's signed operations
-  /// @dev Shared across register/registerBatch/switchAddress - a single
-  ///      strictly-increasing counter per identity so no signature is ever valid twice,
-  ///      regardless of which of those operations produced it.
+  /// @notice identityId => next expected nonce for register() signatures for that identity
+  /// @dev Checked by register() and incremented by register()/registerBatch(). switchAddress()
+  ///      has no signed artifact and never touches it. Since an identity is registered at most
+  ///      once, AlreadyRegistered independently blocks any register() replay.
   mapping(bytes32 identityId => uint256) public nonces;
 
   /// @notice identityId => timestamp of the last successful register()/registerBatch()/
@@ -129,8 +119,8 @@ contract IdentityRegistry is IIdentityRegistryEventsAndErrors, Ownable2Step, Pau
   ///      impractical (every backfilled user would have to sign before being registered).
   /// @param identityId Opaque identifier for the loyalty identity
   /// @param addr Address to register for this identity
-  /// @param nonce Must equal nonces[identityId] - guards against signature replay and lets a leaked,
-  ///        unused signature be invalidated by any other operation that bumps the nonce first
+  /// @param nonce Must equal nonces[identityId]. A leaked, unused signature stays valid until its
+  ///        expiry or until its signer is removed - no other operation bumps this nonce first
   /// @param expiry Timestamp after which the attestation is no longer valid
   /// @param signature EIP-712 signature from any current backend signer over (identityId, addr, nonce, expiry)
   function register(
@@ -213,32 +203,19 @@ contract IdentityRegistry is IIdentityRegistryEventsAndErrors, Ownable2Step, Pau
 
   /// @notice Voluntarily change the address registered to an identity
   /// @dev Callable ONLY by the identity's current registered address - msg.sender itself is the
-  ///      proof of control of the CURRENT side. This works unchanged for AA wallets: when the AA
-  ///      contract calls this directly (e.g. via its own execute()), msg.sender IS the AA address
-  ///      regardless of who sponsored the call's gas, so gas sponsorship is unaffected.
-  /// @dev A prior signature-only design (any bearer of a signature from `newAddr` could call
-  ///      this permissionlessly, with no check that the CURRENT owner consented at all) was
-  ///      found to be a critical hijack: identityId is public (emitted on every register/switch),
-  ///      so anyone could self-sign as their own address and redirect an unrelated identity's
-  ///      future boost payouts to themselves, entirely without the real owner's involvement. The
-  ///      msg.sender check above closes that. This function ALSO requires a signature from
-  ///      `newAddr` - a DIFFERENT, narrower gap: without it, the current owner could point the
-  ///      identity at any address, including one they don't control, locking that address's real
-  ///      owner out of registering their OWN identity to it for the full switchCooldown, since
-  ///      identityOf enforces global one-address-per-identity. This is address-squatting/griefing
-  ///      prevention, NOT phishing prevention - see SWITCH_TYPEHASH.
+  ///      proof of control. This works unchanged for AA wallets: when the AA contract calls this
+  ///      directly (e.g. via its own execute()), msg.sender IS the AA address regardless of who
+  ///      sponsored the call's gas, so gas sponsorship is unaffected.
+  /// @dev The msg.sender gate is what stops hijacking: identityId is public (emitted on every
+  ///      register/switch), so any design that let a third party trigger this would let anyone
+  ///      redirect an unrelated identity's future boost to themselves.
+  /// @dev Deliberately NO consent check on `newAddr`: the current owner can bind their identity to
+  ///      an address they don't control. The frontend is expected to verify control. On-chain, the
+  ///      bound address's real owner cannot register their own identity to it (identityOf is
+  ///      globally unique) until this identity switches away again.
   /// @param identityId Opaque identifier for the loyalty identity
   /// @param newAddr New address to register for this identity
-  /// @param nonce Must equal nonces[identityId]
-  /// @param expiry Timestamp after which the signature is no longer valid
-  /// @param signature EIP-712 signature from `newAddr` over (identityId, newAddr, nonce, expiry)
-  function switchAddress(
-    bytes32 identityId,
-    address newAddr,
-    uint256 nonce,
-    uint64 expiry,
-    bytes calldata signature
-  ) external whenNotPaused {
+  function switchAddress(bytes32 identityId, address newAddr) external whenNotPaused {
     address oldAddr = registeredAddress[identityId];
     // oldAddr == address(0) for an unregistered identity, which msg.sender can never equal -
     // so this one check also covers "identity not registered" with no separate branch needed.
@@ -247,15 +224,7 @@ contract IdentityRegistry is IIdentityRegistryEventsAndErrors, Ownable2Step, Pau
     if (newAddr == oldAddr) revert NewAddressEqualsCurrent();
     if (identityOf[newAddr] != bytes32(0)) revert AddressAlreadyBound();
     if (_isReserved(newAddr)) revert ReservedAddress();
-    if (block.timestamp > expiry) revert SignatureExpired();
-    if (nonce != nonces[identityId]) revert InvalidNonce();
     if (block.timestamp < lastSwitchAt[identityId] + switchCooldown) revert CooldownNotElapsed();
-
-    bytes32 structHash = keccak256(abi.encode(SWITCH_TYPEHASH, identityId, newAddr, nonce, expiry));
-    bytes32 digest = _hashTypedDataV4(structHash);
-    if (!SignatureChecker.isValidSignatureNow(newAddr, digest, signature)) revert InvalidSignature();
-
-    nonces[identityId] = nonce + 1;
 
     _rebind(identityId, oldAddr, newAddr);
 

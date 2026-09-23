@@ -8,9 +8,9 @@ Last updated: 2026-09-17 (status note and §10 revised 2026-09-23).
 >
 > - **§1, §6, §9, §11 — no `VipBoostDistributor`.** It was dropped; boost is pushed as principal by `EarnVaultV2.onBoostCredit()`, which calls `registeredAddress()` once per batch entry. §11's "the vault never calls this contract" no longer holds.
 > - **§4, §5.4 — signer set, not one signer.** `backendSigners` is a bounded set (`MAX_BACKEND_SIGNERS = 10`, any one signature suffices), managed via `addBackendSigner`/`removeBackendSigner`. Storage also gained `batchNonce`.
-> - **§5.1 — only the registry itself is reserved.** The registry does not track the EarnVault address. The "can't pay the vault itself" guard lives solely in `EarnVaultV2.onBoostCredit()` (`user == address(this)` reverts the whole batch), in the contract that would be harmed, with no extra storage, setter or deployment-ordering constraint here. Binding the vault's address needs a backend signature (`switchAddress` can't: the vault cannot produce a valid signature, having no `isValidSignature` and a reverting fallback).
-> - **§5.2 — `switchAddress` IS `msg.sender`-gated** to the current registered address, reversing "do not gate on `msg.sender`": `identityId` is public, so a signature-only design let anyone redirect any identity to an address they control. The `newAddr` signature is still required on top, as squatting prevention. AA gas sponsorship is unaffected (the AA itself is `msg.sender`).
-> - **§5.3, §7 — no recovery and no migration correction (deliberate).** The only write paths are `register`, `registerBatch` and `switchAddress`, and `switchAddress` is the only rebind. Consequences, accepted: a user who loses their key stays bound to a dead address and can never earn boost on future deposits (they cannot get a second identity); and an identity the backfill registers to the wrong address stays there, since `switchAddress` can only be called from the registered address. If that becomes unacceptable, the minimal restoration is a single owner-gated `forceRebind(identityId, newAddr)` with an event, not the old two-phase recovery.
+> - **§5.1 — only the registry itself is reserved.** The registry does not track the EarnVault address. The "can't pay the vault itself" guard lives solely in `EarnVaultV2.onBoostCredit()` (an entry resolving to `address(this)` is skipped), in the contract that would be harmed, with no extra storage, setter or deployment-ordering constraint here. Any user can bind their own identity to the vault's address via `switchAddress` (see §5.2); `onBoostCredit` then skips that entry and credits the rest of the batch. Entries resolving to a blacklisted address are skipped the same way, since an address can be blacklisted at any time after binding.
+> - **§5.2 — `switchAddress(identityId, newAddr)` is `msg.sender`-gated only**, reversing "do not gate on `msg.sender`": `identityId` is public, so a signature-only design let anyone redirect any identity to an address they control. There is no `newAddr` signature, nonce or expiry (see §5.2 for the accepted consequences). AA gas sponsorship is unaffected (the AA itself is `msg.sender`).
+> - **§5.3, §7 — no recovery and no migration correction (deliberate).** The only write paths are `register`, `registerBatch` and `switchAddress`, and `switchAddress` is the only rebind. Consequences, accepted: a user who loses their key stays bound to a dead address and can never earn boost on future deposits (they cannot get a second identity); and an identity the backfill registers to the wrong address stays there, since `switchAddress` can only be called from the registered address. If that becomes unacceptable, the minimal restoration is a single `forceRebind(identityId, newAddr)` with an event, not the old two-phase recovery. Intended shape: gated by `onlyOwner` or a dedicated recoverer role. It is a rare, deliberate, human-initiated action with no automation behind it, so it needs no hot key. Not needed now.
 > - **§10 — rewritten below** for the current contracts.
 >
 > The companion docs referenced below are not in this repo.
@@ -120,21 +120,13 @@ function registerBatch(
 ### 5.2 `switchAddress`
 
 ```solidity
-function switchAddress(
-  bytes32 identityId,
-  address newAddr,
-  uint256 nonce,
-  uint64 expiry,
-  bytes calldata signature
-) external whenNotPaused;
+function switchAddress(bytes32 identityId, address newAddr) external whenNotPaused;
 ```
 
-- **Permissionless to submit** so a relayer can pay gas; authorization is the signature alone. Do **not** gate on `msg.sender`.
-- Verify via OpenZeppelin **`SignatureChecker`** (ECDSA + EIP-1271), never raw `ecrecover` — roughly half the user base is AA wallets and `ecrecover` would silently exclude them (WL-8). Skip ERC-6492: a depositing AA is already deployed.
-- EIP-712 struct binds `identityId`, `newAddr`, `nonce`, `expiry`, `chainId`, `verifyingContract` (WL-7).
-- **Signer: the new address** — recommended, pending the Phase-0 confirmation. The risk being defended is boost paid to an address the user doesn't control, so proving control of the *destination* is what matters. Requiring both old and new is the belt-and-braces variant if product wants it.
+- Callable **only** by the identity's current registered address (`msg.sender == registeredAddress[identityId]`, which also rejects unregistered identities). `identityId` is public, so this gate is what prevents hijacking. AA wallets work unchanged: the AA calling via its own `execute()` is `msg.sender`, regardless of who sponsored gas.
+- **No consent check on `newAddr`** and no signature, nonce or expiry — nothing signed, so nothing to replay. The frontend is expected to verify the user controls `newAddr`.
 - Enforce `block.timestamp >= lastSwitchAt[identityId] + switchCooldown`.
-- Revert if `newAddr` is zero, equals the current address, or is bound to another identity.
+- Revert if `newAddr` is zero, equals the current address, is bound to another identity, or is this registry.
 - **Update both mappings atomically and delete the stale reverse entry.** An add-without-delete leaves the old address still resolving to the identity — recreating the exact stale-eligibility bug the reverse index exists to prevent.
 
 ### 5.3 Recovery — not implemented
@@ -193,7 +185,7 @@ Pause blocks `register`, `registerBatch`, `switchAddress`. **Pause must never bl
 2. Upgrade the proxy to `EarnVaultV2` with **one** `ProxyAdmin.upgradeAndCall(proxy, v2Impl, initializeV2(boostKeeper, registry))`. `initializeV2` only accepts the ProxyAdmin as caller, so it cannot be run any other way; if an upgrade lands without it, boost credit is disabled (no boostKeeper) until you repeat `upgradeAndCall` to the same implementation with it, or the owner calls `setBoostKeeper`/`setIdentityRegistry`.
    - *Fresh deploy instead (no V1 history):* construct the proxy with the base `initialize()`, then `upgradeAndCall` to the same implementation with `initializeV2`. It cannot go in the proxy's constructor calldata: OZ v5 runs that before the ProxyAdmin exists, so it reverts `NotProxyAdmin`.
 3. **Run the full backfill (`registerBatch`) before the first `onBoostCredit`** — an unregistered identity reverts the whole credit batch.
-4. Hand the engine team the event ABI (registration/switch events for attribution; `BoostCredited`/`BoostCycleCredited` for reconciliation). The engine must drop zero-amount entries before batching: a zero entry still consumes that identity's `cycleId`.
+4. Hand the engine team the event ABI (registration/switch events for attribution; `BoostCredited`, `BoostCreditSkipped` and `BoostCycleCredited` for reconciliation). `BoostCycleCredited` carries `skippedCount`/`skippedTotal`; a skipped entry does not consume its `cycleId`, so it can be re-credited in the same cycle once eligible, and its funding stays as unreserved surplus (recoverable via `sweepSurplusToTreasury`, or reused by a later credit). The engine must drop zero-amount entries before batching: a zero entry still consumes that identity's `cycleId`.
 
 ---
 

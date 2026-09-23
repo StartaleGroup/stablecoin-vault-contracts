@@ -3,6 +3,7 @@ pragma solidity ^0.8.30;
 
 import {IdentityRegistry} from '../../src/identity/IdentityRegistry.sol';
 import {IIdentityRegistryEventsAndErrors} from '../../src/interfaces/identity/IIdentityRegistryEventsAndErrors.sol';
+import {IEarnVaultEventsAndErrors} from '../../src/interfaces/vaults/earn/IEarnVaultEventsAndErrors.sol';
 import {EarnVaultUpgradeable} from '../../src/vaults/earn/EarnVaultUpgradeable.sol';
 import {EarnVaultV2} from '../../src/vaults/earn/EarnVaultV2.sol';
 import {MockUSDSC} from '../mocks/MockUSDSC.sol';
@@ -85,13 +86,9 @@ contract IdentityRegistryEarnVaultV2IntegrationTest is Test {
     registry.register(identityId, addr, nonce, expiry, abi.encodePacked(r, s, v));
   }
 
-  function _switchAddress(bytes32 identityId, address oldAddr, address newAddr, uint256 newKey) internal {
-    uint256 nonce = registry.nonces(identityId);
-    uint64 expiry = uint64(block.timestamp + 1 hours);
-    bytes32 structHash = keccak256(abi.encode(registry.SWITCH_TYPEHASH(), identityId, newAddr, nonce, expiry));
-    (uint8 v, bytes32 r, bytes32 s) = vm.sign(newKey, _digest(structHash));
+  function _switchAddress(bytes32 identityId, address oldAddr, address newAddr) internal {
     vm.prank(oldAddr);
-    registry.switchAddress(identityId, newAddr, nonce, expiry, abi.encodePacked(r, s, v));
+    registry.switchAddress(identityId, newAddr);
   }
 
   function test_E2E_RegisterThenOnBoostCreditCreditsRegisteredAddress() public {
@@ -130,8 +127,8 @@ contract IdentityRegistryEarnVaultV2IntegrationTest is Test {
 
     // identity switches address
     vm.warp(block.timestamp + SWITCH_COOLDOWN);
-    (address newAddr, uint256 newKey) = makeAddrAndKey('newAddr');
-    _switchAddress(identityId, oldAddr, newAddr, newKey);
+    address newAddr = makeAddr('newAddr');
+    _switchAddress(identityId, oldAddr, newAddr);
 
     // cycle 2 must credit the NEW address, not the old one
     usdsc.mint(address(vault), 50e6);
@@ -164,37 +161,104 @@ contract IdentityRegistryEarnVaultV2IntegrationTest is Test {
     assertEq(vault.principal(user), 100e6);
   }
 
-  /// @dev Backs the claim that only a backend signature can bind the vault's address: a user
-  ///      cannot switchAddress() to it, because the vault cannot produce a valid signature (no
-  ///      isValidSignature; the ERC-1271 staticcall hits its reverting fallback). Tried with both a
-  ///      well-formed ECDSA signature from an unrelated key and an arbitrary non-ECDSA blob.
-  function test_E2E_UserCannotSwitchAddressToVault() public {
-    bytes32 identityId = keccak256('identity-1');
-    address user = makeAddr('user1');
-    _register(identityId, user);
-    vm.warp(block.timestamp + SWITCH_COOLDOWN);
-
-    uint256 nonce = registry.nonces(identityId);
-    uint64 expiry = uint64(block.timestamp + 1 hours);
-    bytes32 structHash = keccak256(abi.encode(registry.SWITCH_TYPEHASH(), identityId, address(vault), nonce, expiry));
-    (, uint256 otherKey) = makeAddrAndKey('someKey');
-    (uint8 v, bytes32 r, bytes32 s) = vm.sign(otherKey, _digest(structHash));
-
-    vm.prank(user);
-    vm.expectRevert(IIdentityRegistryEventsAndErrors.InvalidSignature.selector);
-    registry.switchAddress(identityId, address(vault), nonce, expiry, abi.encodePacked(r, s, v));
-
-    vm.prank(user);
-    vm.expectRevert(IIdentityRegistryEventsAndErrors.InvalidSignature.selector);
-    registry.switchAddress(identityId, address(vault), nonce, expiry, hex'deadbeef');
-
-    assertEq(registry.registeredAddress(identityId), user);
+  function _creditOne(bytes32 identityId, uint256 cycleId, uint256 amount) internal {
+    usdsc.mint(address(vault), amount);
+    bytes32[] memory ids = new bytes32[](1);
+    ids[0] = identityId;
+    uint256[] memory amounts = new uint256[](1);
+    amounts[0] = amount;
+    vm.prank(boostKeeper);
+    vault.onBoostCredit(cycleId, ids, amounts);
   }
 
-  /// @dev The registry does not track the vault, so the vault's address CAN be registered (it
-  ///      takes a backend signature). EarnVaultV2 is what refuses to credit principal to itself,
-  ///      and it fails the whole batch closed - nothing moves.
-  function test_E2E_VaultAddressRegisteredAsPayoutTarget_OnBoostCreditRejectsIt() public {
+  function _twoEntryBatch(
+    bytes32 a,
+    bytes32 b,
+    uint256 amount
+  ) internal returns (bytes32[] memory ids, uint256[] memory amounts) {
+    usdsc.mint(address(vault), 2 * amount);
+    ids = new bytes32[](2);
+    ids[0] = a;
+    ids[1] = b;
+    amounts = new uint256[](2);
+    amounts[0] = amount;
+    amounts[1] = amount;
+  }
+
+  /// @dev A user can switchAddress() to the vault's own address (no consent check on newAddr).
+  ///      onBoostCredit() skips that entry and still credits everyone else in the same batch.
+  function test_E2E_UserSwitchesToVaultAddress_EntrySkippedRestOfBatchCredited() public {
+    bytes32 honestId = keccak256('honest');
+    bytes32 griefId = keccak256('griefer');
+    address honest = makeAddr('honest');
+    address griefer = makeAddr('griefer');
+    _register(honestId, honest);
+    _register(griefId, griefer);
+    vm.warp(block.timestamp + SWITCH_COOLDOWN);
+
+    _switchAddress(griefId, griefer, address(vault));
+    assertEq(registry.registeredAddress(griefId), address(vault));
+
+    (bytes32[] memory ids, uint256[] memory amounts) = _twoEntryBatch(honestId, griefId, 10e6);
+    vm.expectEmit(true, true, true, true);
+    emit EarnVaultV2.BoostCreditSkipped(griefId, address(vault), 10e6, 1, EarnVaultV2.BoostSkipReason.VaultAddress);
+    vm.prank(boostKeeper);
+    vault.onBoostCredit(1, ids, amounts);
+
+    assertEq(vault.principal(honest), 10e6);
+    assertEq(vault.principal(address(vault)), 0);
+    assertEq(vault.lastCreditedCycle(griefId), 0);
+  }
+
+  /// @dev An address blacklisted after it was bound (ordinary operations, no griefing needed) -
+  ///      its entry is skipped and the honest entry in the same batch is credited.
+  function test_E2E_BoundAddressLaterBlacklisted_EntrySkippedRestOfBatchCredited() public {
+    bytes32 honestId = keccak256('honest');
+    bytes32 laterId = keccak256('later-blacklisted');
+    address honest = makeAddr('honest');
+    address later = makeAddr('later-blacklisted');
+    _register(honestId, honest);
+    _register(laterId, later);
+    vm.prank(owner);
+    vault.setBlacklisted(later, true);
+
+    (bytes32[] memory ids, uint256[] memory amounts) = _twoEntryBatch(honestId, laterId, 10e6);
+    vm.expectEmit(true, true, true, true);
+    emit EarnVaultV2.BoostCreditSkipped(laterId, later, 10e6, 1, EarnVaultV2.BoostSkipReason.Blacklisted);
+    vm.prank(boostKeeper);
+    vault.onBoostCredit(1, ids, amounts);
+
+    assertEq(vault.principal(honest), 10e6);
+    assertEq(vault.principal(later), 0);
+  }
+
+  /// @dev Same outcome when a user deliberately switches to a blacklisted (unbound) address.
+  function test_E2E_UserSwitchesToBlacklistedAddress_EntrySkippedRestOfBatchCredited() public {
+    bytes32 honestId = keccak256('honest');
+    bytes32 griefId = keccak256('griefer');
+    address honest = makeAddr('honest');
+    address griefer = makeAddr('griefer');
+    address blacklisted = makeAddr('blacklisted');
+    _register(honestId, honest);
+    _register(griefId, griefer);
+    vm.prank(owner);
+    vault.setBlacklisted(blacklisted, true);
+    vm.warp(block.timestamp + SWITCH_COOLDOWN);
+
+    _switchAddress(griefId, griefer, blacklisted);
+
+    (bytes32[] memory ids, uint256[] memory amounts) = _twoEntryBatch(honestId, griefId, 10e6);
+    vm.prank(boostKeeper);
+    vault.onBoostCredit(1, ids, amounts);
+
+    assertEq(vault.principal(honest), 10e6);
+    assertEq(vault.principal(blacklisted), 0);
+  }
+
+  /// @dev The registry does not track the vault, so the vault's address CAN be registered (by a
+  ///      backend-signed register, or by any user via switchAddress - see above). EarnVaultV2
+  ///      refuses to credit principal to itself: the entry is skipped and nothing moves.
+  function test_E2E_VaultAddressRegisteredAsPayoutTarget_OnBoostCreditSkipsIt() public {
     bytes32 identityId = keccak256('identity-1');
     uint256 nonce = registry.nonces(identityId);
     uint64 expiry = uint64(block.timestamp + 1 hours);
@@ -209,12 +273,14 @@ contract IdentityRegistryEarnVaultV2IntegrationTest is Test {
     uint256[] memory amounts = new uint256[](1);
     amounts[0] = 100e6;
 
+    vm.expectEmit(true, true, true, true);
+    emit EarnVaultV2.BoostCycleCredited(1, 1, 100e6, 1, 100e6);
     vm.prank(boostKeeper);
-    vm.expectRevert(EarnVaultV2.IdentityNotRegistered.selector);
     vault.onBoostCredit(1, ids, amounts);
 
     assertEq(vault.principal(address(vault)), 0);
     assertEq(vault.totalPrincipal(), 0);
+    assertEq(vault.claimReserve(), 0);
     assertEq(vault.lastCreditedCycle(identityId), 0);
   }
 }
