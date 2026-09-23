@@ -10,16 +10,6 @@ import {ITransparentUpgradeableProxy} from '@openzeppelin/contracts/proxy/transp
 import {StdInvariant} from 'forge-std/StdInvariant.sol';
 import {Test} from 'forge-std/Test.sol';
 
-/// @notice Minimal IIdentityRegistry stand-in: the invariant suite targets the vault's own
-///         accounting, not the registry's binding rules (covered by IdentityRegistry.t.sol)
-contract InvariantIdentityRegistryMock {
-  mapping(bytes32 => address) public registeredAddress;
-
-  function set(bytes32 identityId, address addr) external {
-    registeredAddress[identityId] = addr;
-  }
-}
-
 /// @title EarnVaultV2Handler
 /// @notice Bounded fuzz-target actions for the invariant suite below, mirroring the
 ///         Handler pattern already used by SUSDSCVaultInvariants.t.sol. Every action is
@@ -37,10 +27,10 @@ contract EarnVaultV2Handler is Test {
   /// @notice Upper bound on per-user settlements performed so far (each floors <= 1 wei of
   ///         yield in the vault's favour). Over-counting only loosens the dust bound below.
   uint256 public settleOps;
-  /// @notice Two INELIGIBLE identities mixed into credit batches: one bound to the vault itself,
-  ///         one bound to an always-blacklisted address. onBoostCredit() must skip both.
+  /// @notice Two INELIGIBLE entries mixed into credit batches: the vault itself and an
+  ///         always-blacklisted address. onBoostCredit() must skip both.
   address public blacklistedAddr;
-  uint256 public constant INELIGIBLE_IDENTITIES = 2;
+  uint256 public constant INELIGIBLE_ENTRIES = 2;
   /// @notice onYield() calls so far (each index update floors < 1 wei in the vault's favour)
   uint256 public yieldOps;
 
@@ -54,8 +44,7 @@ contract EarnVaultV2Handler is Test {
     MockUSDSC _boostToken,
     address _redistributor,
     address _operator,
-    address _boostKeeper,
-    InvariantIdentityRegistryMock _registry
+    address _boostKeeper
   ) {
     vault = _vault;
     usdsc = _usdsc;
@@ -64,13 +53,10 @@ contract EarnVaultV2Handler is Test {
     operator = _operator;
     boostKeeper = _boostKeeper;
     blacklistedAddr = makeAddr('handlerBlacklisted');
-    _registry.set(_identityId(MAX_USERS), address(_vault));
-    _registry.set(_identityId(MAX_USERS + 1), blacklistedAddr);
 
     for (uint256 i = 0; i < MAX_USERS; i++) {
       address user = makeAddr(string(abi.encodePacked('handlerUser', i)));
       users.push(user);
-      _registry.set(_identityId(i), user);
       usdsc.mint(user, MAX_AMOUNT);
       vm.prank(user);
       usdsc.approve(address(vault), type(uint256).max);
@@ -151,23 +137,26 @@ contract EarnVaultV2Handler is Test {
     vault.onYield(amount);
   }
 
-  function _identityId(uint256 i) internal pure returns (bytes32) {
-    return keccak256(abi.encodePacked('handlerIdentity', i));
+  /// @dev Credit pool index -> address: every handler user, then the vault itself, then the
+  ///      always-blacklisted address (the two ineligible entries onBoostCredit() must skip).
+  function _poolAddress(uint256 i) internal view returns (address) {
+    if (i < users.length) return users[i];
+    return i == users.length ? address(vault) : blacklistedAddr;
   }
 
-  /// @dev Credits a batch of distinct identities (contiguous from a random offset, wrapping), so
+  /// @dev Credits a batch of distinct addresses (contiguous from a random offset, wrapping), so
   ///      it never trips the duplicate-in-batch StaleCycle revert; cycleId strictly increases
   ///      per call, so it never trips the replay guard either. Amounts may be zero on purpose.
   function onBoostCredit(uint256 offsetSeed, uint256 countSeed, uint256 amountSeed) external {
-    // pool = every user identity plus the two ineligible ones; contiguous distinct window
-    uint256 pool = users.length + INELIGIBLE_IDENTITIES;
+    // pool = every user address plus the two ineligible ones; contiguous distinct window
+    uint256 pool = users.length + INELIGIBLE_ENTRIES;
     uint256 count = bound(countSeed, 1, pool);
     uint256 offset = bound(offsetSeed, 0, pool - 1);
-    bytes32[] memory ids = new bytes32[](count);
+    address[] memory batch = new address[](count);
     uint256[] memory amounts = new uint256[](count);
     uint256 total = 0;
     for (uint256 i = 0; i < count; i++) {
-      ids[i] = _identityId((offset + i) % pool);
+      batch[i] = _poolAddress((offset + i) % pool);
       amounts[i] = bound(uint256(keccak256(abi.encode(amountSeed, i))), 0, MAX_AMOUNT / 10);
       total += amounts[i];
     }
@@ -177,7 +166,7 @@ contract EarnVaultV2Handler is Test {
     boostCycleId++;
     settleOps += count;
     vm.prank(boostKeeper);
-    vault.onBoostCredit(boostCycleId, ids, amounts);
+    vault.onBoostCredit(boostCycleId, batch, amounts);
   }
 
   function onBoostReward(uint256 amount) external {
@@ -228,7 +217,6 @@ contract EarnVaultV2Invariants is StdInvariant, Test {
     address proxyAdminAddress = address(uint160(uint256(vm.load(address(proxy), adminSlot))));
     ProxyAdmin proxyAdmin = ProxyAdmin(proxyAdminAddress);
 
-    InvariantIdentityRegistryMock registry = new InvariantIdentityRegistryMock();
     address boostKeeper = makeAddr('boostKeeper');
 
     EarnVaultV2 v2Implementation = new EarnVaultV2();
@@ -236,12 +224,12 @@ contract EarnVaultV2Invariants is StdInvariant, Test {
     proxyAdmin.upgradeAndCall(
       ITransparentUpgradeableProxy(address(proxy)),
       address(v2Implementation),
-      abi.encodeWithSelector(EarnVaultV2.initializeV2.selector, boostKeeper, address(registry))
+      abi.encodeWithSelector(EarnVaultV2.initializeV2.selector, boostKeeper)
     );
 
     vault = EarnVaultV2(payable(address(proxy)));
 
-    handler = new EarnVaultV2Handler(vault, usdsc, boostToken, redistributor, operator, boostKeeper, registry);
+    handler = new EarnVaultV2Handler(vault, usdsc, boostToken, redistributor, operator, boostKeeper);
     address blacklisted = handler.blacklistedAddr(); // read BEFORE the prank - an external call would consume it
     vm.prank(owner);
     vault.setBlacklisted(blacklisted, true);

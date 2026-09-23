@@ -9,17 +9,17 @@ import {EIP712} from 'lib/openzeppelin-contracts/contracts/utils/cryptography/EI
 import {SignatureChecker} from 'lib/openzeppelin-contracts/contracts/utils/cryptography/SignatureChecker.sol';
 
 /// @title IdentityRegistry
-/// @notice Maps one loyalty identity to one payout address. That address is both where the
-///         off-chain rewards engine reads EarnVault principal for boost eligibility, and where
-///         EarnVaultV2.onBoostCredit() resolves each identityId to a payout address at credit
-///         time. Holds no tier data, no thresholds, no rates, no principal - a pure
-///         identity<->address binding. See
-///         src/identity/identity-registry.md for the full design rationale; this
-///         contract is a direct implementation of that spec.
-/// @dev Holds no funds and makes no external calls. Read by two consumers: the off-chain rewards
-///      engine (via the public mapping getters/emitted events) and, on-chain, EarnVaultV2's
-///      onBoostCredit(), which calls registeredAddress(identityId) once per batch entry every
-///      credit cycle to resolve the payout address before crediting principal.
+/// @notice NOT DEPLOYED. NOT IN AUDIT SCOPE. MUST BE AUDITED BEFORE ANY USE.
+///         Kept in the repo, unwired, as the ready-made starting point if on-chain identity-based
+///         boost crediting is ever wanted (EarnVaultV2 NatSpec, scenario B). No contract reads it
+///         today: EarnVaultV2.onBoostCredit() credits addresses directly, and the backend holds the
+///         user -> AA-address mapping. It is also absent from every deployment script.
+/// @notice When it was wired, it mapped one loyalty identity to one payout address - where the
+///         off-chain rewards engine read EarnVault principal for boost eligibility, and where an
+///         identity-based credit path resolved identityId -> address. Holds no tier data, no
+///         thresholds, no rates, no principal - a pure identity<->address binding. See
+///         src/identity/identity-registry.md for the design rationale.
+/// @dev Holds no funds and makes no external calls.
 contract IdentityRegistry is IIdentityRegistryEventsAndErrors, Ownable2Step, Pausable, EIP712 {
   // ================================================================
   // CONSTANTS
