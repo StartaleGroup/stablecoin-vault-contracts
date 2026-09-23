@@ -3,6 +3,7 @@ pragma solidity ^0.8.30;
 
 import {IdentityRegistry} from '../../src/identity/IdentityRegistry.sol';
 import {IIdentityRegistryEventsAndErrors} from '../../src/interfaces/identity/IIdentityRegistryEventsAndErrors.sol';
+import {IEarnVaultEventsAndErrors} from '../../src/interfaces/vaults/earn/IEarnVaultEventsAndErrors.sol';
 import {EarnVaultUpgradeable} from '../../src/vaults/earn/EarnVaultUpgradeable.sol';
 import {EarnVaultV2} from '../../src/vaults/earn/EarnVaultV2.sol';
 import {MockUSDSC} from '../mocks/MockUSDSC.sol';
@@ -191,10 +192,10 @@ contract IdentityRegistryEarnVaultV2IntegrationTest is Test {
     assertEq(registry.registeredAddress(identityId), user);
   }
 
-  /// @dev The registry does not track the vault, so the vault's address CAN be registered (it
-  ///      takes a backend signature). EarnVaultV2 is what refuses to credit principal to itself,
-  ///      and it fails the whole batch closed - nothing moves.
-  function test_E2E_VaultAddressRegisteredAsPayoutTarget_OnBoostCreditRejectsIt() public {
+  /// @dev The registry does not track the vault, so a backend-signed register() CAN bind the vault's
+  ///      address (by mistake - users can't, see above). EarnVaultV2 refuses to credit principal to
+  ///      itself: the entry is skipped and nothing moves.
+  function test_E2E_VaultAddressRegisteredAsPayoutTarget_OnBoostCreditSkipsIt() public {
     bytes32 identityId = keccak256('identity-1');
     uint256 nonce = registry.nonces(identityId);
     uint64 expiry = uint64(block.timestamp + 1 hours);
@@ -209,12 +210,79 @@ contract IdentityRegistryEarnVaultV2IntegrationTest is Test {
     uint256[] memory amounts = new uint256[](1);
     amounts[0] = 100e6;
 
+    vm.expectEmit(true, true, true, true);
+    emit EarnVaultV2.BoostCreditSkipped(identityId, address(vault), 100e6, 1, EarnVaultV2.BoostSkipReason.VaultAddress);
+    vm.expectEmit(true, true, true, true);
+    emit EarnVaultV2.BoostCycleCredited(1, 1, 100e6, 1, 100e6);
     vm.prank(boostKeeper);
-    vm.expectRevert(EarnVaultV2.IdentityNotRegistered.selector);
     vault.onBoostCredit(1, ids, amounts);
 
     assertEq(vault.principal(address(vault)), 0);
     assertEq(vault.totalPrincipal(), 0);
+    assertEq(vault.claimReserve(), 0);
     assertEq(vault.lastCreditedCycle(identityId), 0);
+  }
+
+  function _twoEntryBatch(
+    bytes32 a,
+    bytes32 b,
+    uint256 amount
+  ) internal returns (bytes32[] memory ids, uint256[] memory amounts) {
+    usdsc.mint(address(vault), 2 * amount);
+    ids = new bytes32[](2);
+    ids[0] = a;
+    ids[1] = b;
+    amounts = new uint256[](2);
+    amounts[0] = amount;
+    amounts[1] = amount;
+  }
+
+  /// @dev An address blacklisted AFTER it was bound - ordinary operations, no griefing and no
+  ///      switch involved, so the consent signature is irrelevant. Its entry is skipped and the
+  ///      honest entry in the same batch is still credited.
+  function test_E2E_BoundAddressLaterBlacklisted_EntrySkippedRestOfBatchCredited() public {
+    bytes32 honestId = keccak256('honest');
+    bytes32 laterId = keccak256('later-blacklisted');
+    address honest = makeAddr('honest');
+    address later = makeAddr('later-blacklisted');
+    _register(honestId, honest);
+    _register(laterId, later);
+    vm.prank(owner);
+    vault.setBlacklisted(later, true);
+
+    (bytes32[] memory ids, uint256[] memory amounts) = _twoEntryBatch(honestId, laterId, 10e6);
+    vm.expectEmit(true, true, true, true);
+    emit EarnVaultV2.BoostCreditSkipped(laterId, later, 10e6, 1, EarnVaultV2.BoostSkipReason.Blacklisted);
+    vm.prank(boostKeeper);
+    vault.onBoostCredit(1, ids, amounts);
+
+    assertEq(vault.principal(honest), 10e6);
+    assertEq(vault.principal(later), 0);
+  }
+
+  /// @dev The consent signature does not cover blacklisting: a user who controls a blacklisted
+  ///      address's key can sign for it and switch there. Its entry is skipped, rest credited.
+  function test_E2E_ConsentSignedSwitchToBlacklistedAddress_EntrySkippedRestOfBatchCredited() public {
+    bytes32 honestId = keccak256('honest');
+    bytes32 userId = keccak256('user');
+    address honest = makeAddr('honest');
+    address user = makeAddr('user');
+    (address blacklisted, uint256 blacklistedKey) = makeAddrAndKey('blacklisted-but-user-controlled');
+    _register(honestId, honest);
+    _register(userId, user);
+    vm.prank(owner);
+    vault.setBlacklisted(blacklisted, true);
+    vm.warp(block.timestamp + SWITCH_COOLDOWN);
+
+    _switchAddress(userId, user, blacklisted, blacklistedKey); // valid consent signature
+    assertEq(registry.registeredAddress(userId), blacklisted);
+
+    (bytes32[] memory ids, uint256[] memory amounts) = _twoEntryBatch(honestId, userId, 10e6);
+    vm.prank(boostKeeper);
+    vault.onBoostCredit(1, ids, amounts);
+
+    assertEq(vault.principal(honest), 10e6);
+    assertEq(vault.principal(blacklisted), 0);
+    assertEq(vault.lastCreditedCycle(userId), 0);
   }
 }
