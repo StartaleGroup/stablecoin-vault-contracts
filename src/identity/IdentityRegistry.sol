@@ -35,21 +35,6 @@ contract IdentityRegistry is IIdentityRegistryEventsAndErrors, Ownable2Step, Pau
   bytes32 public constant REGISTER_BATCH_TYPEHASH =
     keccak256('RegisterBatch(bytes32[] identityIds,address[] addrs,uint64 expiry,uint256 batchNonce)');
 
-  /// @dev EIP-712 typehash for a backend-signed recovery initiation. Different threat model from
-  ///      switchAddress(): this is the backend attesting a lost-wallet recovery, not the current
-  ///      owner directly authorizing the change themselves.
-  bytes32 public constant RECOVERY_TYPEHASH =
-    keccak256('InitiateRecovery(bytes32 identityId,address newAddr,uint256 nonce,uint64 expiry)');
-
-  /// @dev EIP-712 typehash for a backend-signed migration-window correction. Exists because the
-  ///      migration backfill (spec section 7) can pick the wrong address for an identity - i.e.
-  ///      the one case where the CURRENT on-chain owner is, by construction, not the real user.
-  ///      switchAddress()'s msg.sender check can never be satisfied by the real user in that
-  ///      case, so this is a separate backend-attested path, gated to a one-time correction
-  ///      within a bounded window rather than switchAddress()'s ongoing self-service model.
-  bytes32 public constant MIGRATION_CORRECTION_TYPEHASH =
-    keccak256('MigrationCorrection(bytes32 identityId,address newAddr,uint256 nonce,uint64 expiry)');
-
   /// @dev EIP-712 typehash for a voluntary address switch. Signed by the NEW address to prove
   ///      its controller consents to being linked - this does NOT prevent phishing (an attacker
   ///      who tricks the current owner into switching to an address they control can trivially
@@ -59,10 +44,6 @@ contract IdentityRegistry is IIdentityRegistryEventsAndErrors, Ownable2Step, Pau
   ///      it for the full switchCooldown, since identityOf enforces global one-address-per-identity.
   bytes32 public constant SWITCH_TYPEHASH =
     keccak256('SwitchAddress(bytes32 identityId,address newAddr,uint256 nonce,uint64 expiry)');
-
-  /// @dev Delay between initiateRecovery() and finalizeRecovery() becoming callable. Independent
-  ///      of switchCooldown - both clocks coexist, per the spec.
-  uint64 public constant RECOVERY_DELAY = 72 hours;
 
   /// @dev Bounds the backendSigners array so verification (which tries each entry in turn) stays
   ///      a small, fixed-cost loop rather than an unbounded one. Owner-controlled membership, not
@@ -83,32 +64,21 @@ contract IdentityRegistry is IIdentityRegistryEventsAndErrors, Ownable2Step, Pau
   mapping(address => bytes32 identityId) public identityOf;
 
   /// @notice identityId => next expected nonce for that identity's signed operations
-  /// @dev Shared across register/registerBatch/switchAddress/initiateRecovery - a single
+  /// @dev Shared across register/registerBatch/switchAddress - a single
   ///      strictly-increasing counter per identity so no signature is ever valid twice,
   ///      regardless of which of those operations produced it.
   mapping(bytes32 identityId => uint256) public nonces;
 
-  /// @notice identityId => timestamp of the last successful register()/switchAddress()/
-  ///         finalizeRecovery()/migrationCorrection() call - the anchor the switch cooldown is
-  ///         measured from
+  /// @notice identityId => timestamp of the last successful register()/registerBatch()/
+  ///         switchAddress() for that identity - the anchor the switch cooldown is measured from
   mapping(bytes32 identityId => uint64) public lastSwitchAt;
-
-  /// @notice identityId => whether this identity has already consumed its one-time
-  ///         migrationCorrection() (see setMigrationGraceEnd())
-  mapping(bytes32 identityId => bool) public migrationGraceUsed;
-
-  /// @notice identityId => address a pending recovery would switch to, or address(0) if none pending
-  mapping(bytes32 identityId => address) public pendingRecoveryAddress;
-
-  /// @notice identityId => timestamp after which a pending recovery may be finalized
-  mapping(bytes32 identityId => uint64) public recoveryFinalizeAfter;
 
   /// @notice Global nonce covering registerBatch() attestations - separate from the per-identity
   ///         `nonces` map since a batch signs over many not-yet-registered identities at once
   uint256 public batchNonce;
 
   /// @notice Enumerable list of addresses whose EIP-712 signature authorizes
-  ///         register()/registerBatch()/initiateRecovery() - any ONE of them signing is sufficient
+  ///         register()/registerBatch() - any ONE of them signing is sufficient
   /// @dev Multiple independent signers (rather than one) let ops rotate a key without a window
   ///      where NO valid signer exists: add the new signer, cut the backend over, then remove the
   ///      old one. Removing a signer immediately invalidates every not-yet-submitted signature it
@@ -125,11 +95,6 @@ contract IdentityRegistry is IIdentityRegistryEventsAndErrors, Ownable2Step, Pau
   /// @notice Minimum time, in seconds, required between successive switchAddress() calls for the
   ///         same identity
   uint64 public switchCooldown;
-
-  /// @notice Timestamp until which migrationCorrection() is callable at all - covers the backfill
-  ///         migration's own imperfection (see spec section 7). Default of 0 means the window
-  ///         has never been opened.
-  uint64 public migrationGraceEnd;
 
   // ================================================================
   // CONSTRUCTOR
@@ -292,137 +257,9 @@ contract IdentityRegistry is IIdentityRegistryEventsAndErrors, Ownable2Step, Pau
 
     nonces[identityId] = nonce + 1;
 
-    _cancelPendingRecovery(identityId);
     _rebind(identityId, oldAddr, newAddr);
 
     emit AddressSwitched(identityId, oldAddr, newAddr);
-  }
-
-  /// @notice One-time, backend-signed correction of an identity's registered address, usable only
-  ///         while the migration grace window (see setMigrationGraceEnd()) is open
-  /// @dev Exists because switchAddress()'s msg.sender check cannot be satisfied by the real user
-  ///      in exactly the case this covers: the migration backfill (spec section 7) guessed the
-  ///      wrong address for this identity, so the real owner does not control `oldAddr` at all.
-  ///      Backend-signed rather than self-service, since ops verifies real ownership off-chain
-  ///      (the same trust model as initiateRecovery) - but immediate, with no 72h delay, since
-  ///      this is a known-era, one-shot fix rather than an open-ended lost-wallet recovery.
-  /// @param identityId Opaque identifier for the loyalty identity
-  /// @param newAddr Address to correct this identity's registration to
-  /// @param nonce Must equal nonces[identityId]
-  /// @param expiry Timestamp after which the attestation is no longer valid
-  /// @param signature EIP-712 signature from any current backend signer over (identityId, newAddr, nonce, expiry)
-  function migrationCorrection(
-    bytes32 identityId,
-    address newAddr,
-    uint256 nonce,
-    uint64 expiry,
-    bytes calldata signature
-  ) external whenNotPaused {
-    if (migrationGraceEnd == 0 || block.timestamp > migrationGraceEnd) {
-      revert MigrationGraceWindowClosed();
-    }
-    if (migrationGraceUsed[identityId]) revert MigrationGraceAlreadyUsed();
-
-    address oldAddr = registeredAddress[identityId];
-    if (oldAddr == address(0)) revert IdentityNotRegistered();
-    if (newAddr == address(0)) revert CanNotBeZeroAddress();
-    if (newAddr == oldAddr) revert NewAddressEqualsCurrent();
-    if (identityOf[newAddr] != bytes32(0)) revert AddressAlreadyBound();
-    if (_isReserved(newAddr)) revert ReservedAddress();
-    if (block.timestamp > expiry) revert SignatureExpired();
-    if (nonce != nonces[identityId]) revert InvalidNonce();
-
-    bytes32 structHash = keccak256(abi.encode(MIGRATION_CORRECTION_TYPEHASH, identityId, newAddr, nonce, expiry));
-    bytes32 digest = _hashTypedDataV4(structHash);
-    if (!_verifyBackendSignature(digest, signature)) revert InvalidSignature();
-
-    nonces[identityId] = nonce + 1;
-    migrationGraceUsed[identityId] = true;
-
-    _cancelPendingRecovery(identityId);
-    _rebind(identityId, oldAddr, newAddr);
-
-    emit MigrationCorrected(identityId, oldAddr, newAddr);
-  }
-
-  // ================================================================
-  // RECOVERY
-  // ================================================================
-
-  /// @notice Initiate a backend-signed recovery of an identity to a new address
-  /// @dev Separate from switchAddress() - different threat model, different authorization: this
-  ///      is the backend attesting a lost-wallet recovery, not the user proving control of the
-  ///      destination themselves. 72h delay is independent of switchCooldown; both clocks coexist.
-  /// @param identityId Opaque identifier for the loyalty identity
-  /// @param newAddr Address the identity will be switched to once finalized
-  /// @param nonce Must equal nonces[identityId]
-  /// @param expiry Timestamp after which the attestation is no longer valid
-  /// @param signature EIP-712 signature from any current backend signer over (identityId, newAddr, nonce, expiry)
-  function initiateRecovery(
-    bytes32 identityId,
-    address newAddr,
-    uint256 nonce,
-    uint64 expiry,
-    bytes calldata signature
-  ) external whenNotPaused {
-    address oldAddr = registeredAddress[identityId];
-    if (oldAddr == address(0)) revert IdentityNotRegistered();
-    if (newAddr == address(0)) revert CanNotBeZeroAddress();
-    if (newAddr == oldAddr) revert NewAddressEqualsCurrent();
-    if (identityOf[newAddr] != bytes32(0)) revert AddressAlreadyBound();
-    if (_isReserved(newAddr)) revert ReservedAddress();
-    if (block.timestamp > expiry) revert SignatureExpired();
-    if (nonce != nonces[identityId]) revert InvalidNonce();
-    if (pendingRecoveryAddress[identityId] != address(0)) revert RecoveryAlreadyPending();
-
-    bytes32 structHash = keccak256(abi.encode(RECOVERY_TYPEHASH, identityId, newAddr, nonce, expiry));
-    bytes32 digest = _hashTypedDataV4(structHash);
-    if (!_verifyBackendSignature(digest, signature)) revert InvalidSignature();
-
-    nonces[identityId] = nonce + 1;
-    uint64 finalizeAfter = uint64(block.timestamp) + RECOVERY_DELAY;
-    pendingRecoveryAddress[identityId] = newAddr;
-    recoveryFinalizeAfter[identityId] = finalizeAfter;
-
-    emit RecoveryInitiated(identityId, oldAddr, newAddr, finalizeAfter);
-  }
-
-  /// @notice Finalize a pending recovery once its delay has elapsed
-  /// @dev Permissionless - the authorization already happened at initiateRecovery(). Re-checks
-  ///      that newAddr is still unbound, since an unrelated register()/switchAddress() could have
-  ///      bound it during the delay window. No reserved-address re-check: the only reserved
-  ///      address is this registry's own, which is constant and already rejected at initiation.
-  /// @param identityId Opaque identifier for the loyalty identity
-  function finalizeRecovery(bytes32 identityId) external whenNotPaused {
-    address newAddr = pendingRecoveryAddress[identityId];
-    if (newAddr == address(0)) revert RecoveryNotPending();
-    if (block.timestamp < recoveryFinalizeAfter[identityId]) revert RecoveryDelayNotElapsed();
-    if (identityOf[newAddr] != bytes32(0)) revert AddressAlreadyBound();
-
-    address oldAddr = registeredAddress[identityId];
-
-    delete pendingRecoveryAddress[identityId];
-    delete recoveryFinalizeAfter[identityId];
-
-    _rebind(identityId, oldAddr, newAddr);
-
-    emit RecoveryFinalized(identityId, oldAddr, newAddr);
-  }
-
-  /// @notice Cancel a pending recovery for an identity
-  /// @dev Owner-only escape hatch for two cases the other paths can't handle: (1) the target got
-  ///      bound to another identity during the delay, so finalizeRecovery() reverts for as long as
-  ///      it stays bound while initiateRecovery() refuses a replacement; (2) the recovery was
-  ///      initiated to the wrong address, which would otherwise finalize to it after the delay.
-  ///      The other paths that clear a pending recovery (switchAddress()/migrationCorrection())
-  ///      need the lost key or an open, unused migration grace window.
-  /// @dev Not whenNotPaused - it only removes state, and may be needed mid-incident. The nonce was
-  ///      already consumed at initiation, so a fresh initiateRecovery() needs a new attestation at
-  ///      the current nonce.
-  /// @param identityId Opaque identifier for the loyalty identity
-  function cancelRecovery(bytes32 identityId) external onlyOwner {
-    if (pendingRecoveryAddress[identityId] == address(0)) revert RecoveryNotPending();
-    _cancelPendingRecovery(identityId);
   }
 
   // ================================================================
@@ -430,7 +267,7 @@ contract IdentityRegistry is IIdentityRegistryEventsAndErrors, Ownable2Step, Pau
   // ================================================================
 
   /// @notice Add a new backend signer - any one of the current set signing is sufficient to
-  ///         authorize register()/registerBatch()/initiateRecovery()
+  ///         authorize register()/registerBatch()
   /// @param signer Address to add as a valid backend signer
   function addBackendSigner(address signer) external onlyOwner {
     if (backendSigners.length >= MAX_BACKEND_SIGNERS) revert TooManyBackendSigners();
@@ -438,8 +275,8 @@ contract IdentityRegistry is IIdentityRegistryEventsAndErrors, Ownable2Step, Pau
   }
 
   /// @notice Remove a backend signer
-  /// @dev At least one backend signer must remain - with none, register/registerBatch/recovery/
-  ///      migrationCorrection would be unauthorizable until the owner added a signer back.
+  /// @dev At least one backend signer must remain - with none, register/registerBatch would be
+  ///      unauthorizable until the owner added a signer back.
   /// @param signer Address to remove from the valid backend signer set
   function removeBackendSigner(address signer) external onlyOwner {
     if (!isBackendSigner[signer]) revert BackendSignerNotFound();
@@ -472,24 +309,14 @@ contract IdentityRegistry is IIdentityRegistryEventsAndErrors, Ownable2Step, Pau
     pauser = newPauser;
   }
 
-  /// @notice Update the migration grace window end timestamp
-  /// @dev While block.timestamp is within this window, migrationCorrection() is callable (once
-  ///      per identity) for the backfill's own imperfection (see spec section 7). Set to 0 to
-  ///      close the window.
-  /// @param newEnd New migration grace end timestamp
-  function setMigrationGraceEnd(uint64 newEnd) external onlyOwner {
-    emit MigrationGraceEndChanged(msg.sender, migrationGraceEnd, newEnd);
-    migrationGraceEnd = newEnd;
-  }
-
-  /// @notice Pause register()/registerBatch()/switchAddress()/recovery/migrationCorrection()
+  /// @notice Pause register()/registerBatch()/switchAddress()
   /// @dev Never blocks any view - see spec section 6. Callable by pauser only.
   function pause() external {
     if (msg.sender != pauser) revert NotAuthorizedToPause();
     _pause();
   }
 
-  /// @notice Unpause register()/registerBatch()/switchAddress()/recovery/migrationCorrection()
+  /// @notice Unpause register()/registerBatch()/switchAddress()
   /// @dev Callable by pauser only.
   function unpause() external {
     if (msg.sender != pauser) revert NotAuthorizedToPause();
@@ -539,17 +366,6 @@ contract IdentityRegistry is IIdentityRegistryEventsAndErrors, Ownable2Step, Pau
     identityOf[newAddr] = identityId;
     registeredAddress[identityId] = newAddr;
     lastSwitchAt[identityId] = uint64(block.timestamp);
-  }
-
-  /// @dev Cancels any recovery in flight for `identityId`. Called whenever the identity's owner
-  ///      proves direct control via switchAddress() - that proof moots a pending recovery,
-  ///      whether it was legitimate or the product of a compromised backend signer.
-  function _cancelPendingRecovery(bytes32 identityId) internal {
-    if (pendingRecoveryAddress[identityId] != address(0)) {
-      delete pendingRecoveryAddress[identityId];
-      delete recoveryFinalizeAfter[identityId];
-      emit RecoveryCancelled(identityId);
-    }
   }
 
   /// @dev True if `signature` over `digest` validates against ANY current backend signer (ECDSA

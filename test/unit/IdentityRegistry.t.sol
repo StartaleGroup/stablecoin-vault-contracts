@@ -95,32 +95,6 @@ contract IdentityRegistryTest is Test {
     return abi.encodePacked(r, s, v);
   }
 
-  function _signRecovery(
-    bytes32 identityId,
-    address newAddr,
-    uint256 nonce,
-    uint64 expiry,
-    uint256 signerKey
-  ) internal view returns (bytes memory) {
-    bytes32 structHash = keccak256(abi.encode(registry.RECOVERY_TYPEHASH(), identityId, newAddr, nonce, expiry));
-    (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerKey, _digest(structHash));
-    return abi.encodePacked(r, s, v);
-  }
-
-  function _signMigrationCorrection(
-    bytes32 identityId,
-    address newAddr,
-    uint256 nonce,
-    uint64 expiry,
-    uint256 signerKey
-  ) internal view returns (bytes memory) {
-    bytes32 structHash = keccak256(
-      abi.encode(registry.MIGRATION_CORRECTION_TYPEHASH(), identityId, newAddr, nonce, expiry)
-    );
-    (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerKey, _digest(structHash));
-    return abi.encodePacked(r, s, v);
-  }
-
   function _signSwitch(
     bytes32 identityId,
     address newAddr,
@@ -342,15 +316,6 @@ contract IdentityRegistryTest is Test {
     assertEq(registry.pauser(), newPauser);
   }
 
-  function test_SetMigrationGraceEnd_UpdatesStateAndEmits() public {
-    uint64 end = uint64(block.timestamp + 30 days);
-    vm.expectEmit(true, true, true, true);
-    emit IIdentityRegistryEventsAndErrors.MigrationGraceEndChanged(admin, 0, end);
-    vm.prank(admin);
-    registry.setMigrationGraceEnd(end);
-    assertEq(registry.migrationGraceEnd(), end);
-  }
-
   function test_Register_RevertsOnRegistryOwnAddress() public {
     bytes32 identityId = keccak256('identity-1');
     uint64 expiry = uint64(block.timestamp + 1 hours);
@@ -490,6 +455,55 @@ contract IdentityRegistryTest is Test {
       ids[i] = keccak256(abi.encode('batch-identity', i));
       addrs[i] = address(uint160(uint256(keccak256(abi.encode('batch-addr', i)))));
     }
+  }
+
+  /// @dev register/registerBatch are permissionless to SUBMIT - authorization is the backend
+  ///      signature alone, so any relayer can pay gas for them.
+  function test_Register_PermissionlessToSubmitByAnyRelayer() public {
+    bytes32 identityId = keccak256('identity-1');
+    address addr = makeAddr('user1');
+    uint64 expiry = uint64(block.timestamp + 1 hours);
+    bytes memory sig = _signRegister(identityId, addr, 0, expiry, backendSignerKey);
+
+    vm.prank(makeAddr('randomRelayer'));
+    registry.register(identityId, addr, 0, expiry, sig);
+    assertEq(registry.registeredAddress(identityId), addr);
+  }
+
+  function test_RegisterBatch_PermissionlessToSubmitByAnyRelayer() public {
+    (bytes32[] memory ids, address[] memory addrs) = _batchArrays(2);
+    uint64 expiry = uint64(block.timestamp + 1 hours);
+    bytes memory sig = _signRegisterBatch(ids, addrs, expiry, 0, backendSignerKey);
+
+    vm.prank(makeAddr('randomRelayer'));
+    registry.registerBatch(ids, addrs, expiry, sig);
+    assertEq(registry.registeredAddress(ids[0]), addrs[0]);
+    assertEq(registry.registeredAddress(ids[1]), addrs[1]);
+  }
+
+  /// @dev The per-identity nonce is shared across write paths: registerBatch consumes nonce 0
+  ///      for each entry, so that identity's first switchAddress must sign nonce 1.
+  function test_RegisterBatch_ThenSwitchAddress_UsesSharedNonce() public {
+    (bytes32[] memory ids, address[] memory addrs) = _batchArrays(1);
+    uint64 expiry = uint64(block.timestamp + 1 hours);
+    registry.registerBatch(ids, addrs, expiry, _signRegisterBatch(ids, addrs, expiry, 0, backendSignerKey));
+    assertEq(registry.nonces(ids[0]), 1);
+
+    vm.warp(block.timestamp + INITIAL_COOLDOWN);
+    (address newAddr, uint256 newKey) = makeAddrAndKey('newAddr');
+    expiry = uint64(block.timestamp + 1 hours);
+
+    bytes memory staleSig = _signSwitch(ids[0], newAddr, 0, expiry, newKey);
+    vm.prank(addrs[0]);
+    vm.expectRevert(IIdentityRegistryEventsAndErrors.InvalidNonce.selector);
+    registry.switchAddress(ids[0], newAddr, 0, expiry, staleSig);
+
+    bytes memory sig = _signSwitch(ids[0], newAddr, 1, expiry, newKey);
+    vm.prank(addrs[0]);
+    registry.switchAddress(ids[0], newAddr, 1, expiry, sig);
+    assertEq(registry.registeredAddress(ids[0]), newAddr);
+    assertEq(registry.identityOf(addrs[0]), bytes32(0));
+    assertEq(registry.nonces(ids[0]), 2);
   }
 
   function test_RegisterBatch_Succeeds() public {
@@ -901,360 +915,6 @@ contract IdentityRegistryTest is Test {
     assertEq(registry.identityOf(oldAddr), bytes32(0));
   }
 
-  // ================================================================
-  // MIGRATION CORRECTION
-  // ================================================================
-  // Backend-signed, one-time-per-identity, only while the migration grace window is open - the
-  // path for correcting a backfill's wrong address pick, which switchAddress()'s msg.sender
-  // check can never handle (the real owner does not control the wrongly-picked address).
-
-  function test_MigrationCorrection_SucceedsAndEmitsWithinWindow() public {
-    bytes32 identityId = keccak256('identity-1');
-    address oldAddr = makeAddr('user1');
-    address newAddr = makeAddr('user1-corrected');
-    _register(identityId, oldAddr);
-
-    vm.prank(admin);
-    registry.setMigrationGraceEnd(uint64(block.timestamp + 30 days));
-
-    // no warp needed - migrationCorrection() has no cooldown of its own
-    uint256 nonce = registry.nonces(identityId);
-    uint64 expiry = uint64(block.timestamp + 1 hours);
-    bytes memory sig = _signMigrationCorrection(identityId, newAddr, nonce, expiry, backendSignerKey);
-
-    vm.expectEmit(true, true, true, true);
-    emit IIdentityRegistryEventsAndErrors.MigrationCorrected(identityId, oldAddr, newAddr);
-    registry.migrationCorrection(identityId, newAddr, nonce, expiry, sig);
-
-    assertEq(registry.registeredAddress(identityId), newAddr);
-    assertEq(registry.identityOf(oldAddr), bytes32(0));
-    assertTrue(registry.migrationGraceUsed(identityId));
-  }
-
-  function test_MigrationCorrection_RevertsWhenWindowNeverOpened() public {
-    bytes32 identityId = keccak256('identity-1');
-    _register(identityId, makeAddr('user1'));
-
-    uint64 expiry = uint64(block.timestamp + 1 hours);
-    bytes memory sig = _signMigrationCorrection(identityId, makeAddr('newAddr'), 0, expiry, backendSignerKey);
-    vm.expectRevert(IIdentityRegistryEventsAndErrors.MigrationGraceWindowClosed.selector);
-    registry.migrationCorrection(identityId, makeAddr('newAddr'), 0, expiry, sig);
-  }
-
-  function test_MigrationCorrection_RevertsAfterWindowCloses() public {
-    bytes32 identityId = keccak256('identity-1');
-    _register(identityId, makeAddr('user1'));
-
-    vm.prank(admin);
-    registry.setMigrationGraceEnd(uint64(block.timestamp + 12 hours));
-    vm.warp(block.timestamp + 1 days);
-
-    uint64 expiry = uint64(block.timestamp + 1 hours);
-    bytes memory sig = _signMigrationCorrection(identityId, makeAddr('newAddr'), 0, expiry, backendSignerKey);
-    vm.expectRevert(IIdentityRegistryEventsAndErrors.MigrationGraceWindowClosed.selector);
-    registry.migrationCorrection(identityId, makeAddr('newAddr'), 0, expiry, sig);
-  }
-
-  function test_MigrationCorrection_ConsumedOnlyOnce() public {
-    bytes32 identityId = keccak256('identity-1');
-    address oldAddr = makeAddr('user1');
-    address newAddr = makeAddr('user1-corrected');
-    _register(identityId, oldAddr);
-
-    vm.prank(admin);
-    registry.setMigrationGraceEnd(uint64(block.timestamp + 30 days));
-
-    uint256 nonce = registry.nonces(identityId);
-    uint64 expiry = uint64(block.timestamp + 1 hours);
-    bytes memory sig = _signMigrationCorrection(identityId, newAddr, nonce, expiry, backendSignerKey);
-    registry.migrationCorrection(identityId, newAddr, nonce, expiry, sig);
-
-    uint256 nonce2 = registry.nonces(identityId);
-    bytes memory sig2 = _signMigrationCorrection(identityId, makeAddr('yetAnother'), nonce2, expiry, backendSignerKey);
-    vm.expectRevert(IIdentityRegistryEventsAndErrors.MigrationGraceAlreadyUsed.selector);
-    registry.migrationCorrection(identityId, makeAddr('yetAnother'), nonce2, expiry, sig2);
-  }
-
-  function test_MigrationCorrection_RevertsForUnregisteredIdentity() public {
-    vm.prank(admin);
-    registry.setMigrationGraceEnd(uint64(block.timestamp + 30 days));
-
-    bytes32 identityId = keccak256('never-registered');
-    uint64 expiry = uint64(block.timestamp + 1 hours);
-    bytes memory sig = _signMigrationCorrection(identityId, makeAddr('newAddr'), 0, expiry, backendSignerKey);
-    vm.expectRevert(IIdentityRegistryEventsAndErrors.IdentityNotRegistered.selector);
-    registry.migrationCorrection(identityId, makeAddr('newAddr'), 0, expiry, sig);
-  }
-
-  function test_MigrationCorrection_RevertsOnZeroAddress() public {
-    vm.prank(admin);
-    registry.setMigrationGraceEnd(uint64(block.timestamp + 30 days));
-
-    bytes32 identityId = keccak256('identity-1');
-    _register(identityId, makeAddr('user1'));
-    uint256 nonce = registry.nonces(identityId);
-    uint64 expiry = uint64(block.timestamp + 1 hours);
-    bytes memory sig = _signMigrationCorrection(identityId, address(0), nonce, expiry, backendSignerKey);
-    vm.expectRevert(IIdentityRegistryEventsAndErrors.CanNotBeZeroAddress.selector);
-    registry.migrationCorrection(identityId, address(0), nonce, expiry, sig);
-  }
-
-  function test_MigrationCorrection_RevertsOnSameAddressAsCurrent() public {
-    vm.prank(admin);
-    registry.setMigrationGraceEnd(uint64(block.timestamp + 30 days));
-
-    bytes32 identityId = keccak256('identity-1');
-    address currentAddr = makeAddr('user1');
-    _register(identityId, currentAddr);
-    uint256 nonce = registry.nonces(identityId);
-    uint64 expiry = uint64(block.timestamp + 1 hours);
-    bytes memory sig = _signMigrationCorrection(identityId, currentAddr, nonce, expiry, backendSignerKey);
-    vm.expectRevert(IIdentityRegistryEventsAndErrors.NewAddressEqualsCurrent.selector);
-    registry.migrationCorrection(identityId, currentAddr, nonce, expiry, sig);
-  }
-
-  function test_MigrationCorrection_RevertsWhenNewAddrBoundElsewhere() public {
-    vm.prank(admin);
-    registry.setMigrationGraceEnd(uint64(block.timestamp + 30 days));
-
-    bytes32 identityId1 = keccak256('identity-1');
-    bytes32 identityId2 = keccak256('identity-2');
-    address addr2 = makeAddr('user2');
-    _register(identityId1, makeAddr('user1'));
-    _register(identityId2, addr2);
-
-    uint256 nonce = registry.nonces(identityId1);
-    uint64 expiry = uint64(block.timestamp + 1 hours);
-    bytes memory sig = _signMigrationCorrection(identityId1, addr2, nonce, expiry, backendSignerKey);
-    vm.expectRevert(IIdentityRegistryEventsAndErrors.AddressAlreadyBound.selector);
-    registry.migrationCorrection(identityId1, addr2, nonce, expiry, sig);
-  }
-
-  function test_MigrationCorrection_RevertsOnReservedAddress() public {
-    address reserved = address(registry);
-    vm.prank(admin);
-    registry.setMigrationGraceEnd(uint64(block.timestamp + 30 days));
-
-    bytes32 identityId = keccak256('identity-1');
-    _register(identityId, makeAddr('user1'));
-    uint256 nonce = registry.nonces(identityId);
-    uint64 expiry = uint64(block.timestamp + 1 hours);
-    bytes memory sig = _signMigrationCorrection(identityId, reserved, nonce, expiry, backendSignerKey);
-    vm.expectRevert(IIdentityRegistryEventsAndErrors.ReservedAddress.selector);
-    registry.migrationCorrection(identityId, reserved, nonce, expiry, sig);
-  }
-
-  function test_MigrationCorrection_RevertsOnExpiredSignature() public {
-    vm.prank(admin);
-    registry.setMigrationGraceEnd(uint64(block.timestamp + 30 days));
-
-    bytes32 identityId = keccak256('identity-1');
-    _register(identityId, makeAddr('user1'));
-    uint256 nonce = registry.nonces(identityId);
-    uint64 expiry = uint64(block.timestamp + 1 hours);
-    bytes memory sig = _signMigrationCorrection(identityId, makeAddr('newAddr'), nonce, expiry, backendSignerKey);
-
-    vm.warp(expiry + 1);
-    vm.expectRevert(IIdentityRegistryEventsAndErrors.SignatureExpired.selector);
-    registry.migrationCorrection(identityId, makeAddr('newAddr'), nonce, expiry, sig);
-  }
-
-  function test_MigrationCorrection_RevertsOnWrongNonce() public {
-    vm.prank(admin);
-    registry.setMigrationGraceEnd(uint64(block.timestamp + 30 days));
-
-    bytes32 identityId = keccak256('identity-1');
-    _register(identityId, makeAddr('user1'));
-    uint64 expiry = uint64(block.timestamp + 1 hours);
-    bytes memory sig = _signMigrationCorrection(identityId, makeAddr('newAddr'), 7, expiry, backendSignerKey);
-    vm.expectRevert(IIdentityRegistryEventsAndErrors.InvalidNonce.selector);
-    registry.migrationCorrection(identityId, makeAddr('newAddr'), 7, expiry, sig);
-  }
-
-  function test_MigrationCorrection_RevertsOnWrongSigner() public {
-    vm.prank(admin);
-    registry.setMigrationGraceEnd(uint64(block.timestamp + 30 days));
-
-    bytes32 identityId = keccak256('identity-1');
-    _register(identityId, makeAddr('user1'));
-    uint256 nonce = registry.nonces(identityId);
-    uint64 expiry = uint64(block.timestamp + 1 hours);
-    (, uint256 wrongKey) = makeAddrAndKey('notBackendSigner');
-    bytes memory sig = _signMigrationCorrection(identityId, makeAddr('newAddr'), nonce, expiry, wrongKey);
-    vm.expectRevert(IIdentityRegistryEventsAndErrors.InvalidSignature.selector);
-    registry.migrationCorrection(identityId, makeAddr('newAddr'), nonce, expiry, sig);
-  }
-
-  function test_MigrationCorrection_CancelsPendingRecoveryAndAllowsNormalSwitchAfter() public {
-    bytes32 identityId = keccak256('identity-1');
-    address oldAddr = makeAddr('user1');
-    _register(identityId, oldAddr);
-
-    // a recovery happens to be in flight when the correction lands
-    {
-      uint256 nonce = registry.nonces(identityId);
-      uint64 expiry = uint64(block.timestamp + 1 hours);
-      address recoverTarget = makeAddr('recoverTarget');
-      bytes memory recoverySig = _signRecovery(identityId, recoverTarget, nonce, expiry, backendSignerKey);
-      registry.initiateRecovery(identityId, recoverTarget, nonce, expiry, recoverySig);
-    }
-
-    vm.prank(admin);
-    registry.setMigrationGraceEnd(uint64(block.timestamp + 30 days));
-
-    address correctedAddr = makeAddr('correctedAddr');
-    {
-      uint256 nonce2 = registry.nonces(identityId);
-      uint64 expiry = uint64(block.timestamp + 1 hours);
-      bytes memory correctionSig = _signMigrationCorrection(identityId, correctedAddr, nonce2, expiry, backendSignerKey);
-
-      vm.expectEmit(true, true, true, true);
-      emit IIdentityRegistryEventsAndErrors.RecoveryCancelled(identityId);
-      registry.migrationCorrection(identityId, correctedAddr, nonce2, expiry, correctionSig);
-    }
-
-    assertEq(registry.pendingRecoveryAddress(identityId), address(0));
-    assertEq(registry.registeredAddress(identityId), correctedAddr);
-
-    // the corrected address can now use ordinary switchAddress() like any other owner
-    vm.warp(block.timestamp + INITIAL_COOLDOWN);
-    {
-      (address laterAddr, uint256 laterKey) = makeAddrAndKey('laterAddr');
-      uint256 laterNonce = registry.nonces(identityId);
-      uint64 laterExpiry = uint64(block.timestamp + 1 hours);
-      bytes memory laterSig = _signSwitch(identityId, laterAddr, laterNonce, laterExpiry, laterKey);
-      vm.prank(correctedAddr);
-      registry.switchAddress(identityId, laterAddr, laterNonce, laterExpiry, laterSig);
-      assertEq(registry.registeredAddress(identityId), laterAddr);
-    }
-  }
-
-  // ================================================================
-  // RECOVERY
-  // ================================================================
-
-  function test_InitiateRecovery_SucceedsAndEmits() public {
-    bytes32 identityId = keccak256('identity-1');
-    address oldAddr = makeAddr('user1');
-    address newAddr = makeAddr('user1-recovered');
-    _register(identityId, oldAddr);
-
-    uint256 nonce = registry.nonces(identityId);
-    uint64 expiry = uint64(block.timestamp + 1 hours);
-    bytes memory sig = _signRecovery(identityId, newAddr, nonce, expiry, backendSignerKey);
-
-    uint64 finalizeAfter = uint64(block.timestamp) + registry.RECOVERY_DELAY();
-    vm.expectEmit(true, true, true, true);
-    emit IIdentityRegistryEventsAndErrors.RecoveryInitiated(identityId, oldAddr, newAddr, finalizeAfter);
-    registry.initiateRecovery(identityId, newAddr, nonce, expiry, sig);
-
-    assertEq(registry.pendingRecoveryAddress(identityId), newAddr);
-    assertEq(registry.recoveryFinalizeAfter(identityId), finalizeAfter);
-  }
-
-  function test_InitiateRecovery_RevertsWhenAlreadyPending() public {
-    bytes32 identityId = keccak256('identity-1');
-    address oldAddr = makeAddr('user1');
-    _register(identityId, oldAddr);
-
-    uint256 nonce = registry.nonces(identityId);
-    uint64 expiry = uint64(block.timestamp + 1 hours);
-    bytes memory sig = _signRecovery(identityId, makeAddr('recover1'), nonce, expiry, backendSignerKey);
-    registry.initiateRecovery(identityId, makeAddr('recover1'), nonce, expiry, sig);
-
-    uint256 nonce2 = registry.nonces(identityId);
-    bytes memory sig2 = _signRecovery(identityId, makeAddr('recover2'), nonce2, expiry, backendSignerKey);
-    vm.expectRevert(IIdentityRegistryEventsAndErrors.RecoveryAlreadyPending.selector);
-    registry.initiateRecovery(identityId, makeAddr('recover2'), nonce2, expiry, sig2);
-  }
-
-  function test_InitiateRecovery_RevertsForUnregisteredIdentity() public {
-    bytes32 identityId = keccak256('never-registered');
-    uint64 expiry = uint64(block.timestamp + 1 hours);
-    bytes memory sig = _signRecovery(identityId, makeAddr('recover1'), 0, expiry, backendSignerKey);
-    vm.expectRevert(IIdentityRegistryEventsAndErrors.IdentityNotRegistered.selector);
-    registry.initiateRecovery(identityId, makeAddr('recover1'), 0, expiry, sig);
-  }
-
-  function test_InitiateRecovery_RevertsOnZeroAddress() public {
-    bytes32 identityId = keccak256('identity-1');
-    _register(identityId, makeAddr('user1'));
-    uint256 nonce = registry.nonces(identityId);
-    uint64 expiry = uint64(block.timestamp + 1 hours);
-    bytes memory sig = _signRecovery(identityId, address(0), nonce, expiry, backendSignerKey);
-    vm.expectRevert(IIdentityRegistryEventsAndErrors.CanNotBeZeroAddress.selector);
-    registry.initiateRecovery(identityId, address(0), nonce, expiry, sig);
-  }
-
-  function test_InitiateRecovery_RevertsOnSameAddressAsCurrent() public {
-    bytes32 identityId = keccak256('identity-1');
-    address currentAddr = makeAddr('user1');
-    _register(identityId, currentAddr);
-    uint256 nonce = registry.nonces(identityId);
-    uint64 expiry = uint64(block.timestamp + 1 hours);
-    bytes memory sig = _signRecovery(identityId, currentAddr, nonce, expiry, backendSignerKey);
-    vm.expectRevert(IIdentityRegistryEventsAndErrors.NewAddressEqualsCurrent.selector);
-    registry.initiateRecovery(identityId, currentAddr, nonce, expiry, sig);
-  }
-
-  function test_InitiateRecovery_RevertsWhenNewAddrBoundElsewhere() public {
-    bytes32 identityId1 = keccak256('identity-1');
-    bytes32 identityId2 = keccak256('identity-2');
-    address addr2 = makeAddr('user2');
-    _register(identityId1, makeAddr('user1'));
-    _register(identityId2, addr2);
-
-    uint256 nonce = registry.nonces(identityId1);
-    uint64 expiry = uint64(block.timestamp + 1 hours);
-    bytes memory sig = _signRecovery(identityId1, addr2, nonce, expiry, backendSignerKey);
-    vm.expectRevert(IIdentityRegistryEventsAndErrors.AddressAlreadyBound.selector);
-    registry.initiateRecovery(identityId1, addr2, nonce, expiry, sig);
-  }
-
-  function test_InitiateRecovery_RevertsOnReservedAddress() public {
-    address reserved = address(registry);
-
-    bytes32 identityId = keccak256('identity-1');
-    _register(identityId, makeAddr('user1'));
-    uint256 nonce = registry.nonces(identityId);
-    uint64 expiry = uint64(block.timestamp + 1 hours);
-    bytes memory sig = _signRecovery(identityId, reserved, nonce, expiry, backendSignerKey);
-    vm.expectRevert(IIdentityRegistryEventsAndErrors.ReservedAddress.selector);
-    registry.initiateRecovery(identityId, reserved, nonce, expiry, sig);
-  }
-
-  function test_InitiateRecovery_RevertsOnExpiredSignature() public {
-    bytes32 identityId = keccak256('identity-1');
-    _register(identityId, makeAddr('user1'));
-    uint256 nonce = registry.nonces(identityId);
-    uint64 expiry = uint64(block.timestamp + 1 hours);
-    bytes memory sig = _signRecovery(identityId, makeAddr('recover1'), nonce, expiry, backendSignerKey);
-
-    vm.warp(expiry + 1);
-    vm.expectRevert(IIdentityRegistryEventsAndErrors.SignatureExpired.selector);
-    registry.initiateRecovery(identityId, makeAddr('recover1'), nonce, expiry, sig);
-  }
-
-  function test_InitiateRecovery_RevertsOnWrongNonce() public {
-    bytes32 identityId = keccak256('identity-1');
-    _register(identityId, makeAddr('user1'));
-    uint64 expiry = uint64(block.timestamp + 1 hours);
-    bytes memory sig = _signRecovery(identityId, makeAddr('recover1'), 7, expiry, backendSignerKey);
-    vm.expectRevert(IIdentityRegistryEventsAndErrors.InvalidNonce.selector);
-    registry.initiateRecovery(identityId, makeAddr('recover1'), 7, expiry, sig);
-  }
-
-  function test_InitiateRecovery_RevertsOnWrongSigner() public {
-    bytes32 identityId = keccak256('identity-1');
-    _register(identityId, makeAddr('user1'));
-    uint256 nonce = registry.nonces(identityId);
-    uint64 expiry = uint64(block.timestamp + 1 hours);
-    (, uint256 wrongKey) = makeAddrAndKey('notBackendSigner');
-    bytes memory sig = _signRecovery(identityId, makeAddr('recover1'), nonce, expiry, wrongKey);
-    vm.expectRevert(IIdentityRegistryEventsAndErrors.InvalidSignature.selector);
-    registry.initiateRecovery(identityId, makeAddr('recover1'), nonce, expiry, sig);
-  }
-
   function test_BackendSigner_Eip1271SmartContractSignerCanAuthorizeRegister() public {
     (address ownerAddr, uint256 ownerKey) = makeAddrAndKey('backendSafeOwner');
     MockERC1271Wallet backendSafe = new MockERC1271Wallet(ownerAddr);
@@ -1272,184 +932,15 @@ contract IdentityRegistryTest is Test {
     assertEq(registry.registeredAddress(identityId), addr);
   }
 
-  function test_FinalizeRecovery_RevertsBeforeDelayElapsed() public {
-    bytes32 identityId = keccak256('identity-1');
-    address oldAddr = makeAddr('user1');
-    address newAddr = makeAddr('user1-recovered');
-    _register(identityId, oldAddr);
-
-    uint256 nonce = registry.nonces(identityId);
-    uint64 expiry = uint64(block.timestamp + 1 hours);
-    bytes memory sig = _signRecovery(identityId, newAddr, nonce, expiry, backendSignerKey);
-    registry.initiateRecovery(identityId, newAddr, nonce, expiry, sig);
-
-    vm.warp(block.timestamp + registry.RECOVERY_DELAY() - 1);
-    vm.expectRevert(IIdentityRegistryEventsAndErrors.RecoveryDelayNotElapsed.selector);
-    registry.finalizeRecovery(identityId);
-  }
-
-  function test_FinalizeRecovery_SucceedsAfterDelay() public {
-    bytes32 identityId = keccak256('identity-1');
-    address oldAddr = makeAddr('user1');
-    address newAddr = makeAddr('user1-recovered');
-    _register(identityId, oldAddr);
-
-    uint256 nonce = registry.nonces(identityId);
-    uint64 expiry = uint64(block.timestamp + 1 hours);
-    bytes memory sig = _signRecovery(identityId, newAddr, nonce, expiry, backendSignerKey);
-    registry.initiateRecovery(identityId, newAddr, nonce, expiry, sig);
-
-    vm.warp(block.timestamp + registry.RECOVERY_DELAY());
-
-    vm.expectEmit(true, true, true, true);
-    emit IIdentityRegistryEventsAndErrors.RecoveryFinalized(identityId, oldAddr, newAddr);
-    registry.finalizeRecovery(identityId);
-
-    assertEq(registry.registeredAddress(identityId), newAddr);
-    assertEq(registry.identityOf(oldAddr), bytes32(0));
-    assertEq(registry.pendingRecoveryAddress(identityId), address(0));
-  }
-
-  function test_FinalizeRecovery_RevertsWhenNothingPending() public {
-    bytes32 identityId = keccak256('identity-1');
-    _register(identityId, makeAddr('user1'));
-    vm.expectRevert(IIdentityRegistryEventsAndErrors.RecoveryNotPending.selector);
-    registry.finalizeRecovery(identityId);
-  }
-
-  function _initiateRecovery(bytes32 identityId, address newAddr) internal {
-    uint256 nonce = registry.nonces(identityId);
-    uint64 expiry = uint64(block.timestamp + 1 hours);
-    bytes memory sig = _signRecovery(identityId, newAddr, nonce, expiry, backendSignerKey);
-    registry.initiateRecovery(identityId, newAddr, nonce, expiry, sig);
-  }
-
-  function test_CancelRecovery_OwnerClearsPendingAndEmits() public {
-    bytes32 identityId = keccak256('identity-1');
-    _register(identityId, makeAddr('user1'));
-    _initiateRecovery(identityId, makeAddr('user1-recovered'));
-
-    vm.expectEmit(true, true, true, true);
-    emit IIdentityRegistryEventsAndErrors.RecoveryCancelled(identityId);
-    vm.prank(admin);
-    registry.cancelRecovery(identityId);
-
-    assertEq(registry.pendingRecoveryAddress(identityId), address(0));
-    assertEq(registry.recoveryFinalizeAfter(identityId), 0);
-
-    // the cancelled recovery can no longer be finalized, even after its delay
-    vm.warp(block.timestamp + registry.RECOVERY_DELAY());
-    vm.expectRevert(IIdentityRegistryEventsAndErrors.RecoveryNotPending.selector);
-    registry.finalizeRecovery(identityId);
-    assertEq(registry.registeredAddress(identityId), makeAddr('user1'));
-  }
-
-  function test_CancelRecovery_RevertsForNonOwner() public {
-    bytes32 identityId = keccak256('identity-1');
-    _register(identityId, makeAddr('user1'));
-    _initiateRecovery(identityId, makeAddr('user1-recovered'));
-
-    address attacker = makeAddr('attacker');
-    vm.prank(attacker);
-    vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, attacker));
-    registry.cancelRecovery(identityId);
-  }
-
-  function test_CancelRecovery_RevertsWhenNothingPending() public {
-    bytes32 identityId = keccak256('identity-1');
-    _register(identityId, makeAddr('user1'));
-    vm.prank(admin);
-    vm.expectRevert(IIdentityRegistryEventsAndErrors.RecoveryNotPending.selector);
-    registry.cancelRecovery(identityId);
-  }
-
-  function test_CancelRecovery_CallableWhilePaused() public {
-    bytes32 identityId = keccak256('identity-1');
-    _register(identityId, makeAddr('user1'));
-    _initiateRecovery(identityId, makeAddr('user1-recovered'));
-
-    vm.prank(pauser);
-    registry.pause();
-    vm.prank(admin);
-    registry.cancelRecovery(identityId);
-    assertEq(registry.pendingRecoveryAddress(identityId), address(0));
-  }
-
-  /// @dev Target gets bound to another identity during the delay, so finalizeRecovery()
-  ///      reverts forever and initiateRecovery() refuses while one is pending. cancelRecovery()
-  ///      is the only way out, after which a fresh recovery to a valid target works.
-  function test_CancelRecovery_UnsticksRecoveryWhoseTargetWasBoundDuringDelay() public {
-    bytes32 identityId = keccak256('identity-1');
-    address oldAddr = makeAddr('user1');
-    address badTarget = makeAddr('user1-recovered');
-    address goodTarget = makeAddr('user1-recovered-2');
-    _register(identityId, oldAddr);
-    _initiateRecovery(identityId, badTarget);
-
-    _register(keccak256('identity-2'), badTarget);
-    vm.warp(block.timestamp + registry.RECOVERY_DELAY());
-    vm.expectRevert(IIdentityRegistryEventsAndErrors.AddressAlreadyBound.selector);
-    registry.finalizeRecovery(identityId);
-
-    uint256 nonce = registry.nonces(identityId);
-    uint64 expiry = uint64(block.timestamp + 1 hours);
-    bytes memory sig = _signRecovery(identityId, goodTarget, nonce, expiry, backendSignerKey);
-    vm.expectRevert(IIdentityRegistryEventsAndErrors.RecoveryAlreadyPending.selector);
-    registry.initiateRecovery(identityId, goodTarget, nonce, expiry, sig);
-
-    vm.prank(admin);
-    registry.cancelRecovery(identityId);
-
-    registry.initiateRecovery(identityId, goodTarget, nonce, expiry, sig);
-    vm.warp(block.timestamp + registry.RECOVERY_DELAY());
-    registry.finalizeRecovery(identityId);
-
-    assertEq(registry.registeredAddress(identityId), goodTarget);
-    assertEq(registry.identityOf(oldAddr), bytes32(0));
-  }
-
-  function test_SwitchAddress_CancelsPendingRecovery() public {
-    bytes32 identityId = keccak256('identity-1');
-    address oldAddr = makeAddr('user1');
-    _register(identityId, oldAddr);
-
-    uint256 nonce = registry.nonces(identityId);
-    uint64 expiry = uint64(block.timestamp + 1 hours);
-    address attackerControlled = makeAddr('attackerControlled');
-    bytes memory recoverySig = _signRecovery(identityId, attackerControlled, nonce, expiry, backendSignerKey);
-    registry.initiateRecovery(identityId, attackerControlled, nonce, expiry, recoverySig);
-
-    // the legitimate owner proves control directly via switchAddress before the recovery
-    // delay elapses - this must cancel the in-flight recovery
-    vm.warp(block.timestamp + INITIAL_COOLDOWN);
-    (address newAddr, uint256 newKey) = makeAddrAndKey('user1-legit-new');
-    uint256 switchNonce = registry.nonces(identityId);
-    uint64 switchExpiry = uint64(block.timestamp + 1 hours);
-    bytes memory switchSig = _signSwitch(identityId, newAddr, switchNonce, switchExpiry, newKey);
-
-    vm.expectEmit(true, true, true, true);
-    emit IIdentityRegistryEventsAndErrors.RecoveryCancelled(identityId);
-    vm.prank(oldAddr);
-    registry.switchAddress(identityId, newAddr, switchNonce, switchExpiry, switchSig);
-
-    assertEq(registry.pendingRecoveryAddress(identityId), address(0));
-
-    vm.warp(block.timestamp + registry.RECOVERY_DELAY());
-    vm.expectRevert(IIdentityRegistryEventsAndErrors.RecoveryNotPending.selector);
-    registry.finalizeRecovery(identityId);
-  }
-
   // ================================================================
   // PAUSE SEMANTICS
   // ================================================================
 
-  function test_Pause_BlocksRegisterSwitchRecoveryAndMigrationCorrection() public {
+  /// @dev Pause blocks all three write paths - register, registerBatch and switchAddress.
+  function test_Pause_BlocksRegisterRegisterBatchAndSwitchAddress() public {
     bytes32 identityId = keccak256('identity-1');
     address addr = makeAddr('user1');
     _register(identityId, addr);
-
-    vm.prank(admin);
-    registry.setMigrationGraceEnd(uint64(block.timestamp + 30 days));
 
     vm.prank(pauser);
     registry.pause();
@@ -1461,15 +952,13 @@ contract IdentityRegistryTest is Test {
     vm.expectRevert(abi.encodeWithSignature('EnforcedPause()'));
     registry.register(keccak256('identity-2'), makeAddr('user2'), 0, expiry, dummySig);
 
+    (bytes32[] memory ids, address[] memory addrs) = _batchArrays(2);
+    vm.expectRevert(abi.encodeWithSignature('EnforcedPause()'));
+    registry.registerBatch(ids, addrs, expiry, dummySig);
+
     vm.expectRevert(abi.encodeWithSignature('EnforcedPause()'));
     vm.prank(addr);
     registry.switchAddress(identityId, makeAddr('newAddr'), nonce, expiry, dummySig);
-
-    vm.expectRevert(abi.encodeWithSignature('EnforcedPause()'));
-    registry.initiateRecovery(identityId, makeAddr('recoverAddr'), nonce, expiry, dummySig);
-
-    vm.expectRevert(abi.encodeWithSignature('EnforcedPause()'));
-    registry.migrationCorrection(identityId, makeAddr('correctedAddr'), nonce, expiry, dummySig);
   }
 
   function test_Pause_NeverBlocksViews() public {
@@ -1483,7 +972,17 @@ contract IdentityRegistryTest is Test {
     assertEq(registry.registeredAddress(identityId), addr);
     assertEq(registry.identityOf(addr), identityId);
     assertTrue(registry.isRegistered(addr));
+    assertFalse(registry.isRegistered(makeAddr('unbound')));
     assertEq(registry.nonces(identityId), 1);
+    assertEq(registry.lastSwitchAt(identityId), uint64(block.timestamp));
+    assertEq(registry.batchNonce(), 0);
+    assertEq(registry.switchCooldown(), INITIAL_COOLDOWN);
+    assertEq(registry.pauser(), pauser);
+    assertEq(registry.owner(), admin);
+    assertEq(registry.backendSigners(0), backendSigner);
+    assertTrue(registry.isBackendSigner(backendSigner));
+    assertEq(registry.getBackendSigners().length, 1);
+    assertTrue(registry.paused());
   }
 
   function test_Pause_RevertsForNonPauser() public {
