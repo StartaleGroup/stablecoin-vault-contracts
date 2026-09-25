@@ -6,10 +6,10 @@ import {EarnVaultUpgradeable} from '../../src/vaults/earn/EarnVaultUpgradeable.s
 import {EarnVaultV2} from '../../src/vaults/earn/EarnVaultV2.sol';
 import {MockERC20Permit} from '../mocks/MockERC20Permit.sol';
 import {MockUSDSC} from '../mocks/MockUSDSC.sol';
+import {ERC1967Proxy} from '@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol';
 import {ProxyAdmin} from '@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol';
 import {TransparentUpgradeableProxy} from '@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol';
 import {ITransparentUpgradeableProxy} from '@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol';
-import {ERC1967Proxy} from '@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol';
 import {IERC20Permit} from '@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol';
 import {Test} from 'forge-std/Test.sol';
 import {Vm} from 'forge-std/Vm.sol';
@@ -236,7 +236,11 @@ contract EarnVaultAutoCompoundTest is Test {
 
     // Second call in the same state must be a pure no-op: nothing pending, so nothing to fold.
     vault.compound(alice);
-    assertEq(vault.principal(alice), principalAfterFirstCompound, 'a second compound() with nothing pending must change nothing');
+    assertEq(
+      vault.principal(alice),
+      principalAfterFirstCompound,
+      'a second compound() with nothing pending must change nothing'
+    );
   }
 
   function test_Compounded_EmitsOnImplicitCompoundingViaDepositWithdrawClaim_NotJustExplicitCompound() public {
@@ -397,9 +401,10 @@ contract EarnVaultAutoCompoundTest is Test {
     // even though it hasn't been folded into principal[bob] yet - it shows up as pendingYield.
     vault.compound(alice);
 
-    uint256 sumAccrued = vault.accrued(alice) + vault.accrued(bob) + vault.accrued(legacyUser) + vault.accrued(passiveUser);
-    uint256 sumPending =
-      vault.pendingYield(alice) + vault.pendingYield(bob) + vault.pendingYield(legacyUser) + vault.pendingYield(passiveUser);
+    uint256 sumAccrued =
+      vault.accrued(alice) + vault.accrued(bob) + vault.accrued(legacyUser) + vault.accrued(passiveUser);
+    uint256 sumPending = vault.pendingYield(alice) + vault.pendingYield(bob) + vault.pendingYield(legacyUser)
+      + vault.pendingYield(passiveUser);
 
     // Each of the several settlements folded into this state (across setUp and this test)
     // floors independently at RAY precision, so a few wei of dust can accumulate across
@@ -450,9 +455,14 @@ contract EarnVaultAutoCompoundTest is Test {
     uint256 pending = vault.pendingYield(alice);
     assertGt(pending, 0);
 
-    (uint256 usdscClaimable, address[] memory boostTokens, uint256[] memory boostAmounts) = vault.getAllClaimables(alice);
+    (uint256 usdscClaimable, address[] memory boostTokens, uint256[] memory boostAmounts) =
+      vault.getAllClaimables(alice);
 
-    assertEq(usdscClaimable, vault.accrued(alice) + pending, 'usdscClaimable should include pending yield, not just legacy accrued');
+    assertEq(
+      usdscClaimable,
+      vault.accrued(alice) + pending,
+      'usdscClaimable should include pending yield, not just legacy accrued'
+    );
     assertEq(usdscClaimable, pending, 'no legacy accrued exists here, so this should equal pending exactly');
     assertEq(boostTokens.length, 0);
     assertEq(boostAmounts.length, 0);
@@ -492,8 +502,9 @@ contract EarnVaultAutoCompoundTest is Test {
 
     uint256 secondDeposit = 1000e6;
     uint256 deadline = block.timestamp + 1 hours;
-    (uint8 v, bytes32 r, bytes32 s) =
-      _getPermitSignature(IERC20Permit(address(permitToken)), tokenOwner, address(permitVault), secondDeposit, deadline, tokenOwnerKey);
+    (uint8 v, bytes32 r, bytes32 s) = _getPermitSignature(
+      IERC20Permit(address(permitToken)), tokenOwner, address(permitVault), secondDeposit, deadline, tokenOwnerKey
+    );
 
     // Relayer (not tokenOwner) executes the permit deposit.
     address relayer = makeAddr('permitRelayer');
@@ -644,7 +655,11 @@ contract EarnVaultAutoCompoundTest is Test {
 
   /// @dev Deposits `count` fresh users with `depositEach` each, then distributes `yieldTotal`
   ///      once so all of them have pending yield to compound.
-  function _seedUsers(uint256 count, uint256 depositEach, uint256 yieldTotal) internal returns (address[] memory users) {
+  function _seedUsers(
+    uint256 count,
+    uint256 depositEach,
+    uint256 yieldTotal
+  ) internal returns (address[] memory users) {
     users = new address[](count);
     for (uint256 i = 0; i < count; i++) {
       address u = _makeUser(i);
@@ -702,7 +717,7 @@ contract EarnVaultAutoCompoundTest is Test {
 
     // Sanity: real per-user cost should land in a plausible range - catches a gross
     // regression (e.g. an accidental O(n^2) loop) without pinning to a brittle exact number.
-    assertGt(marginalGasPerUser, 1_000);
+    assertGt(marginalGasPerUser, 1000);
     assertLt(marginalGasPerUser, 50_000);
 
     // Project a safe batch size at 60% of Soneium's 40M block gas limit, combining measured
@@ -776,7 +791,9 @@ contract EarnVaultAutoCompoundTest is Test {
     uint256 gasLargeCold = gasBeforeLargeCold - gasleft();
 
     uint256 marginalGasPerUserCold = (gasLargeCold - gasSmallCold) / (largeBatch - smallBatch);
-    console2.log('marginal execution gas per user, ROUND 1 / cold (2 boost tokens, first-ever touch)', marginalGasPerUserCold);
+    console2.log(
+      'marginal execution gas per user, ROUND 1 / cold (2 boost tokens, first-ever touch)', marginalGasPerUserCold
+    );
 
     // Round 2 (warm): a fresh yield + boost round, then compound again - the steady-state,
     // ongoing-daily-cadence number.
@@ -797,7 +814,9 @@ contract EarnVaultAutoCompoundTest is Test {
     uint256 gasLargeWarm = gasBeforeLargeWarm - gasleft();
 
     uint256 marginalGasPerUserWarm = (gasLargeWarm - gasSmallWarm) / (largeBatch - smallBatch);
-    console2.log('marginal execution gas per user, ROUND 2 / warm (2 boost tokens, steady state)', marginalGasPerUserWarm);
+    console2.log(
+      'marginal execution gas per user, ROUND 2 / warm (2 boost tokens, steady state)', marginalGasPerUserWarm
+    );
 
     uint256 targetGasPerBatch = (SONEIUM_BLOCK_GAS_LIMIT * 60) / 100;
     uint256 perAddressCalldataGas = 20 * 16 + 12 * 4;
@@ -814,8 +833,12 @@ contract EarnVaultAutoCompoundTest is Test {
       (targetGasPerBatch - fixedCalldataHeaderGas) / (marginalGasPerUserCold + perAddressCalldataGas);
     uint256 batchesNeededCold = (REAL_WALLET_COUNT + safeBatchSizeCold - 1) / safeBatchSizeCold;
 
-    console2.log('steady-state safe batch size / batches needed for 31799 wallets', safeBatchSizeWarm, batchesNeededWarm);
-    console2.log('one-time cold safe batch size / batches needed for 31799 wallets', safeBatchSizeCold, batchesNeededCold);
+    console2.log(
+      'steady-state safe batch size / batches needed for 31799 wallets', safeBatchSizeWarm, batchesNeededWarm
+    );
+    console2.log(
+      'one-time cold safe batch size / batches needed for 31799 wallets', safeBatchSizeCold, batchesNeededCold
+    );
 
     // Execution-mode note: these measured numbers are meaningfully higher under `forge test
     // --isolate` (which `--gas-report`/CI's `make gas-report` implies) than under plain
