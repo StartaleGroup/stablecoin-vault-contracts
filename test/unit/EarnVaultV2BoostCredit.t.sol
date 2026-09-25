@@ -13,6 +13,16 @@ import {ITransparentUpgradeableProxy} from '@openzeppelin/contracts/proxy/transp
 import {Test} from 'lib/forge-std/src/Test.sol';
 import {Ownable} from 'lib/openzeppelin-contracts/contracts/access/Ownable.sol';
 
+/// @dev Minimal stand-in for a future V3 using reinitializer(3) - no new state, just proves the
+///      next reinitializer still runs from any EarnVaultV2 initialization state.
+contract EarnVaultV3ReinitMock is EarnVaultV2 {
+  event V3Initialized();
+
+  function initializeV3() public reinitializer(3) {
+    emit V3Initialized();
+  }
+}
+
 contract EarnVaultV2BoostCreditTest is Test {
   EarnVaultV2 public vault;
   MockUSDSC public usdsc;
@@ -100,12 +110,106 @@ contract EarnVaultV2BoostCreditTest is Test {
     vm.expectRevert(EarnVaultV2.NotBoostKeeper.selector);
     v2.onBoostCredit(1, users, amounts);
 
-    // recovery: repeat upgradeAndCall to the same implementation, this time with the init call
+    assertEq(_initializedVersion(address(v2)), 1, 'reinitializer(2) not consumed yet');
+
+    // proper recovery: repeat upgradeAndCall to the SAME implementation, this time with the init call
     vm.prank(admin);
     pa.upgradeAndCall(
       ITransparentUpgradeableProxy(address(v2)), impl, abi.encodeCall(EarnVaultV2.initializeV2, (boostKeeper))
     );
     assertEq(v2.boostKeeper(), boostKeeper);
+    assertEq(_initializedVersion(address(v2)), 2, 'proper recovery consumes reinitializer(2)');
+  }
+
+  /// @dev OZ v5 Initializable's ERC-7201 slot; `_initialized` (uint64) is its low 8 bytes.
+  bytes32 internal constant OZ_INITIALIZABLE_SLOT = 0xf0c57e16840df040f15088dc2f81fe391c3923bec73e23a9662efc9c229c6a00;
+
+  function _initializedVersion(address proxy) internal view returns (uint64) {
+    return uint64(uint256(vm.load(proxy, OZ_INITIALIZABLE_SLOT)));
+  }
+
+  /// @dev Stopgap recovery (owner sets the keeper directly) makes boost credit work but does NOT
+  ///      consume reinitializer(2): the version stays 1, and initializeV2 remains runnable - only by
+  ///      the ProxyAdmin via upgradeAndCall, overwriting the keeper - after which it is locked.
+  function test_InitializeV2Gate_SetBoostKeeperStopgapLeavesReinitializerUnconsumed() public {
+    (EarnVaultV2 v2, ProxyAdmin pa, address impl) = _upgradeWithoutInit();
+    address stopgapKeeper = makeAddr('stopgapKeeper');
+    vm.prank(owner);
+    v2.setBoostKeeper(stopgapKeeper);
+    assertEq(v2.boostKeeper(), stopgapKeeper);
+    assertEq(_initializedVersion(address(v2)), 1, 'stopgap leaves the version gap');
+
+    // boost credit works under the stopgap keeper
+    address user = makeAddr('user1');
+    usdsc.mint(address(v2), 10e6);
+    address[] memory users = new address[](1);
+    users[0] = user;
+    uint256[] memory amounts = new uint256[](1);
+    amounts[0] = 10e6;
+    vm.prank(stopgapKeeper);
+    v2.onBoostCredit(1, users, amounts);
+    assertEq(v2.principal(user), 10e6);
+
+    // nobody but the ProxyAdmin can use the unconsumed reinitializer...
+    vm.prank(owner);
+    vm.expectRevert(EarnVaultV2.NotProxyAdmin.selector);
+    v2.initializeV2(owner);
+
+    // ...and when it does (via upgradeAndCall to the same impl), it overwrites the keeper, then locks
+    vm.prank(admin);
+    pa.upgradeAndCall(
+      ITransparentUpgradeableProxy(address(v2)), impl, abi.encodeCall(EarnVaultV2.initializeV2, (boostKeeper))
+    );
+    assertEq(v2.boostKeeper(), boostKeeper);
+    assertEq(_initializedVersion(address(v2)), 2);
+
+    vm.prank(admin);
+    vm.expectRevert(Initializable.InvalidInitialization.selector);
+    pa.upgradeAndCall(
+      ITransparentUpgradeableProxy(address(v2)), impl, abi.encodeCall(EarnVaultV2.initializeV2, (owner))
+    );
+  }
+
+  /// @dev The version gap is not a trap: a future V3 using reinitializer(3) still initializes from
+  ///      the stopgap state (version 1), after which initializeV2 can never run.
+  function test_InitializeV2Gate_FutureReinitializer3WorksFromStopgapState() public {
+    (EarnVaultV2 v2, ProxyAdmin pa,) = _upgradeWithoutInit();
+    vm.prank(owner);
+    v2.setBoostKeeper(boostKeeper);
+
+    address v3Impl = address(new EarnVaultV3ReinitMock());
+    vm.expectEmit(address(v2));
+    emit EarnVaultV3ReinitMock.V3Initialized();
+    vm.prank(admin);
+    pa.upgradeAndCall(
+      ITransparentUpgradeableProxy(address(v2)), v3Impl, abi.encodeCall(EarnVaultV3ReinitMock.initializeV3, ())
+    );
+
+    assertEq(_initializedVersion(address(v2)), 3);
+    assertEq(v2.boostKeeper(), boostKeeper, 'stopgap keeper survives');
+
+    vm.prank(admin);
+    vm.expectRevert(Initializable.InvalidInitialization.selector);
+    pa.upgradeAndCall(
+      ITransparentUpgradeableProxy(address(v2)), v3Impl, abi.encodeCall(EarnVaultV2.initializeV2, (owner))
+    );
+  }
+
+  /// @dev ...and from the normal, fully initialized state (version 2): reinitializer(3) runs,
+  ///      boostKeeper is untouched, and initializeV2 stays locked.
+  function test_InitializeV2Gate_FutureReinitializer3WorksFromFullyInitializedState() public {
+    address proxy = address(vault);
+    assertEq(_initializedVersion(proxy), 2);
+    ProxyAdmin pa = ProxyAdmin(address(uint160(uint256(vm.load(proxy, ADMIN_SLOT)))));
+
+    address v3Impl = address(new EarnVaultV3ReinitMock());
+    vm.prank(admin);
+    pa.upgradeAndCall(
+      ITransparentUpgradeableProxy(proxy), v3Impl, abi.encodeCall(EarnVaultV3ReinitMock.initializeV3, ())
+    );
+
+    assertEq(_initializedVersion(proxy), 3);
+    assertEq(vault.boostKeeper(), boostKeeper);
   }
 
   /// @dev The gate's premise: the ProxyAdmin (the only accepted caller) cannot reach initializeV2
@@ -392,7 +496,7 @@ contract EarnVaultV2BoostCreditTest is Test {
 
   /// @dev BOOST_CREDIT_STORAGE_LOCATION is a hand-pasted hash and private - recompute the
   ///      ERC-7201 formula here and check the struct's fields actually live there: boostKeeper at
-  ///      the base slot, and the lastCreditedCycle mapping rooted at base + 1.
+  ///      the base slot, lastCreditedCycle mapping at base + 1.
   function test_BoostCreditStorage_MatchesErc7201Location() public {
     bytes32 expected = keccak256(abi.encode(uint256(keccak256('startale.storage.EarnVaultV2.BoostCredit')) - 1))
       & ~bytes32(uint256(0xff));
@@ -402,9 +506,9 @@ contract EarnVaultV2BoostCreditTest is Test {
     usdsc.mint(address(vault), 1e6);
     (address[] memory users, uint256[] memory amounts) = _batch1(user, 1e6);
     vm.prank(boostKeeper);
-    vault.onBoostCredit(7, users, amounts);
+    vault.onBoostCredit(1, users, amounts);
     bytes32 mappingSlot = keccak256(abi.encode(user, uint256(expected) + 1));
-    assertEq(uint256(vm.load(address(vault), mappingSlot)), 7);
+    assertEq(uint256(vm.load(address(vault), mappingSlot)), 1);
   }
 
   function test_SetBoostKeeper_UpdatesStateAndEmits() public {
@@ -475,9 +579,10 @@ contract EarnVaultV2BoostCreditTest is Test {
 
   /// @dev Address-keyed crediting works for any non-zero, non-vault, non-blacklisted address the
   ///      keeper passes (AA wallet or not - eligibility policy lives off-chain in the backend).
-  function testFuzz_OnBoostCredit_CreditsArbitraryAddress(address user, uint96 amount, uint64 cycleId) public {
+  function testFuzz_OnBoostCredit_CreditsArbitraryAddress(address user, uint96 amount) public {
     vm.assume(user != address(0) && user != address(vault));
-    vm.assume(cycleId > 0);
+    vm.assume(amount > 0); // zero amounts are skipped (tested separately)
+    uint256 cycleId = 1;
     usdsc.mint(address(vault), amount);
     (address[] memory users, uint256[] memory amounts) = _batch1(user, amount);
 
@@ -551,37 +656,37 @@ contract EarnVaultV2BoostCreditTest is Test {
     amounts[0] = 100e6;
 
     vm.prank(boostKeeper);
-    vault.onBoostCredit(5, users, amounts);
+    vault.onBoostCredit(1, users, amounts);
 
-    // resubmitting the SAME cycleId (5) for this address must not double-credit
+    // resubmitting the SAME cycleId (1) for this address must not double-credit
     vm.prank(boostKeeper);
     vm.expectRevert(EarnVaultV2.StaleCycle.selector);
-    vault.onBoostCredit(5, users, amounts);
+    vault.onBoostCredit(1, users, amounts);
 
     assertEq(vault.principal(user), 100e6);
   }
 
-  /// @dev Pins the NatSpec'd behavior: a zero entry is not a no-op - it consumes the cycleId,
-  ///      so a later non-zero credit for the same address and cycle reverts.
-  function test_OnBoostCredit_ZeroAmountStillConsumesCycleId() public {
+  /// @dev A zero amount is a skip like any other no-credit case: it emits BoostCreditSkipped with
+  ///      reason ZeroAmount, does NOT consume the cycleId, and a later non-zero credit for the same
+  ///      address and cycle lands normally.
+  function test_OnBoostCredit_ZeroAmountIsSkippedWithoutConsumingCycle() public {
     address user = makeAddr('user1');
-
-    address[] memory users = new address[](1);
-    users[0] = user;
-    uint256[] memory amounts = new uint256[](1);
+    (address[] memory users, uint256[] memory amounts) = _batch1(user, 0);
 
     vm.expectEmit(true, true, true, true);
-    emit EarnVaultV2.BoostCredited(user, 0, 3);
+    emit EarnVaultV2.BoostCreditSkipped(user, 0, 1, EarnVaultV2.BoostSkipReason.ZeroAmount);
+    vm.expectEmit(true, true, true, true);
+    emit EarnVaultV2.BoostCycleCredited(1, 1, 0, 1, 0);
     vm.prank(boostKeeper);
-    vault.onBoostCredit(3, users, amounts);
-    assertEq(vault.lastCreditedCycle(user), 3);
-    assertEq(vault.principal(user), 0);
+    vault.onBoostCredit(1, users, amounts);
+    assertEq(vault.lastCreditedCycle(user), 0, 'zero amount must not consume the cycle');
 
     usdsc.mint(address(vault), 100e6);
     amounts[0] = 100e6;
     vm.prank(boostKeeper);
-    vm.expectRevert(EarnVaultV2.StaleCycle.selector);
-    vault.onBoostCredit(3, users, amounts);
+    vault.onBoostCredit(1, users, amounts);
+    assertEq(vault.principal(user), 100e6);
+    assertEq(vault.lastCreditedCycle(user), 1);
   }
 
   /// @dev Backs the @param cycleId note: cycleId 0 reverts StaleCycle even for a never-credited
@@ -605,11 +710,7 @@ contract EarnVaultV2BoostCreditTest is Test {
   function test_OnBoostCredit_RevertsOnLowerCycleIdThanLastCredited() public {
     address user = makeAddr('user1');
     usdsc.mint(address(vault), 200e6);
-
-    address[] memory users = new address[](1);
-    users[0] = user;
-    uint256[] memory amounts = new uint256[](1);
-    amounts[0] = 100e6;
+    (address[] memory users, uint256[] memory amounts) = _batch1(user, 100e6);
 
     vm.prank(boostKeeper);
     vault.onBoostCredit(5, users, amounts);
@@ -650,7 +751,7 @@ contract EarnVaultV2BoostCreditTest is Test {
     vault.pause();
 
     vm.prank(boostKeeper);
-    vm.expectRevert(); // EnforcedPause
+    vm.expectRevert(abi.encodeWithSignature('EnforcedPause()'));
     vault.onBoostCredit(1, users, amounts);
 
     assertEq(vault.principal(user), 0);
@@ -831,7 +932,7 @@ contract EarnVaultV2BoostCreditTest is Test {
     usdsc.mint(address(vault), 75e6);
     (address[] memory users, uint256[] memory amounts) = _batch1(userB, 75e6);
     vm.prank(boostKeeper);
-    vault.onBoostCredit(4, users, amounts);
+    vault.onBoostCredit(1, users, amounts);
     assertEq(vault.principal(userB), 0);
 
     // condition clears; the SAME cycleId is still available because the skip didn't consume it.
@@ -839,10 +940,10 @@ contract EarnVaultV2BoostCreditTest is Test {
     vm.prank(owner);
     vault.setBlacklisted(userB, false);
     vm.prank(boostKeeper);
-    vault.onBoostCredit(4, users, amounts);
+    vault.onBoostCredit(1, users, amounts);
 
     assertEq(vault.principal(userB), 75e6);
-    assertEq(vault.lastCreditedCycle(userB), 4);
+    assertEq(vault.lastCreditedCycle(userB), 1);
     assertEq(vault.claimReserve(), usdsc.balanceOf(address(vault)));
   }
 
@@ -901,9 +1002,9 @@ contract EarnVaultV2BoostCreditTest is Test {
     usdsc.mint(address(vault), 30e6);
     (address[] memory users, uint256[] memory amounts) = _batch2(address(vault), 10e6, userB, 20e6);
     vm.expectEmit(true, true, true, true);
-    emit EarnVaultV2.BoostCycleCredited(9, 2, 30e6, 2, 30e6);
+    emit EarnVaultV2.BoostCycleCredited(1, 2, 30e6, 2, 30e6);
     vm.prank(boostKeeper);
-    vault.onBoostCredit(9, users, amounts);
+    vault.onBoostCredit(1, users, amounts);
 
     assertEq(vault.totalPrincipal(), 0);
     assertEq(vault.claimReserve(), 0);
@@ -916,13 +1017,13 @@ contract EarnVaultV2BoostCreditTest is Test {
     usdsc.mint(address(vault), 20e6);
     (address[] memory users, uint256[] memory amounts) = _batch1(userB, 10e6);
     vm.prank(boostKeeper);
-    vault.onBoostCredit(5, users, amounts);
+    vault.onBoostCredit(1, users, amounts);
 
     vm.prank(owner);
     vault.setBlacklisted(userB, true);
     vm.prank(boostKeeper);
     vm.expectRevert(EarnVaultV2.StaleCycle.selector);
-    vault.onBoostCredit(5, users, amounts);
+    vault.onBoostCredit(1, users, amounts);
   }
 
   /// @dev The funding check stays conservative: it requires the FULL submitted total, including
@@ -952,6 +1053,29 @@ contract EarnVaultV2BoostCreditTest is Test {
     vm.prank(boostKeeper);
     vault.onBoostCredit(1, users, amounts);
     assertEq(vault.principal(userB), 0);
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Initialization event, empty batch
+  // ---------------------------------------------------------------------------------------------
+
+  /// @dev initializeV2 announces the initial keeper, so indexers see it.
+  function test_InitializeV2_EmitsBoostKeeperChanged() public {
+    (EarnVaultV2 v2, ProxyAdmin pa, address impl) = _upgradeWithoutInit();
+    vm.expectEmit(true, true, true, true, address(v2));
+    emit EarnVaultV2.BoostKeeperChanged(address(pa), address(0), boostKeeper);
+    vm.prank(admin);
+    pa.upgradeAndCall(
+      ITransparentUpgradeableProxy(address(v2)), impl, abi.encodeCall(EarnVaultV2.initializeV2, (boostKeeper))
+    );
+  }
+
+  function test_OnBoostCredit_RevertsOnEmptyBatch() public {
+    address[] memory users = new address[](0);
+    uint256[] memory amounts = new uint256[](0);
+    vm.prank(boostKeeper);
+    vm.expectRevert(EarnVaultV2.EmptyBatch.selector);
+    vault.onBoostCredit(1, users, amounts);
   }
 
   function test_OnBoostCredit_RevertsWholeBatchOnDuplicateAddressInSameBatch() public {
@@ -992,8 +1116,8 @@ contract EarnVaultV2BoostCreditTest is Test {
     amounts[1] = amountB;
 
     vm.expectEmit(true, true, true, true);
-    emit EarnVaultV2.BoostCycleCredited(7, 2, amountA + amountB, 0, 0);
+    emit EarnVaultV2.BoostCycleCredited(1, 2, amountA + amountB, 0, 0);
     vm.prank(boostKeeper);
-    vault.onBoostCredit(7, users, amounts);
+    vault.onBoostCredit(1, users, amounts);
   }
 }

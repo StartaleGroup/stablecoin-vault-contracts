@@ -165,3 +165,35 @@ function compoundMany(address[] calldata users) external whenNotPaused nonReentr
 ```
 
 **Correct the gas accounting before treating this as a big win.** `_settle()` already partially self-skips today: when `globalIndex == userIndex[user]`, the `if (gi > ui)` branch never runs, so an already-settled user avoids the `principal`/`totalPrincipal` writes regardless of whether there's an explicit early check. Going through the *existing* logic, an already-settled user in a batch costs roughly: blacklist check (~2,100) + `principal` SLOAD (~2,100) + `userIndex` SLOAD (~2,100) + a near-free no-op `userIndex` rewrite (~100) ≈ **~4,500 gas**, not the full per-user cost of an actual fold. An explicit early check (the sketch above) gets an already-settled user down to **~2,100 gas** — just the one `userIndex` read needed to make the skip decision, before touching `principal` or the blacklist mapping at all. Real, but roughly half, not the dramatic saving it might sound like at first — precisely because `_settle`'s existing structure already avoids the expensive part (the actual `principal`/`totalPrincipal` SSTOREs). The bigger lever for cost reduction remains the off-chain filtering above, since that's what actually shrinks the array and the calldata.
+
+## `onBoostCredit` batch sizing (2026-09-25)
+
+Measured by `test_Gas_OnBoostCredit_BatchSizingProjection` (`test/unit/EarnVaultAutoCompound.t.sol`): projected tx gas = 21k + calldata + execution, with **2 active boost tokens** (`_settle` loops every active boost token per credited address). Soneium's execution limit is 40M; the keeper should target ≤ 60% (24M) per batch.
+
+| State | 100 entries | 300 | 500 | ≈ per entry |
+|---|---|---|---|---|
+| A. Worst-case cold — first-ever credit to addresses never settled since the boost tokens were activated | 12.4M | 37.1M | **61.9M (over the block limit)** | ~124k |
+| B. First credit after the daily `compoundMany` already settled those addresses (only `lastCreditedCycle` is a fresh slot) | 3.2M | 9.6M | 16.0M | ~32k |
+| C. Warm steady state (later cycle, already-credited addresses) | 1.4M | 4.1M | 6.8M | ~13.5k |
+| D. Warm, 20% of entries skipped (blacklisted) | 1.2M | 3.5M | 5.9M | ~11.8k |
+
+**Keeper guidance:**
+
+- **Size the first cycle(s) by state A**, not the steady state: ≈ **190 entries per batch** at 60% of the block when boost slots are cold. If `compoundMany` runs first and warms every recipient, state B applies (≈ 700 entries per batch). **This relocates gas rather than saving it:** `compoundMany` then pays the cold zero→non-zero boost-slot writes that `onBoostCredit` would otherwise pay, so total daily gas is roughly the same — it only lets `onBoostCredit` batches be larger.
+- **Steady state** (state C) fits ≈ 1,700 entries per batch; a 500-entry batch uses ~6.8M.
+- Skipped entries cost roughly a third of a credited one, so skips lower the average (state D).
+- Cost scales with the number of **active boost tokens** — re-measure if more are activated (up to `MAX_BOOST_TOKENS = 10`).
+- A batch that runs out of gas reverts as a whole (nothing is credited); resubmit it split, with the same `cycleId`.
+- The test asserts a warm 500-entry batch and a worst-case-cold 100-entry batch each fit 60% of the block, so a gas regression fails CI.
+- L1 data-posting cost (OP-Stack) is separate and not included — get a live quote before finalising.
+
+## `onBoostCredit` trust model and security budget (2026-09-25)
+
+**Trust model — stated, not implied.**
+
+- **Against a buggy rewards engine: off-chain monitoring only** — the contract does not bound credited amounts. Monitoring must compare `BoostCycleCredited` totals against the engine's own expected totals — **TBD: which system performs that comparison, and who gets paged when it disagrees.**
+- **Against a compromised keeper: the funding check plus operational discipline.** A credit can only draw on USDSC held above `claimReserve`, so the contract does not try to bound a compromised keeper further in state. The **security budget is the keeper wallet's balance plus the vault's accumulated surplus**:
+  - the keeper holds and sends **only each batch's funding, just-in-time** — top it up per cycle, never several cycles' worth;
+  - treat the keeper as a **hot wallet holding funds**, not just a signing key (key storage, rotation and access controls accordingly; see the runbook);
+  - the owner **sweeps surplus regularly** (`sweepSurplusToTreasury`) — skipped amounts and donations accumulate as surplus;
+  - a compromised keeper is replaced with `setBoostKeeper`.

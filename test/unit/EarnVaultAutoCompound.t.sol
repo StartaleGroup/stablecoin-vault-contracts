@@ -862,4 +862,123 @@ contract EarnVaultAutoCompoundTest is Test {
     assertLt(batchesNeededWarm, 100);
     assertLt(batchesNeededCold, 250);
   }
+
+  // ---------------------------------------------------------------------------------------------
+  // onBoostCredit batch sizing - the number the keeper runbook depends on
+  // ---------------------------------------------------------------------------------------------
+
+  address internal constant BOOST_KEEPER_FOR_GAS = address(0xB00575);
+
+  /// @dev Calldata gas for onBoostCredit(uint256,address[],uint256[]) with `n` entries: selector +
+  ///      cycleId + 2 offset words + 2 length words, n address words (20 non-zero + 12 zero bytes)
+  ///      and n amount words (conservatively 8 non-zero + 24 zero bytes - boost amounts in 6-decimal
+  ///      USDSC fit comfortably in 8 bytes). EIP-2028: 16 gas/non-zero byte, 4 gas/zero byte.
+  function _boostCreditCalldataGas(uint256 n) internal pure returns (uint256) {
+    uint256 nonZeroBytes = 4 + 5 * 32 + n * 20 + n * 8;
+    uint256 zeroBytes = n * 12 + n * 24;
+    return nonZeroBytes * 16 + zeroBytes * 4;
+  }
+
+  function _slice(address[] memory all, uint256 from, uint256 len) internal pure returns (address[] memory out) {
+    out = new address[](len);
+    for (uint256 i = 0; i < len; i++) {
+      out[i] = all[from + i];
+    }
+  }
+
+  /// @dev Execution gas of one onBoostCredit call crediting 1e6 to each address (funded first).
+  function _creditBatchGas(address[] memory batch, uint256 cycleId) internal returns (uint256 used) {
+    uint256[] memory amounts = new uint256[](batch.length);
+    for (uint256 i = 0; i < batch.length; i++) {
+      amounts[i] = 1e6;
+    }
+    usdsc.mint(address(vault), batch.length * 1e6);
+    vm.prank(BOOST_KEEPER_FOR_GAS);
+    uint256 g = gasleft();
+    vault.onBoostCredit(cycleId, batch, amounts);
+    used = g - gasleft();
+  }
+
+  function _logTx(string memory label, uint256 n, uint256 execGas) internal pure returns (uint256 txGas) {
+    txGas = 21_000 + _boostCreditCalldataGas(n) + execGas;
+    console2.log(label, n, txGas);
+  }
+
+  /// @dev Measures total tx gas (21k + calldata + execution) for 100/300/500-entry batches, with 2
+  ///      active boost tokens (_settle loops every active token per credited address), in four states:
+  ///        A. worst-case cold - first-ever credit to addresses never settled since both boost
+  ///           tokens were activated (every per-user boost slot and lastCreditedCycle go 0 -> non-0)
+  ///        B. first credit after the daily compoundMany keeper already settled those addresses (boost
+  ///           slots warm; only lastCreditedCycle is a fresh slot) - the likely real launch state
+  ///        C. warm steady state - a later cycle for addresses already credited
+  ///        D. warm, mixed batch with 20% of entries skipped (blacklisted)
+  ///      Regression guards: a warm 500-entry batch and a worst-case-cold 100-entry batch must each
+  ///      fit in 60% of Soneium's 40M block gas limit. A worst-case-cold 500-entry batch does NOT fit
+  ///      (logged) - the keeper must size early cycles by state A/B, not by the steady state.
+  /// @dev Runs 100/300/500-entry batches over consecutive slices of `set` under `cycleId`, logging
+  ///      and returning each batch's projected tx gas.
+  function _runSizes(
+    string memory label,
+    address[] memory set,
+    uint256 cycleId
+  ) internal returns (uint256[3] memory txGas) {
+    uint256[3] memory sizes = [uint256(100), 300, 500];
+    uint256 offset = 0;
+    for (uint256 k = 0; k < 3; k++) {
+      txGas[k] = _logTx(label, sizes[k], _creditBatchGas(_slice(set, offset, sizes[k]), cycleId));
+      offset += sizes[k];
+    }
+  }
+
+  function _activateTwoBoostTokens() internal returns (MockUSDSC boostA) {
+    boostA = new MockUSDSC();
+    MockUSDSC boostB = new MockUSDSC();
+    boostA.mint(address(vault), 1000e6);
+    vm.prank(operator);
+    vault.onBoostReward(address(boostA), 1000e6);
+    boostB.mint(address(vault), 1000e6);
+    vm.prank(operator);
+    vault.onBoostReward(address(boostB), 1000e6);
+  }
+
+  function test_Gas_OnBoostCredit_BatchSizingProjection() public {
+    vm.prank(owner);
+    vault.setBoostKeeper(BOOST_KEEPER_FOR_GAS);
+
+    // 900 users for states A/C/D, 900 more for state B
+    address[] memory all = _seedUsers(1800, 1000e6, 1800 * 10e6);
+    address[] memory setS = _slice(all, 0, 900);
+    address[] memory setW = _slice(all, 900, 900);
+    MockUSDSC boostA = _activateTwoBoostTokens();
+
+    // state B precondition: the auto-compound keeper has already settled setW
+    vault.compoundMany(setW);
+
+    uint256[3] memory cold = _runSizes('A worst-cold: entries, tx gas', setS, 1);
+    _runSizes('B compound-warmed first credit: entries, tx gas', setW, 1);
+
+    // new yield + boost round, then cycle 2 over the same setS addresses - warm steady state
+    _distributeYield(1800 * 10e6);
+    boostA.mint(address(vault), 1000e6);
+    vm.prank(operator);
+    vault.onBoostReward(address(boostA), 1000e6);
+    uint256[3] memory warm = _runSizes('C warm: entries, tx gas', setS, 2);
+
+    // cycle 3, after the same yield + boost round as C (so it is comparable), with 20% of setS
+    // blacklisted -> skipped
+    _distributeYield(1800 * 10e6);
+    boostA.mint(address(vault), 1000e6);
+    vm.prank(operator);
+    vault.onBoostReward(address(boostA), 1000e6);
+    for (uint256 i = 0; i < setS.length; i += 5) {
+      vm.prank(owner);
+      vault.setBlacklisted(setS[i], true);
+    }
+    _runSizes('D warm, 20% skipped: entries, tx gas', setS, 3);
+
+    uint256 target = (SONEIUM_BLOCK_GAS_LIMIT * 60) / 100;
+    console2.log('target per batch (60% of 40M)', target);
+    assertLt(warm[2], target, 'warm 500-entry batch must fit 60% of the block');
+    assertLt(cold[0], target, 'worst-case-cold 100-entry batch must fit 60% of the block');
+  }
 }

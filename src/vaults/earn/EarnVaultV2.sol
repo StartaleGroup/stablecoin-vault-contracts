@@ -17,7 +17,17 @@ import {Math} from 'lib/openzeppelin-contracts/contracts/utils/math/Math.sol';
 /// @dev Also adds a boostKeeper role (own ERC-7201 namespace, separate from V1's base storage) for
 ///      onBoostCredit(), which credits VIP boost as principal directly to user ADDRESSES - no on-chain
 ///      identity registry. A V1 proxy is upgraded to this implementation with
-///      ProxyAdmin.upgradeAndCall carrying initializeV2(initialBoostKeeper) (reinitializer(2)).
+///      ProxyAdmin.upgradeAndCall carrying initializeV2(initialBoostKeeper) (reinitializer(2)) -
+///      see script/upgrade/UpgradeEarnVaultToV2.s.sol, then verify on the live chain with
+///      script/upgrade/VerifyEarnVaultV2Upgrade.s.sol.
+/// @dev TRUST MODEL for onBoostCredit(), stated rather than implied:
+///      - Against a BUGGY rewards engine: the contract does not bound amounts; off-chain monitoring
+///        of BoostCycleCredited totals against the engine's own expected totals must catch it.
+///      - Against a COMPROMISED keeper: the funding check (a credit can only draw on USDSC held above
+///        claimReserve) plus operational discipline - the keeper holds and sends only each batch's
+///        funding just-in-time, the owner sweeps surplus regularly (skipped amounts and donations
+///        accumulate as surplus), and setBoostKeeper() replaces a compromised keeper. The security
+///        budget is therefore: the keeper wallet's balance + the vault's accumulated surplus.
 /// @dev Boost is AA-wallet-only for v1: the backend created those wallets and holds the
 ///      user -> AA-address mapping, so the keeper passes addresses and the vault never needs to
 ///      resolve an identity. Restoring identity-based crediting later, if ever wanted:
@@ -81,10 +91,13 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
   event BoostCredited(address indexed user, uint256 amount, uint256 indexed cycleId);
   /// @notice Why onBoostCredit() skipped an entry instead of crediting it
   /// @dev VaultAddress: the entry is this vault's own address. Blacklisted: the address is
-  ///      blacklisted (which can happen at any time, including after earlier credits).
+  ///      blacklisted (which can happen at any time, including after earlier credits). ZeroAmount:
+  ///      the entry's amount is 0 - treated like any other no-credit case, so it does not consume
+  ///      the cycleId.
   enum BoostSkipReason {
     VaultAddress,
-    Blacklisted
+    Blacklisted,
+    ZeroAmount
   }
 
   /// @notice Emitted for an entry onBoostCredit() skipped instead of crediting. Its amount stays in
@@ -106,6 +119,7 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
   error NotProxyAdmin();
   error LengthMismatch();
   error StaleCycle();
+  error EmptyBatch();
 
   modifier onlyBoostKeeper() {
     _onlyBoostKeeper();
@@ -129,10 +143,13 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
   ///      bounds what they could credit to USDSC held above claimReserve (e.g. donations, or funding
   ///      transferred ahead of a separate credit call), and the owner could replace them via
   ///      setBoostKeeper() - but it is still an attacker-controlled role and must not be possible.
-  /// @dev If an upgrade lands without this call, boost credit is simply disabled (boostKeeper is
-  ///      address(0), so onlyBoostKeeper rejects every caller; the rest of the vault works). To
-  ///      recover, either repeat upgradeAndCall to the same implementation with this call, or have
-  ///      the owner call setBoostKeeper().
+  /// @dev If an upgrade lands without this call, boostKeeper is address(0), so onlyBoostKeeper
+  ///      rejects every caller (the rest of the vault works) - and reinitializer(2) is still
+  ///      UNCONSUMED (initialized version stays 1). Proper fix: repeat upgradeAndCall to the same
+  ///      implementation with this call. Stopgap: the owner calls setBoostKeeper(). That enables
+  ///      boost credit but leaves the version at 1, so initializeV2 stays runnable - only by the
+  ///      ProxyAdmin via upgradeAndCall, and it would overwrite the keeper. A later V3 using
+  ///      reinitializer(3) still works from either state.
   /// @dev Deliberately NOT `msg.sender == owner()`: under upgradeAndCall, msg.sender here is the
   ///      ProxyAdmin contract, not this vault's owner, so that gate would revert every upgrade.
   ///      (The ProxyAdmin can't usefully be the owner either: the proxy blocks it from calling any
@@ -141,17 +158,23 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
   ///      v5's TransparentUpgradeableProxy runs that calldata before it creates the ProxyAdmin, so
   ///      the admin slot is still zero and this reverts NotProxyAdmin. Construct the proxy with the
   ///      base initialize(), then ProxyAdmin.upgradeAndCall to the same implementation with this.
+  ///      Between the two transactions boostKeeper is unset (boost credit disabled), so any deploy
+  ///      script must treat the second transaction as mandatory, not optional cleanup.
   /// @dev Assumes upgrades go through a TransparentUpgradeableProxy's ProxyAdmin. Where the caller
   ///      is not the ERC-1967 admin - a proxy with no admin (the admin slot is zero), or a UUPS-style
   ///      upgrade path where the owner calls upgradeToAndCall - this rejects the call and any
   ///      upgradeToAndCall carrying it reverts as a whole. Such a move needs this gate replaced
   ///      (owner() would then be the right check); test_InitializeV2_ProxyWithoutAdmin_RejectsEvenOwner
-  ///      pins the current behaviour, so changing the gate also requires updating that test.
+  ///      pins the current behaviour, so changing the gate also requires updating that test. A unit
+  ///      test cannot detect a proxy migration (that happens in deploy scripts), so any upgrade
+  ///      script must pre-check that the ERC-1967 admin slot is the expected ProxyAdmin before
+  ///      sending upgradeAndCall.
   /// @param initialBoostKeeper Address authorized to call onBoostCredit()
   function initializeV2(address initialBoostKeeper) public reinitializer(2) {
     if (msg.sender != ERC1967Utils.getAdmin()) revert NotProxyAdmin();
     if (initialBoostKeeper == address(0)) revert IEarnVaultEventsAndErrors.CanNotBeZeroAddress();
     _getBoostCreditStorage().boostKeeper = initialBoostKeeper;
+    emit BoostKeeperChanged(msg.sender, address(0), initialBoostKeeper);
   }
 
   /// @notice Current address authorized to call onBoostCredit()
@@ -188,16 +211,13 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
   ///      Gated whenNotPaused, like the other principal-changing entry points (deposit()/
   ///      withdraw()/claim()/compound()/compoundMany()).
   /// @dev All-or-nothing for funding, replay and malformed input (insufficient balance, stale
-  ///      cycleId, zero address, length mismatch revert the whole batch), but per-entry for
-  ///      eligibility: an entry that is this vault's own address or a blacklisted address is
-  ///      SKIPPED - BoostCreditSkipped is emitted, nothing is credited, and its cycleId is not
+  ///      cycleId, zero address, length mismatch, an empty batch revert the whole batch), but
+  ///      per-entry for eligibility: an entry that is this vault's own address, a blacklisted
+  ///      address, or a zero amount is SKIPPED - BoostCreditSkipped is emitted, nothing is credited, and its cycleId is not
   ///      consumed, so it can be credited later once eligible. Mirrors compoundMany()'s
   ///      skip-blacklisted behaviour, so one address blacklisted after earlier credits cannot fail
   ///      every other address's credit. The funding check still covers skipped amounts; they stay as
   ///      unreserved surplus, recoverable via sweepSurplusToTreasury().
-  /// @dev A zero-amount entry is NOT a no-op: it still passes every check, consumes the address's
-  ///      cycleId (a later non-zero credit for the same cycle then reverts StaleCycle) and emits
-  ///      BoostCredited. The off-chain engine must drop zero amounts before batching.
   /// @param cycleId Monotonic per-address cycle identifier for this credit. Must be >= 1 - since
   ///        lastCreditedCycle[user] defaults to 0 for a never-credited address and the guard is
   ///        `cycleId <= lastCreditedCycle`, a cycleId of 0 would always revert StaleCycle.
@@ -209,6 +229,7 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
     uint256[] calldata amounts
   ) external whenNotPaused onlyBoostKeeper nonReentrant {
     if (users.length != amounts.length) revert LengthMismatch();
+    if (users.length == 0) revert EmptyBatch();
 
     uint256 total = 0;
     for (uint256 i = 0; i < amounts.length; i++) {
@@ -233,7 +254,8 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
 
   /// @dev Processes one onBoostCredit() entry. Reverts (failing the whole batch) on a zero address
   ///      or a stale cycleId; returns false - having emitted BoostCreditSkipped and changed nothing
-  ///      else - when `user` is this vault or blacklisted; otherwise credits it and returns true.
+  ///      else - when `user` is this vault or blacklisted, or `amount` is 0; otherwise credits it and
+  ///      returns true.
   ///      Address-keyed on purpose: a future identity-based entry point (see contract NatSpec,
   ///      scenario B) resolves identityId -> address and calls this unchanged.
   function _creditBoostEntry(uint256 cycleId, address user, uint256 amount) internal returns (bool credited) {
@@ -245,8 +267,10 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
     // guard against crediting principal to itself. An address can become blacklisted at any time,
     // including after earlier credits. Either way the entry is skipped, not credited.
     EarnVaultStorage storage $ = _getStorage();
-    if (user == address(this) || $.isBlacklisted[user]) {
-      BoostSkipReason reason = user == address(this) ? BoostSkipReason.VaultAddress : BoostSkipReason.Blacklisted;
+    if (user == address(this) || $.isBlacklisted[user] || amount == 0) {
+      BoostSkipReason reason = user == address(this)
+        ? BoostSkipReason.VaultAddress
+        : ($.isBlacklisted[user] ? BoostSkipReason.Blacklisted : BoostSkipReason.ZeroAmount);
       emit BoostCreditSkipped(user, amount, cycleId, reason);
       return false;
     }

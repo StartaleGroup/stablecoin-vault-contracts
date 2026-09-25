@@ -274,9 +274,20 @@ contract EarnVaultV2Invariants is StdInvariant, Test {
     // Solvency, exact: every rounding step floors in the vault's favour, so the reserve can
     // never fall below what users are owed - not even by 1 wei.
     assertGe(reserve, owed, 'claimReserve below accounted user value');
-    // Dust is bounded, not fixed: <= 1 wei per settlement, < 1 wei per index update, plus up
-    // to 1 wei per user from pendingYield()'s own floor in the sum above. A fixed tolerance
-    // is depth-dependent and fails spuriously on long runs.
+    // Dust bound - DERIVED, not fitted:
+    //  - claimReserve moves 1:1 with deposits, withdrawals, onYield amounts and credited boost.
+    //  - onYield indexes with a remainder carry: delta = floor((amount*RAY + carry)/TP), carry kept.
+    //    Summed over all yields this telescopes: total yield = indexed value + carry/RAY, and
+    //    carry < TP, so the index side leaves < 1 wei IN TOTAL (while TP < 1e27 raw units).
+    //  - Every principal change (_deposit, withdraw, _creditBoostEntry) settles the user first, so
+    //    each settlement floors one p*(gi-ui)/RAY: a fractional loss in [0, 1).
+    //  - pendingYield() floors each user's un-settled amount the same way in `owed` above.
+    //  => 0 <= reserve - owed < 1 + settlements + users, and both sides are integers, so
+    //     reserve - owed <= settlements + users. The bound below is that plus yieldOps (slack the
+    //     carry makes unnecessary); settleOps over-counts settlements, which only loosens it. A fixed
+    //     tolerance instead grows stale with run depth, which is why the old one failed spuriously.
+    //  Mutation-checked: over-crediting 1 wei per settle fails the assertGe above; leaking 1000 wei
+    //  per settle fails the assertLe below.
     assertLe(
       reserve - owed, handler.settleOps() + handler.yieldOps() + handler.MAX_USERS(), 'rounding dust exceeds bound'
     );
