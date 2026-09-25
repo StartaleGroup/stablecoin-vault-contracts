@@ -73,13 +73,20 @@ abstract contract EarnVaultV2UpgradeChecks is Script {
     );
   }
 
-  /// @dev The upgraded proxy: expected implementation and admin, V2, initialized (version 2), keeper.
-  function _requireV2Config(address proxy, address expectedAdmin, address expectedImpl, address keeper) internal view {
+  /// @dev The upgraded proxy: expected implementation and admin, V2, initialized (version 2), config.
+  function _requireV2Config(
+    address proxy,
+    address expectedAdmin,
+    address expectedImpl,
+    address keeper,
+    uint256 cap
+  ) internal view {
     EarnVaultV2 v = EarnVaultV2(payable(proxy));
     require(_implementation(proxy) == expectedImpl, 'implementation slot mismatch');
     require(_admin(proxy) == expectedAdmin, 'admin slot mismatch');
     require(keccak256(bytes(v.getVersion())) == keccak256('EarnVaultV2'), 'version is not EarnVaultV2');
     require(_initializedVersion(proxy) == 2, 'initializeV2 did not run (version != 2)');
     require(v.boostKeeper() == keeper, 'boostKeeper mismatch');
+    require(v.maxBoostPerBatch() == cap, 'maxBoostPerBatch mismatch');
   }
 }

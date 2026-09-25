@@ -28,6 +28,7 @@ contract UpgradeEarnVaultToV2ScriptTest is Test {
   address internal pauser = makeAddr('pauser');
   address internal operator = makeAddr('operator'); // V1's boostRewardKeeper
   address internal keeper = makeAddr('boostKeeper');
+  uint256 internal constant CAP = 5000e6;
   bytes32 internal constant ADMIN_SLOT = bytes32(uint256(keccak256('eip1967.proxy.admin')) - 1);
   bytes32 internal constant IMPL_SLOT = bytes32(uint256(keccak256('eip1967.proxy.implementation')) - 1);
 
@@ -38,7 +39,8 @@ contract UpgradeEarnVaultToV2ScriptTest is Test {
   }
 
   function _params(address impl) internal view returns (UpgradeEarnVaultToV2.Params memory) {
-    return UpgradeEarnVaultToV2.Params({proxy: proxy, expectedAdmin: pa, keeper: keeper, implementation: impl});
+    return
+      UpgradeEarnVaultToV2.Params({proxy: proxy, expectedAdmin: pa, keeper: keeper, cap: CAP, implementation: impl});
   }
 
   function _roles() internal view returns (EarnVaultV2UpgradeChecks.Roles memory) {
@@ -71,6 +73,7 @@ contract UpgradeEarnVaultToV2ScriptTest is Test {
     EarnVaultV2 v2 = EarnVaultV2(payable(proxy));
     assertEq(v2.getVersion(), 'EarnVaultV2');
     assertEq(v2.boostKeeper(), keeper);
+    assertEq(v2.maxBoostPerBatch(), CAP);
     assertEq(v2.principal(makeAddr('depositor')), principalBefore);
     assertEq(address(uint160(uint256(vm.load(proxy, IMPL_SLOT)))), impl);
   }
@@ -112,10 +115,14 @@ contract UpgradeEarnVaultToV2ScriptTest is Test {
     script.upgrade(_params(address(0)), makeAddr('notTheOwner'));
   }
 
-  function test_Preflight_RevertsOnZeroKeeper() public {
+  function test_Preflight_RevertsOnZeroKeeperOrCap() public {
     UpgradeEarnVaultToV2.Params memory p = _params(address(0));
     p.keeper = address(0);
     vm.expectRevert(bytes('BOOST_KEEPER_ADDRESS not set'));
+    script.upgrade(p, address(script));
+    p = _params(address(0));
+    p.cap = 0;
+    vm.expectRevert(bytes('MAX_BOOST_PER_BATCH must be non-zero'));
     script.upgrade(p, address(script));
   }
 
@@ -140,23 +147,23 @@ contract UpgradeEarnVaultToV2ScriptTest is Test {
   ///      config or roles.
   function test_Verify_PassesAfterUpgrade_FailsOnMismatch() public {
     address impl = script.upgrade(_params(address(0)), address(script));
-    verifier.verify(proxy, pa, impl, keeper, _roles());
+    verifier.verify(proxy, pa, impl, keeper, CAP, _roles());
 
     vm.expectRevert(bytes('implementation slot mismatch'));
-    verifier.verify(proxy, pa, makeAddr('wrongImpl'), keeper, _roles());
-    vm.expectRevert(bytes('boostKeeper mismatch'));
-    verifier.verify(proxy, pa, impl, makeAddr('wrongKeeper'), _roles());
+    verifier.verify(proxy, pa, makeAddr('wrongImpl'), keeper, CAP, _roles());
+    vm.expectRevert(bytes('maxBoostPerBatch mismatch'));
+    verifier.verify(proxy, pa, impl, keeper, CAP + 1, _roles());
 
     EarnVaultV2UpgradeChecks.Roles memory wrong = _roles();
     wrong.pauser = makeAddr('wrongPauser');
     vm.expectRevert(bytes('pauser mismatch'));
-    verifier.verify(proxy, pa, impl, keeper, wrong);
+    verifier.verify(proxy, pa, impl, keeper, CAP, wrong);
   }
 
   /// @dev Before the upgrade, verification must fail (the proxy is still V1).
   function test_Verify_FailsBeforeUpgrade() public {
     address v1Impl = address(uint160(uint256(vm.load(proxy, IMPL_SLOT))));
     vm.expectRevert(bytes('version is not EarnVaultV2'));
-    verifier.verify(proxy, pa, v1Impl, keeper, _roles());
+    verifier.verify(proxy, pa, v1Impl, keeper, CAP, _roles());
   }
 }
