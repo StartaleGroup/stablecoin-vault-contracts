@@ -41,7 +41,8 @@ import {Math} from 'lib/openzeppelin-contracts/contracts/utils/math/Math.sol';
 ///          the same address-keyed path (_creditBoostEntry). Purely additive: onBoostCredit() can
 ///          stay live alongside it, so AA users (by address) and identity-linked EOAs (by identity)
 ///          can be credited in parallel with no hard cutover; the keeper chooses which to call.
-///          src/identity/IdentityRegistry.sol is kept in the repo for this, unwired and unaudited.
+///          A ready-made, unaudited IdentityRegistry for this is kept on the
+///          feat/identity-registry-simplified branch, outside this codebase and out of audit scope.
 /// @dev One address per user is currently guaranteed only by the backend (each user has exactly
 ///      one AA wallet); nothing on-chain enforces it. If EOAs become eligible, that becomes a real
 ///      uniqueness constraint the reward engine (scenario A) or the registry (scenario B) must
