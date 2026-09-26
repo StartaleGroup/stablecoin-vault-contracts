@@ -239,7 +239,7 @@ contract EarnVaultUpgradeable is
     catch {
       revert IEarnVaultEventsAndErrors.PermitFailed();
     }
-    
+
     _deposit(tokenOwner, amount);
   }
 
@@ -636,7 +636,9 @@ contract EarnVaultUpgradeable is
     // Settle boost rewards for all active tokens BEFORE updating principal
     for (uint256 i = 0; i < $.activeBoostTokens.length; i++) {
       address token = $.activeBoostTokens[i];
-      BoostRewardsLib.settleBoost(user, token, $.principal[user], $.boostGlobalIndex[token], $.userBoostIndex, $.userBoostAccrued);
+      BoostRewardsLib.settleBoost(
+        user, token, $.principal[user], $.boostGlobalIndex[token], $.userBoostIndex, $.userBoostAccrued
+      );
     }
 
     $.USDSC.safeTransferFrom(user, address(this), amount);
@@ -671,13 +673,7 @@ contract EarnVaultUpgradeable is
       address token = $.activeBoostTokens[i];
       // settleBoost is called internally by claimBoostReward
       uint256 claimedAmount = BoostRewardsLib.claimBoostReward(
-        user,
-        token,
-        p,
-        $.boostGlobalIndex[token],
-        $.userBoostIndex,
-        $.userBoostAccrued,
-        $.boostClaimReserve
+        user, token, p, $.boostGlobalIndex[token], $.userBoostIndex, $.userBoostAccrued, $.boostClaimReserve
       );
       if (claimedAmount > 0) {
         hasBoostClaim = true;
@@ -705,7 +701,6 @@ contract EarnVaultUpgradeable is
     }
     $.userIndex[user] = gi; // Always update index for consistency
   }
-
 
   // -------- Internal Functions (View) --------
 
