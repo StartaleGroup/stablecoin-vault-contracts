@@ -186,7 +186,7 @@ contract EarnVaultV1ToV2UserJourneyTest is Test {
     proxyAdmin.upgradeAndCall(
       ITransparentUpgradeableProxy(address(proxy)),
       address(v2Implementation),
-      abi.encodeWithSelector(EarnVaultV2.initializeV2.selector, makeAddr('boostKeeper'))
+      abi.encodeWithSelector(EarnVaultV2.initializeV2.selector, makeAddr('boostKeeper'), type(uint256).max)
     );
     vault = EarnVaultV2(payable(address(proxy)));
 

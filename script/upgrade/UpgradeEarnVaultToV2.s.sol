@@ -10,8 +10,8 @@ import {console} from 'forge-std/Script.sol';
 /**
  * @title UpgradeEarnVaultToV2
  * @notice Upgrades a live EarnVaultUpgradeable (V1) TransparentUpgradeableProxy to EarnVaultV2 in ONE
- *         ProxyAdmin.upgradeAndCall carrying initializeV2(boostKeeper).
- * @dev Env: EARN_VAULT_PROXY, EXPECTED_PROXY_ADMIN, BOOST_KEEPER_ADDRESS,
+ *         ProxyAdmin.upgradeAndCall carrying initializeV2(boostKeeper, maxBoostPerBatch).
+ * @dev Env: EARN_VAULT_PROXY, EXPECTED_PROXY_ADMIN, BOOST_KEEPER_ADDRESS, MAX_BOOST_PER_BATCH,
  *      DEPLOYER_PRIVATE_KEY (must be the ProxyAdmin owner), and optionally
  *      IMPLEMENTATION - a pre-deployed, explorer-verified EarnVaultV2 to upgrade to (recommended, so
  *      the wired bytecode is exactly the audited, verified bytecode). Without it a fresh
@@ -36,6 +36,7 @@ contract UpgradeEarnVaultToV2 is EarnVaultV2UpgradeChecks {
     address proxy;
     address expectedAdmin;
     address keeper;
+    uint256 cap;
     address implementation; // address(0) => deploy a fresh EarnVaultV2
   }
 
@@ -44,6 +45,7 @@ contract UpgradeEarnVaultToV2 is EarnVaultV2UpgradeChecks {
       proxy: vm.envAddress('EARN_VAULT_PROXY'),
       expectedAdmin: vm.envAddress('EXPECTED_PROXY_ADMIN'),
       keeper: vm.envAddress('BOOST_KEEPER_ADDRESS'),
+      cap: vm.envUint('MAX_BOOST_PER_BATCH'),
       implementation: vm.envOr('IMPLEMENTATION', address(0))
     });
     uint256 key = vm.envUint('DEPLOYER_PRIVATE_KEY');
@@ -60,7 +62,9 @@ contract UpgradeEarnVaultToV2 is EarnVaultV2UpgradeChecks {
 
     impl = p.implementation == address(0) ? address(new EarnVaultV2()) : p.implementation;
     ProxyAdmin(p.expectedAdmin)
-      .upgradeAndCall(ITransparentUpgradeableProxy(p.proxy), impl, abi.encodeCall(EarnVaultV2.initializeV2, (p.keeper)));
+      .upgradeAndCall(
+        ITransparentUpgradeableProxy(p.proxy), impl, abi.encodeCall(EarnVaultV2.initializeV2, (p.keeper, p.cap))
+      );
     console.log('Upgraded to EarnVaultV2 implementation:', impl);
 
     postflight(p, impl, before);
@@ -69,6 +73,7 @@ contract UpgradeEarnVaultToV2 is EarnVaultV2UpgradeChecks {
   function preflight(Params memory p, address sender) public view returns (V1Snapshot memory snap) {
     require(p.proxy != address(0) && p.expectedAdmin != address(0), 'proxy/admin not set');
     require(p.keeper != address(0), 'BOOST_KEEPER_ADDRESS not set');
+    require(p.cap != 0, 'MAX_BOOST_PER_BATCH must be non-zero');
     require(_admin(p.proxy) == p.expectedAdmin, 'ERC-1967 admin slot != EXPECTED_PROXY_ADMIN');
     require(ProxyAdmin(p.expectedAdmin).owner() == sender, 'sender does not own the ProxyAdmin');
     if (p.implementation != address(0)) _requireV2Implementation(p.implementation);
@@ -88,7 +93,7 @@ contract UpgradeEarnVaultToV2 is EarnVaultV2UpgradeChecks {
   }
 
   function postflight(Params memory p, address impl, V1Snapshot memory before) public view {
-    _requireV2Config(p.proxy, p.expectedAdmin, impl, p.keeper);
+    _requireV2Config(p.proxy, p.expectedAdmin, impl, p.keeper, p.cap);
     _requireRoles(p.proxy, before.roles);
 
     EarnVaultV2 v = EarnVaultV2(payable(p.proxy));

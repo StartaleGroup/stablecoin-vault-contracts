@@ -34,6 +34,8 @@ contract EarnVaultV2BoostCreditTest is Test {
   address public pauser = makeAddr('pauser');
   address public operator = makeAddr('operator');
   address public boostKeeper = makeAddr('boostKeeper');
+  /// @dev Effectively uncapped for tests that aren't about the cap; cap tests set their own.
+  uint256 internal constant TEST_MAX_BOOST = type(uint256).max;
 
   function setUp() public virtual {
     usdsc = new MockUSDSC();
@@ -56,7 +58,7 @@ contract EarnVaultV2BoostCreditTest is Test {
     proxyAdmin.upgradeAndCall(
       ITransparentUpgradeableProxy(address(proxy)),
       address(v2Implementation),
-      abi.encodeWithSelector(EarnVaultV2.initializeV2.selector, boostKeeper)
+      abi.encodeWithSelector(EarnVaultV2.initializeV2.selector, boostKeeper, TEST_MAX_BOOST)
     );
 
     vault = EarnVaultV2(payable(address(proxy)));
@@ -90,12 +92,12 @@ contract EarnVaultV2BoostCreditTest is Test {
 
     vm.prank(attacker);
     vm.expectRevert(EarnVaultV2.NotProxyAdmin.selector);
-    v2.initializeV2(attacker);
+    v2.initializeV2(attacker, TEST_MAX_BOOST);
 
     // not even the vault owner can - only the ProxyAdmin, via upgradeAndCall
     vm.prank(owner);
     vm.expectRevert(EarnVaultV2.NotProxyAdmin.selector);
-    v2.initializeV2(boostKeeper);
+    v2.initializeV2(boostKeeper, TEST_MAX_BOOST);
 
     assertEq(v2.boostKeeper(), address(0));
   }
@@ -115,7 +117,9 @@ contract EarnVaultV2BoostCreditTest is Test {
     // proper recovery: repeat upgradeAndCall to the SAME implementation, this time with the init call
     vm.prank(admin);
     pa.upgradeAndCall(
-      ITransparentUpgradeableProxy(address(v2)), impl, abi.encodeCall(EarnVaultV2.initializeV2, (boostKeeper))
+      ITransparentUpgradeableProxy(address(v2)),
+      impl,
+      abi.encodeCall(EarnVaultV2.initializeV2, (boostKeeper, TEST_MAX_BOOST))
     );
     assertEq(v2.boostKeeper(), boostKeeper);
     assertEq(_initializedVersion(address(v2)), 2, 'proper recovery consumes reinitializer(2)');
@@ -136,6 +140,8 @@ contract EarnVaultV2BoostCreditTest is Test {
     address stopgapKeeper = makeAddr('stopgapKeeper');
     vm.prank(owner);
     v2.setBoostKeeper(stopgapKeeper);
+    vm.prank(owner);
+    v2.setMaxBoostPerBatch(TEST_MAX_BOOST); // the cap is 0 too until set - both are needed
     assertEq(v2.boostKeeper(), stopgapKeeper);
     assertEq(_initializedVersion(address(v2)), 1, 'stopgap leaves the version gap');
 
@@ -153,12 +159,14 @@ contract EarnVaultV2BoostCreditTest is Test {
     // nobody but the ProxyAdmin can use the unconsumed reinitializer...
     vm.prank(owner);
     vm.expectRevert(EarnVaultV2.NotProxyAdmin.selector);
-    v2.initializeV2(owner);
+    v2.initializeV2(owner, TEST_MAX_BOOST);
 
     // ...and when it does (via upgradeAndCall to the same impl), it overwrites the keeper, then locks
     vm.prank(admin);
     pa.upgradeAndCall(
-      ITransparentUpgradeableProxy(address(v2)), impl, abi.encodeCall(EarnVaultV2.initializeV2, (boostKeeper))
+      ITransparentUpgradeableProxy(address(v2)),
+      impl,
+      abi.encodeCall(EarnVaultV2.initializeV2, (boostKeeper, TEST_MAX_BOOST))
     );
     assertEq(v2.boostKeeper(), boostKeeper);
     assertEq(_initializedVersion(address(v2)), 2);
@@ -166,7 +174,7 @@ contract EarnVaultV2BoostCreditTest is Test {
     vm.prank(admin);
     vm.expectRevert(Initializable.InvalidInitialization.selector);
     pa.upgradeAndCall(
-      ITransparentUpgradeableProxy(address(v2)), impl, abi.encodeCall(EarnVaultV2.initializeV2, (owner))
+      ITransparentUpgradeableProxy(address(v2)), impl, abi.encodeCall(EarnVaultV2.initializeV2, (owner, TEST_MAX_BOOST))
     );
   }
 
@@ -191,7 +199,9 @@ contract EarnVaultV2BoostCreditTest is Test {
     vm.prank(admin);
     vm.expectRevert(Initializable.InvalidInitialization.selector);
     pa.upgradeAndCall(
-      ITransparentUpgradeableProxy(address(v2)), v3Impl, abi.encodeCall(EarnVaultV2.initializeV2, (owner))
+      ITransparentUpgradeableProxy(address(v2)),
+      v3Impl,
+      abi.encodeCall(EarnVaultV2.initializeV2, (owner, TEST_MAX_BOOST))
     );
   }
 
@@ -218,12 +228,12 @@ contract EarnVaultV2BoostCreditTest is Test {
     (EarnVaultV2 v2, ProxyAdmin pa,) = _upgradeWithoutInit();
     vm.prank(address(pa));
     vm.expectRevert(TransparentUpgradeableProxy.ProxyDeniedAdminAccess.selector);
-    v2.initializeV2(boostKeeper);
+    v2.initializeV2(boostKeeper, TEST_MAX_BOOST);
   }
 
   function test_InitializeV2_CannotRunTwiceEvenViaUpgradeAndCall() public {
     (EarnVaultV2 v2, ProxyAdmin pa, address impl) = _upgradeWithoutInit();
-    bytes memory initData = abi.encodeCall(EarnVaultV2.initializeV2, (boostKeeper));
+    bytes memory initData = abi.encodeCall(EarnVaultV2.initializeV2, (boostKeeper, TEST_MAX_BOOST));
     vm.prank(admin);
     pa.upgradeAndCall(ITransparentUpgradeableProxy(address(v2)), impl, initData);
 
@@ -231,7 +241,9 @@ contract EarnVaultV2BoostCreditTest is Test {
     vm.prank(admin);
     vm.expectRevert(Initializable.InvalidInitialization.selector);
     pa.upgradeAndCall(
-      ITransparentUpgradeableProxy(address(v2)), impl, abi.encodeCall(EarnVaultV2.initializeV2, (attackerKeeper))
+      ITransparentUpgradeableProxy(address(v2)),
+      impl,
+      abi.encodeCall(EarnVaultV2.initializeV2, (attackerKeeper, TEST_MAX_BOOST))
     );
     assertEq(v2.boostKeeper(), boostKeeper);
   }
@@ -241,7 +253,9 @@ contract EarnVaultV2BoostCreditTest is Test {
     vm.prank(admin);
     vm.expectRevert(IEarnVaultEventsAndErrors.CanNotBeZeroAddress.selector);
     pa.upgradeAndCall(
-      ITransparentUpgradeableProxy(address(v2)), impl, abi.encodeCall(EarnVaultV2.initializeV2, (address(0)))
+      ITransparentUpgradeableProxy(address(v2)),
+      impl,
+      abi.encodeCall(EarnVaultV2.initializeV2, (address(0), TEST_MAX_BOOST))
     );
   }
 
@@ -257,7 +271,9 @@ contract EarnVaultV2BoostCreditTest is Test {
   function test_InitializeV2_FreshProxy_CannotRunInConstructorData() public {
     address impl = address(new EarnVaultV2());
     vm.expectRevert(EarnVaultV2.NotProxyAdmin.selector);
-    new TransparentUpgradeableProxy(impl, admin, abi.encodeCall(EarnVaultV2.initializeV2, (boostKeeper)));
+    new TransparentUpgradeableProxy(
+      impl, admin, abi.encodeCall(EarnVaultV2.initializeV2, (boostKeeper, TEST_MAX_BOOST))
+    );
   }
 
   /// @dev The supported fresh-deploy path: construct the proxy with the base initialize(), then
@@ -273,7 +289,9 @@ contract EarnVaultV2BoostCreditTest is Test {
 
     vm.prank(admin);
     pa.upgradeAndCall(
-      ITransparentUpgradeableProxy(address(proxy)), impl, abi.encodeCall(EarnVaultV2.initializeV2, (boostKeeper))
+      ITransparentUpgradeableProxy(address(proxy)),
+      impl,
+      abi.encodeCall(EarnVaultV2.initializeV2, (boostKeeper, TEST_MAX_BOOST))
     );
     assertEq(v2.boostKeeper(), boostKeeper);
   }
@@ -289,7 +307,7 @@ contract EarnVaultV2BoostCreditTest is Test {
 
     vm.prank(owner);
     vm.expectRevert(EarnVaultV2.NotProxyAdmin.selector);
-    v2.initializeV2(boostKeeper);
+    v2.initializeV2(boostKeeper, TEST_MAX_BOOST);
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -307,7 +325,7 @@ contract EarnVaultV2BoostCreditTest is Test {
   }
 
   function _initData(address keeper) internal pure returns (bytes memory) {
-    return abi.encodeCall(EarnVaultV2.initializeV2, (keeper));
+    return abi.encodeCall(EarnVaultV2.initializeV2, (keeper, TEST_MAX_BOOST));
   }
 
   /// @dev Root of trust: upgradeAndCall is ProxyAdmin-owner-only, so a stranger cannot use the
@@ -332,7 +350,7 @@ contract EarnVaultV2BoostCreditTest is Test {
 
     vm.prank(caller);
     vm.expectRevert(EarnVaultV2.NotProxyAdmin.selector);
-    v2.initializeV2(caller);
+    v2.initializeV2(caller, TEST_MAX_BOOST);
     assertEq(v2.boostKeeper(), address(0));
   }
 
@@ -342,7 +360,7 @@ contract EarnVaultV2BoostCreditTest is Test {
     for (uint256 i = 0; i < callers.length; i++) {
       vm.prank(callers[i]);
       vm.expectRevert(EarnVaultV2.NotProxyAdmin.selector);
-      v2.initializeV2(callers[i]);
+      v2.initializeV2(callers[i], TEST_MAX_BOOST);
     }
     assertEq(v2.boostKeeper(), address(0));
   }
@@ -353,12 +371,12 @@ contract EarnVaultV2BoostCreditTest is Test {
     for (uint256 i = 0; i < callers.length; i++) {
       vm.prank(callers[i]);
       vm.expectRevert(Initializable.InvalidInitialization.selector);
-      vault.initializeV2(callers[i]);
+      vault.initializeV2(callers[i], TEST_MAX_BOOST);
     }
     address pa = address(uint160(uint256(vm.load(address(vault), ADMIN_SLOT))));
     vm.prank(pa);
     vm.expectRevert(TransparentUpgradeableProxy.ProxyDeniedAdminAccess.selector);
-    vault.initializeV2(pa);
+    vault.initializeV2(pa, TEST_MAX_BOOST);
 
     assertEq(vault.boostKeeper(), boostKeeper);
   }
@@ -421,6 +439,7 @@ contract EarnVaultV2BoostCreditTest is Test {
 
     vm.startPrank(owner);
     v2.setBoostKeeper(boostKeeper);
+    v2.setMaxBoostPerBatch(TEST_MAX_BOOST); // the cap is 0 too until set - both are needed
     vm.stopPrank();
 
     address user = makeAddr('user1');
@@ -442,7 +461,7 @@ contract EarnVaultV2BoostCreditTest is Test {
 
     vm.prank(attacker);
     vm.expectRevert(EarnVaultV2.NotProxyAdmin.selector);
-    v2.initializeV2(attacker);
+    v2.initializeV2(attacker, TEST_MAX_BOOST);
 
     vm.prank(admin);
     pa.upgradeAndCall(ITransparentUpgradeableProxy(address(v2)), impl, _initData(boostKeeper));
@@ -491,12 +510,13 @@ contract EarnVaultV2BoostCreditTest is Test {
   function test_InitializeV2_ImplementationContractCannotBeInitialized() public {
     EarnVaultV2 impl = new EarnVaultV2();
     vm.expectRevert(Initializable.InvalidInitialization.selector);
-    impl.initializeV2(boostKeeper);
+    impl.initializeV2(boostKeeper, TEST_MAX_BOOST);
   }
 
   /// @dev BOOST_CREDIT_STORAGE_LOCATION is a hand-pasted hash and private - recompute the
   ///      ERC-7201 formula here and check the struct's fields actually live there: boostKeeper at
-  ///      the base slot, lastCreditedCycle mapping at base + 1.
+  ///      the base slot, lastCreditedCycle mapping at base + 1, latestCycleId at base + 2,
+  ///      maxBoostPerBatch at base + 3.
   function test_BoostCreditStorage_MatchesErc7201Location() public {
     bytes32 expected = keccak256(abi.encode(uint256(keccak256('startale.storage.EarnVaultV2.BoostCredit')) - 1))
       & ~bytes32(uint256(0xff));
@@ -509,6 +529,10 @@ contract EarnVaultV2BoostCreditTest is Test {
     vault.onBoostCredit(1, users, amounts);
     bytes32 mappingSlot = keccak256(abi.encode(user, uint256(expected) + 1));
     assertEq(uint256(vm.load(address(vault), mappingSlot)), 1);
+    assertEq(uint256(vm.load(address(vault), bytes32(uint256(expected) + 2))), 1, 'latestCycleId at base + 2');
+    assertEq(
+      uint256(vm.load(address(vault), bytes32(uint256(expected) + 3))), TEST_MAX_BOOST, 'maxBoostPerBatch at base + 3'
+    );
   }
 
   function test_SetBoostKeeper_UpdatesStateAndEmits() public {
@@ -689,9 +713,8 @@ contract EarnVaultV2BoostCreditTest is Test {
     assertEq(vault.lastCreditedCycle(user), 1);
   }
 
-  /// @dev Backs the @param cycleId note: cycleId 0 reverts StaleCycle even for a never-credited
-  ///      address (lastCreditedCycle defaults to 0), so cycle numbering must start at 1.
-  function test_OnBoostCredit_CycleIdZeroRevertsEvenOnFirstCredit() public {
+  /// @dev cycleId 0 is a configuration mistake and now fails legibly with its own error.
+  function test_OnBoostCredit_CycleIdZeroRevertsZeroCycleId() public {
     usdsc.mint(address(vault), 100e6);
     address[] memory users = new address[](1);
     users[0] = makeAddr('user1');
@@ -699,7 +722,7 @@ contract EarnVaultV2BoostCreditTest is Test {
     amounts[0] = 100e6;
 
     vm.prank(boostKeeper);
-    vm.expectRevert(EarnVaultV2.StaleCycle.selector);
+    vm.expectRevert(EarnVaultV2.ZeroCycleId.selector);
     vault.onBoostCredit(0, users, amounts);
 
     vm.prank(boostKeeper);
@@ -707,17 +730,20 @@ contract EarnVaultV2BoostCreditTest is Test {
     assertEq(vault.lastCreditedCycle(makeAddr('user1')), 1);
   }
 
-  function test_OnBoostCredit_RevertsOnLowerCycleIdThanLastCredited() public {
+  /// @dev Closed cycles can never be reopened: once cycle 2 is open, cycle 1 reverts CycleIdTooOld.
+  function test_OnBoostCredit_RevertsOnLowerCycleIdThanLatest() public {
     address user = makeAddr('user1');
-    usdsc.mint(address(vault), 200e6);
+    usdsc.mint(address(vault), 300e6);
     (address[] memory users, uint256[] memory amounts) = _batch1(user, 100e6);
 
     vm.prank(boostKeeper);
-    vault.onBoostCredit(5, users, amounts);
+    vault.onBoostCredit(1, users, amounts);
+    vm.prank(boostKeeper);
+    vault.onBoostCredit(2, users, amounts);
 
     vm.prank(boostKeeper);
-    vm.expectRevert(EarnVaultV2.StaleCycle.selector);
-    vault.onBoostCredit(3, users, amounts);
+    vm.expectRevert(abi.encodeWithSelector(EarnVaultV2.CycleIdTooOld.selector, 1, 2));
+    vault.onBoostCredit(1, users, amounts);
   }
 
   function test_OnBoostCredit_AllowsIncreasingCycleIdsForSameAddress() public {
@@ -1056,18 +1082,164 @@ contract EarnVaultV2BoostCreditTest is Test {
   }
 
   // ---------------------------------------------------------------------------------------------
-  // Initialization event, empty batch
+  // Cycle bound (latestCycleId + 1) and owner repair of the replay guard
   // ---------------------------------------------------------------------------------------------
 
-  /// @dev initializeV2 announces the initial keeper, so indexers see it.
-  function test_InitializeV2_EmitsBoostKeeperChanged() public {
+  function _creditOne(address user, uint256 amount, uint256 cycleId) internal {
+    usdsc.mint(address(vault), amount);
+    (address[] memory users, uint256[] memory amounts) = _batch1(user, amount);
+    vm.prank(boostKeeper);
+    vault.onBoostCredit(cycleId, users, amounts);
+  }
+
+  function test_CycleBound_FirstCycleMustBeOne() public {
+    usdsc.mint(address(vault), 1e6);
+    (address[] memory users, uint256[] memory amounts) = _batch1(makeAddr('user1'), 1e6);
+    vm.prank(boostKeeper);
+    vm.expectRevert(abi.encodeWithSelector(EarnVaultV2.CycleIdTooFarAhead.selector, 2, 0));
+    vault.onBoostCredit(2, users, amounts);
+    assertEq(vault.latestCycleId(), 0);
+  }
+
+  /// @dev The exact failure the bound exists for: a typo'd cycleId (a date instead of 5) reverts
+  ///      instead of recording itself and blocking those addresses' future credits.
+  function test_CycleBound_TypoCycleIdRevertsInsteadOfBricking() public {
+    address user = makeAddr('user1');
+    _creditOne(user, 1e6, 1);
+    usdsc.mint(address(vault), 1e6);
+    (address[] memory users, uint256[] memory amounts) = _batch1(user, 1e6);
+    vm.prank(boostKeeper);
+    vm.expectRevert(abi.encodeWithSelector(EarnVaultV2.CycleIdTooFarAhead.selector, 20_260_925, 1));
+    vault.onBoostCredit(20_260_925, users, amounts);
+
+    assertEq(vault.lastCreditedCycle(user), 1, 'guard untouched');
+    _creditOne(user, 1e6, 2); // next legitimate cycle still works
+    assertEq(vault.principal(user), 2e6);
+  }
+
+  /// @dev Several batches may share the current cycle, but an older cycle is rejected - so a
+  ///      compromised keeper cannot spend closed cycles' unused cap headroom.
+  function test_CycleBound_MultipleBatchesShareCurrentCycle_OlderCycleRejected() public {
+    address a = makeAddr('a');
+    address b = makeAddr('b');
+    address c = makeAddr('c');
+    _creditOne(a, 1e6, 1);
+    _creditOne(b, 1e6, 1); // second batch, same cycle
+    _creditOne(a, 1e6, 2);
+    _creditOne(b, 1e6, 2); // second batch in the new current cycle
+    assertEq(vault.latestCycleId(), 2);
+
+    usdsc.mint(address(vault), 1e6);
+    (address[] memory users, uint256[] memory amounts) = _batch1(c, 1e6);
+    vm.prank(boostKeeper);
+    vm.expectRevert(abi.encodeWithSelector(EarnVaultV2.CycleIdTooOld.selector, 1, 2));
+    vault.onBoostCredit(1, users, amounts); // c never credited, but cycle 1 is closed
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Initialization of the cap
+  // ---------------------------------------------------------------------------------------------
+
+  function test_InitializeV2_RevertsOnZeroMaxBoostPerBatch() public {
+    (EarnVaultV2 v2, ProxyAdmin pa, address impl) = _upgradeWithoutInit();
+    vm.prank(admin);
+    vm.expectRevert(EarnVaultV2.ZeroMaxBoostPerBatch.selector);
+    pa.upgradeAndCall(
+      ITransparentUpgradeableProxy(address(v2)), impl, abi.encodeCall(EarnVaultV2.initializeV2, (boostKeeper, 0))
+    );
+  }
+
+  /// @dev initializeV2 announces the initial config, so indexers see the first keeper and cap.
+  function test_InitializeV2_EmitsInitialConfigEvents() public {
     (EarnVaultV2 v2, ProxyAdmin pa, address impl) = _upgradeWithoutInit();
     vm.expectEmit(true, true, true, true, address(v2));
     emit EarnVaultV2.BoostKeeperChanged(address(pa), address(0), boostKeeper);
+    vm.expectEmit(true, true, true, true, address(v2));
+    emit EarnVaultV2.MaxBoostPerBatchChanged(address(pa), 0, 123e6);
     vm.prank(admin);
     pa.upgradeAndCall(
-      ITransparentUpgradeableProxy(address(v2)), impl, abi.encodeCall(EarnVaultV2.initializeV2, (boostKeeper))
+      ITransparentUpgradeableProxy(address(v2)), impl, abi.encodeCall(EarnVaultV2.initializeV2, (boostKeeper, 123e6))
     );
+    assertEq(v2.maxBoostPerBatch(), 123e6);
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // maxBoostPerBatch - guards against a buggy rewards engine (e.g. a decimals error)
+  // ---------------------------------------------------------------------------------------------
+
+  /// @dev The most likely engine bug - amounts in the wrong decimals (18 instead of USDSC's 6) - is
+  ///      caught on the very first batch: it credits far more than the cap and reverts whole.
+  function test_MaxBoostPerBatch_CatchesDecimalsBugOnFirstBatch() public {
+    vm.prank(owner);
+    vault.setMaxBoostPerBatch(10_000e6);
+    address user = makeAddr('user1');
+    uint256 buggy = 5e18; // meant 5e6 (5 USDSC), sent with 18 decimals
+    usdsc.mint(address(vault), buggy);
+    (address[] memory users, uint256[] memory amounts) = _batch1(user, buggy);
+    vm.prank(boostKeeper);
+    vm.expectRevert(abi.encodeWithSelector(EarnVaultV2.BoostBatchCapExceeded.selector, buggy, 10_000e6));
+    vault.onBoostCredit(1, users, amounts);
+    assertEq(vault.principal(user), 0);
+    assertEq(vault.latestCycleId(), 0);
+  }
+
+  /// @dev Exactly at the cap is allowed; one wei over reverts. The cap is PER BATCH: a second batch
+  ///      in the same cycle gets the full cap again (no cumulative tally).
+  function test_MaxBoostPerBatch_BoundaryAndPerBatchNotCumulative() public {
+    vm.prank(owner);
+    vault.setMaxBoostPerBatch(100e6);
+    usdsc.mint(address(vault), 100e6 + 1);
+    (address[] memory users, uint256[] memory amounts) = _batch1(makeAddr('a'), 100e6 + 1);
+    vm.prank(boostKeeper);
+    vm.expectRevert(abi.encodeWithSelector(EarnVaultV2.BoostBatchCapExceeded.selector, 100e6 + 1, 100e6));
+    vault.onBoostCredit(1, users, amounts);
+
+    amounts[0] = 100e6;
+    vm.prank(boostKeeper);
+    vault.onBoostCredit(1, users, amounts);
+    _creditOne(makeAddr('b'), 100e6, 1); // second batch, same cycle, full cap again
+    assertEq(vault.principal(makeAddr('b')), 100e6);
+  }
+
+  function test_MaxBoostPerBatch_SkippedAmountsDoNotCount() public {
+    vm.prank(owner);
+    vault.setMaxBoostPerBatch(50e6);
+    address blk = makeAddr('blacklisted');
+    vm.prank(owner);
+    vault.setBlacklisted(blk, true);
+    usdsc.mint(address(vault), 50e6 + 500e6);
+    (address[] memory users, uint256[] memory amounts) = _batch2(makeAddr('a'), 50e6, blk, 500e6);
+    vm.prank(boostKeeper);
+    vault.onBoostCredit(1, users, amounts); // credited 50e6 == cap; skipped 500e6 not counted
+    assertEq(vault.principal(makeAddr('a')), 50e6);
+  }
+
+  function test_SetMaxBoostPerBatch_UpdatesAndEmits_OwnerOnly_NonZero() public {
+    vm.expectEmit(true, true, true, true);
+    emit EarnVaultV2.MaxBoostPerBatchChanged(owner, TEST_MAX_BOOST, 7e6);
+    vm.prank(owner);
+    vault.setMaxBoostPerBatch(7e6);
+    assertEq(vault.maxBoostPerBatch(), 7e6);
+
+    vm.prank(owner);
+    vm.expectRevert(EarnVaultV2.ZeroMaxBoostPerBatch.selector);
+    vault.setMaxBoostPerBatch(0);
+
+    vm.prank(boostKeeper);
+    vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, boostKeeper));
+    vault.setMaxBoostPerBatch(1);
+  }
+
+  /// @dev Catch-up after downtime: cycles can be opened back-to-back (same block), so the engine can
+  ///      credit each missed day under its own cycle rather than rolling days together.
+  function test_CatchUp_CyclesOpenBackToBackInSameBlock() public {
+    address user = makeAddr('user1');
+    for (uint256 c = 1; c <= 5; c++) {
+      _creditOne(user, 1e6, c);
+    }
+    assertEq(vault.latestCycleId(), 5);
+    assertEq(vault.lastCreditedCycle(user), 5);
+    assertEq(vault.principal(user), 5e6);
   }
 
   function test_OnBoostCredit_RevertsOnEmptyBatch() public {
@@ -1076,6 +1248,36 @@ contract EarnVaultV2BoostCreditTest is Test {
     vm.prank(boostKeeper);
     vm.expectRevert(EarnVaultV2.EmptyBatch.selector);
     vault.onBoostCredit(1, users, amounts);
+    assertEq(vault.latestCycleId(), 0);
+  }
+
+  /// @dev Correctness, not just anti-griefing: advancing to latestCycleId + 1 closes the current
+  ///      cycle, so an ordinary all-skipped batch (e.g. every entry blacklisted) must NOT advance -
+  ///      otherwise it would block legitimate same-cycle re-credits of entries skipped earlier.
+  function test_NoCreditBatchDoesNotCloseCurrentCycle() public {
+    address a = makeAddr('a');
+    address b = makeAddr('b');
+    vm.prank(owner);
+    vault.setBlacklisted(b, true);
+    usdsc.mint(address(vault), 2e6);
+    (address[] memory users, uint256[] memory amounts) = _batch2(a, 1e6, b, 1e6);
+    vm.prank(boostKeeper);
+    vault.onBoostCredit(1, users, amounts); // a credited, b skipped, in cycle 1
+    assertEq(vault.latestCycleId(), 1);
+
+    // an all-blacklisted batch under cycle 2 credits nothing -> cycle 1 stays current
+    (address[] memory onlyB, uint256[] memory amt) = _batch1(b, 1e6);
+    vm.prank(boostKeeper);
+    vault.onBoostCredit(2, onlyB, amt);
+    assertEq(vault.latestCycleId(), 1, 'no credit -> current cycle not closed');
+
+    // b's blacklist clears; b is still creditable in cycle 1 (its skipped funding is surplus)
+    vm.prank(owner);
+    vault.setBlacklisted(b, false);
+    vm.prank(boostKeeper);
+    vault.onBoostCredit(1, onlyB, amt);
+    assertEq(vault.principal(b), 1e6);
+    assertEq(vault.lastCreditedCycle(b), 1);
   }
 
   function test_OnBoostCredit_RevertsWholeBatchOnDuplicateAddressInSameBatch() public {

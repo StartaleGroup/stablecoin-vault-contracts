@@ -163,7 +163,9 @@ contract EarnVaultV2Handler is Test {
 
     // Fund first, exactly like the real keeper flow (transfer USDSC in, then call).
     usdsc.mint(address(vault), total);
-    boostCycleId++;
+    // Always open the next cycle, using latestCycleId + 1 read from chain (an all-skipped batch
+    // doesn't advance it, so the next call just retries that cycle).
+    boostCycleId = vault.latestCycleId() + 1;
     settleOps += count;
     vm.prank(boostKeeper);
     vault.onBoostCredit(boostCycleId, batch, amounts);
@@ -224,7 +226,7 @@ contract EarnVaultV2Invariants is StdInvariant, Test {
     proxyAdmin.upgradeAndCall(
       ITransparentUpgradeableProxy(address(proxy)),
       address(v2Implementation),
-      abi.encodeWithSelector(EarnVaultV2.initializeV2.selector, boostKeeper)
+      abi.encodeWithSelector(EarnVaultV2.initializeV2.selector, boostKeeper, type(uint256).max)
     );
 
     vault = EarnVaultV2(payable(address(proxy)));
@@ -297,6 +299,18 @@ contract EarnVaultV2Invariants is StdInvariant, Test {
   ///         invariant carried over unchanged from V1.
   /// @notice Skipped entries never credit anyone: the vault's own address and the blacklisted
   ///         address (both mixed into every credit pool) never hold principal.
+  /// @notice No address's replay guard can ever be ahead of the global cycle counter - the property
+  ///         that makes a permanent lockout structurally impossible (the keeper can always credit
+  ///         anyone at latestCycleId + 1).
+  function invariant_LastCreditedCycleNeverExceedsLatestCycle() external view {
+    uint256 latest = vault.latestCycleId();
+    for (uint256 i = 0; i < handler.MAX_USERS(); i++) {
+      assertLe(vault.lastCreditedCycle(handler.users(i)), latest);
+    }
+    assertLe(vault.lastCreditedCycle(handler.blacklistedAddr()), latest);
+    assertLe(vault.lastCreditedCycle(address(vault)), latest);
+  }
+
   function invariant_IneligibleAddressesNeverCredited() external view {
     assertEq(vault.principal(address(vault)), 0);
     assertEq(vault.principal(handler.blacklistedAddr()), 0);
