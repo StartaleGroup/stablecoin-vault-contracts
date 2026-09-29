@@ -10,6 +10,11 @@ import {ITransparentUpgradeableProxy} from '@openzeppelin/contracts/proxy/transp
 import {StdInvariant} from 'forge-std/StdInvariant.sol';
 import {Test} from 'forge-std/Test.sol';
 
+/// @dev Finite per-batch cap the vault is initialized with. Handler entries are up to
+///      MAX_AMOUNT / 10 each and a batch has up to MAX_USERS eligible entries, so fuzzed batches land
+///      on both sides of it and the BoostBatchCapExceeded path is exercised, not just the happy path.
+uint256 constant BOOST_CAP = 500_000e6;
+
 /// @title EarnVaultV2Handler
 /// @notice Bounded fuzz-target actions for the invariant suite below, mirroring the
 ///         Handler pattern already used by SUSDSCVaultInvariants.t.sol. Every action is
@@ -37,6 +42,8 @@ contract EarnVaultV2Handler is Test {
   address[] public users;
   uint256 public constant MAX_USERS = 15;
   uint256 public constant MAX_AMOUNT = 1_000_000e6;
+  /// @notice onBoostCredit() batches the cap rejected (each must have changed nothing)
+  uint256 public capRejectedBatches;
 
   constructor(
     EarnVaultV2 _vault,
@@ -147,6 +154,8 @@ contract EarnVaultV2Handler is Test {
   /// @dev Credits a batch of distinct addresses (contiguous from a random offset, wrapping), so
   ///      it never trips the duplicate-in-batch StaleCycle revert; cycleId strictly increases
   ///      per call, so it never trips the replay guard either. Amounts may be zero on purpose.
+  ///      A batch whose credited total exceeds BOOST_CAP is expected to revert whole; that path
+  ///      asserts nothing changed, and the invariants then check the state it left behind.
   function onBoostCredit(uint256 offsetSeed, uint256 countSeed, uint256 amountSeed) external {
     // pool = every user address plus the two ineligible ones; contiguous distinct window
     uint256 pool = users.length + INELIGIBLE_ENTRIES;
@@ -155,10 +164,12 @@ contract EarnVaultV2Handler is Test {
     address[] memory batch = new address[](count);
     uint256[] memory amounts = new uint256[](count);
     uint256 total = 0;
+    uint256 credited = 0; // what the vault will actually credit: skips excluded, like the cap
     for (uint256 i = 0; i < count; i++) {
       batch[i] = _poolAddress((offset + i) % pool);
       amounts[i] = bound(uint256(keccak256(abi.encode(amountSeed, i))), 0, MAX_AMOUNT / 10);
       total += amounts[i];
+      if (batch[i] != address(vault) && batch[i] != blacklistedAddr) credited += amounts[i];
     }
 
     // Fund first, exactly like the real keeper flow (transfer USDSC in, then call).
@@ -166,6 +177,23 @@ contract EarnVaultV2Handler is Test {
     // Always open the next cycle, using latestCycleId + 1 read from chain (an all-skipped batch
     // doesn't advance it, so the next call just retries that cycle).
     boostCycleId = vault.latestCycleId() + 1;
+
+    if (credited > BOOST_CAP) {
+      uint256 latestBefore = vault.latestCycleId();
+      uint256 principalBefore = vault.totalPrincipal();
+      uint256 reserveBefore = vault.claimReserve();
+      vm.expectRevert(abi.encodeWithSelector(EarnVaultV2.BoostBatchCapExceeded.selector, credited, BOOST_CAP));
+      vm.prank(boostKeeper);
+      vault.onBoostCredit(boostCycleId, batch, amounts);
+      // Rejected whole: nothing credited, the cycle not opened. The funding stays as surplus,
+      // exactly as it would for a real keeper whose batch the cap rejected.
+      assertEq(vault.latestCycleId(), latestBefore, 'cap-rejected batch advanced latestCycleId');
+      assertEq(vault.totalPrincipal(), principalBefore, 'cap-rejected batch changed totalPrincipal');
+      assertEq(vault.claimReserve(), reserveBefore, 'cap-rejected batch changed claimReserve');
+      capRejectedBatches++;
+      return;
+    }
+
     settleOps += count;
     vm.prank(boostKeeper);
     vault.onBoostCredit(boostCycleId, batch, amounts);
@@ -226,7 +254,7 @@ contract EarnVaultV2Invariants is StdInvariant, Test {
     proxyAdmin.upgradeAndCall(
       ITransparentUpgradeableProxy(address(proxy)),
       address(v2Implementation),
-      abi.encodeWithSelector(EarnVaultV2.initializeV2.selector, boostKeeper, type(uint256).max)
+      abi.encodeWithSelector(EarnVaultV2.initializeV2.selector, boostKeeper, BOOST_CAP)
     );
 
     vault = EarnVaultV2(payable(address(proxy)));
@@ -248,6 +276,17 @@ contract EarnVaultV2Invariants is StdInvariant, Test {
 
     targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
     targetContract(address(handler));
+  }
+
+  /// @notice Guards the fuzz setup itself: with the handler's bounds, full batches do exceed
+  ///         BOOST_CAP, so the cap-rejected path is really exercised. If a later change to the
+  ///         bounds or the cap made it unreachable, this fails instead of the path going quiet.
+  function test_HandlerCapRejectedPathIsReachable() external {
+    uint256 fullPool = handler.MAX_USERS() + handler.INELIGIBLE_ENTRIES();
+    for (uint256 seed = 0; seed < 20 && handler.capRejectedBatches() == 0; seed++) {
+      handler.onBoostCredit(0, fullPool, seed);
+    }
+    assertGt(handler.capRejectedBatches(), 0, 'no fuzzed batch exceeded BOOST_CAP');
   }
 
   /// @notice totalPrincipal must always exactly equal the sum of every user's own principal -
