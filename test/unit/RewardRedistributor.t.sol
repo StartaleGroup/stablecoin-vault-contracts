@@ -2277,14 +2277,12 @@ contract RewardRedistributorTest is Test {
     uint256 rrBalanceAfter = usdsc.balanceOf(address(rr));
 
     assertEq(rrBalanceAfter, 0, 'Redistributor should have zero balance after recovery');
-    assertEq(
-      treasuryBalanceAfter - treasuryBalanceBefore, donationAmount, 'Treasury should receive donation amount'
-    );
+    assertEq(treasuryBalanceAfter - treasuryBalanceBefore, donationAmount, 'Treasury should receive donation amount');
   }
 
   function test_RecoverDonations_OnlyAdmin() public {
     // Send some donations
-    uint256 donationAmount = 5_000e6;
+    uint256 donationAmount = 5000e6;
     usdsc.mint(address(this), donationAmount);
     usdsc.transfer(address(rr), donationAmount);
 
@@ -2324,9 +2322,9 @@ contract RewardRedistributorTest is Test {
 
   function test_RecoverDonations_MultipleDonations() public {
     // Send multiple donations
-    uint256 donation1 = 5_000e6;
-    uint256 donation2 = 3_000e6;
-    uint256 donation3 = 2_000e6;
+    uint256 donation1 = 5000e6;
+    uint256 donation2 = 3000e6;
+    uint256 donation3 = 2000e6;
     uint256 totalDonations = donation1 + donation2 + donation3;
 
     usdsc.mint(address(this), donation1);
@@ -2347,9 +2345,7 @@ contract RewardRedistributorTest is Test {
 
     uint256 treasuryBalanceAfter = usdsc.balanceOf(startale);
     assertEq(usdsc.balanceOf(address(rr)), 0, 'All donations should be recovered');
-    assertEq(
-      treasuryBalanceAfter - treasuryBalanceBefore, totalDonations, 'Treasury should receive all donations'
-    );
+    assertEq(treasuryBalanceAfter - treasuryBalanceBefore, totalDonations, 'Treasury should receive all donations');
   }
 
   function test_RecoverDonations_BalanceInvariant_NoDonations() public {
@@ -2377,7 +2373,7 @@ contract RewardRedistributorTest is Test {
     _takeSnapshotAndWait();
 
     // Send donation before distribute
-    uint256 donationAmount = 5_000e6;
+    uint256 donationAmount = 5000e6;
     usdsc.mint(address(this), donationAmount);
     usdsc.transfer(address(rr), donationAmount);
 
@@ -2390,9 +2386,7 @@ contract RewardRedistributorTest is Test {
 
     uint256 balanceAfterDistribute = usdsc.balanceOf(address(rr));
     // Balance should remain the same (donation is still there, only minted was distributed)
-    assertEq(
-      balanceAfterDistribute, balanceBeforeDistribute, 'Balance should remain same (donation preserved)'
-    );
+    assertEq(balanceAfterDistribute, balanceBeforeDistribute, 'Balance should remain same (donation preserved)');
     assertEq(balanceAfterDistribute, donationAmount, 'Donation should still be in contract');
 
     // Now recover the donation
@@ -2412,7 +2406,7 @@ contract RewardRedistributorTest is Test {
     assertEq(usdsc.balanceOf(address(rr)), 0, 'Balance should be zero after distribute');
 
     // Send donation after distribute
-    uint256 donationAmount = 7_500e6;
+    uint256 donationAmount = 7500e6;
     usdsc.mint(address(this), donationAmount);
     usdsc.transfer(address(rr), donationAmount);
 
@@ -2425,9 +2419,7 @@ contract RewardRedistributorTest is Test {
 
     uint256 treasuryBalanceAfter = usdsc.balanceOf(startale);
     assertEq(usdsc.balanceOf(address(rr)), 0, 'Donation should be recovered');
-    assertEq(
-      treasuryBalanceAfter - treasuryBalanceBefore, donationAmount, 'Treasury should receive donation'
-    );
+    assertEq(treasuryBalanceAfter - treasuryBalanceBefore, donationAmount, 'Treasury should receive donation');
   }
 
   function test_RecoverDonations_MultipleDistributionsWithDonations() public {
@@ -2436,7 +2428,7 @@ contract RewardRedistributorTest is Test {
     _takeSnapshotAndWait();
 
     // Donation before first distribute
-    uint256 donation1 = 2_000e6;
+    uint256 donation1 = 2000e6;
     usdsc.mint(address(this), donation1);
     usdsc.transfer(address(rr), donation1);
 
@@ -2448,7 +2440,7 @@ contract RewardRedistributorTest is Test {
     assertEq(balanceAfter1, donation1, 'Donation should remain');
 
     // Second donation
-    uint256 donation2 = 3_000e6;
+    uint256 donation2 = 3000e6;
     usdsc.mint(address(this), donation2);
     usdsc.transfer(address(rr), donation2);
 
@@ -2464,7 +2456,7 @@ contract RewardRedistributorTest is Test {
     assertEq(balanceAfter2, donation1 + donation2, 'Both donations should remain');
 
     // Third donation
-    uint256 donation3 = 1_000e6;
+    uint256 donation3 = 1000e6;
     usdsc.mint(address(this), donation3);
     usdsc.transfer(address(rr), donation3);
 
@@ -2476,9 +2468,7 @@ contract RewardRedistributorTest is Test {
 
     uint256 treasuryBalanceAfter = usdsc.balanceOf(startale);
     assertEq(usdsc.balanceOf(address(rr)), 0, 'All donations should be recovered');
-    assertEq(
-      treasuryBalanceAfter - treasuryBalanceBefore, totalDonations, 'Treasury should receive all donations'
-    );
+    assertEq(treasuryBalanceAfter - treasuryBalanceBefore, totalDonations, 'Treasury should receive all donations');
   }
 
   function test_RecoverDonations_EventEmission() public {
@@ -2499,7 +2489,7 @@ contract RewardRedistributorTest is Test {
     // For now, we just verify the modifier is present by checking it compiles
     // and that multiple calls work correctly
 
-    uint256 donationAmount = 5_000e6;
+    uint256 donationAmount = 5000e6;
     usdsc.mint(address(this), donationAmount);
     usdsc.transfer(address(rr), donationAmount);
 
@@ -2555,7 +2545,7 @@ contract RewardRedistributorTest is Test {
 
   function test_RecoverDonations_AfterTreasuryChange() public {
     // Send donation
-    uint256 donationAmount = 5_000e6;
+    uint256 donationAmount = 5000e6;
     usdsc.mint(address(this), donationAmount);
     usdsc.transfer(address(rr), donationAmount);
 

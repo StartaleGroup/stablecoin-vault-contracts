@@ -3,10 +3,10 @@ pragma solidity ^0.8.30;
 
 import {IEarnVaultEventsAndErrors} from '../../src/interfaces/vaults/earn/IEarnVaultEventsAndErrors.sol';
 import {EarnVaultUpgradeable} from '../../src/vaults/earn/EarnVaultUpgradeable.sol';
-import {MockUSDSC} from '../mocks/MockUSDSC.sol';
 import {MockERC20Permit} from '../mocks/MockERC20Permit.sol';
-import {IERC20Permit} from '@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol';
+import {MockUSDSC} from '../mocks/MockUSDSC.sol';
 import {ERC1967Proxy} from '@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol';
+import {IERC20Permit} from '@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol';
 import {Test} from 'forge-std/Test.sol';
 
 /// @title EarnVaultUpgradeable Edge Cases Tests
@@ -428,17 +428,11 @@ contract EarnVaultUpgradeableEdgeCasesTest is Test {
   function test_DepositWithPermit_ValidSignature() public {
     // Deploy a token with permit support
     MockERC20Permit permitToken = new MockERC20Permit('Permit Token', 'PERMIT');
-    
+
     // Create a new vault with the permit token
     EarnVaultUpgradeable implementation = new EarnVaultUpgradeable();
     bytes memory initData = abi.encodeWithSelector(
-      EarnVaultUpgradeable.initialize.selector,
-      address(permitToken),
-      owner,
-      redistributor,
-      treasury,
-      pauser,
-      operator
+      EarnVaultUpgradeable.initialize.selector, address(permitToken), owner, redistributor, treasury, pauser, operator
     );
     ERC1967Proxy proxy = new ERC1967Proxy(address(implementation), initData);
     EarnVaultUpgradeable permitVault = EarnVaultUpgradeable(payable(address(proxy)));
@@ -470,16 +464,10 @@ contract EarnVaultUpgradeableEdgeCasesTest is Test {
   /// @dev Verifies that relayer can execute on behalf of tokenOwner
   function test_DepositWithPermit_RelayerFunctionality() public {
     MockERC20Permit permitToken = new MockERC20Permit('Permit Token', 'PERMIT');
-    
+
     EarnVaultUpgradeable implementation = new EarnVaultUpgradeable();
     bytes memory initData = abi.encodeWithSelector(
-      EarnVaultUpgradeable.initialize.selector,
-      address(permitToken),
-      owner,
-      redistributor,
-      treasury,
-      pauser,
-      operator
+      EarnVaultUpgradeable.initialize.selector, address(permitToken), owner, redistributor, treasury, pauser, operator
     );
     ERC1967Proxy proxy = new ERC1967Proxy(address(implementation), initData);
     EarnVaultUpgradeable permitVault = EarnVaultUpgradeable(payable(address(proxy)));
@@ -512,16 +500,10 @@ contract EarnVaultUpgradeableEdgeCasesTest is Test {
   /// @dev Verifies signature validation - signature must be from tokenOwner
   function test_Revert_DepositWithPermit_WrongTokenOwner() public {
     MockERC20Permit permitToken = new MockERC20Permit('Permit Token', 'PERMIT');
-    
+
     EarnVaultUpgradeable implementation = new EarnVaultUpgradeable();
     bytes memory initData = abi.encodeWithSelector(
-      EarnVaultUpgradeable.initialize.selector,
-      address(permitToken),
-      owner,
-      redistributor,
-      treasury,
-      pauser,
-      operator
+      EarnVaultUpgradeable.initialize.selector, address(permitToken), owner, redistributor, treasury, pauser, operator
     );
     ERC1967Proxy proxy = new ERC1967Proxy(address(implementation), initData);
     EarnVaultUpgradeable permitVault = EarnVaultUpgradeable(payable(address(proxy)));
@@ -551,16 +533,10 @@ contract EarnVaultUpgradeableEdgeCasesTest is Test {
   /// @dev Verifies deadline validation
   function test_Revert_DepositWithPermit_ExpiredDeadline() public {
     MockERC20Permit permitToken = new MockERC20Permit('Permit Token', 'PERMIT');
-    
+
     EarnVaultUpgradeable implementation = new EarnVaultUpgradeable();
     bytes memory initData = abi.encodeWithSelector(
-      EarnVaultUpgradeable.initialize.selector,
-      address(permitToken),
-      owner,
-      redistributor,
-      treasury,
-      pauser,
-      operator
+      EarnVaultUpgradeable.initialize.selector, address(permitToken), owner, redistributor, treasury, pauser, operator
     );
     ERC1967Proxy proxy = new ERC1967Proxy(address(implementation), initData);
     EarnVaultUpgradeable permitVault = EarnVaultUpgradeable(payable(address(proxy)));
@@ -588,16 +564,10 @@ contract EarnVaultUpgradeableEdgeCasesTest is Test {
   /// @dev Verifies that invalid signature components are rejected
   function test_Revert_DepositWithPermit_InvalidSignature() public {
     MockERC20Permit permitToken = new MockERC20Permit('Permit Token', 'PERMIT');
-    
+
     EarnVaultUpgradeable implementation = new EarnVaultUpgradeable();
     bytes memory initData = abi.encodeWithSelector(
-      EarnVaultUpgradeable.initialize.selector,
-      address(permitToken),
-      owner,
-      redistributor,
-      treasury,
-      pauser,
-      operator
+      EarnVaultUpgradeable.initialize.selector, address(permitToken), owner, redistributor, treasury, pauser, operator
     );
     ERC1967Proxy proxy = new ERC1967Proxy(address(implementation), initData);
     EarnVaultUpgradeable permitVault = EarnVaultUpgradeable(payable(address(proxy)));
@@ -633,16 +603,10 @@ contract EarnVaultUpgradeableEdgeCasesTest is Test {
   /// @dev Verifies zero address validation for tokenOwner
   function test_Revert_DepositWithPermit_ZeroAddressTokenOwner() public {
     MockERC20Permit permitToken = new MockERC20Permit('Permit Token', 'PERMIT');
-    
+
     EarnVaultUpgradeable implementation = new EarnVaultUpgradeable();
     bytes memory initData = abi.encodeWithSelector(
-      EarnVaultUpgradeable.initialize.selector,
-      address(permitToken),
-      owner,
-      redistributor,
-      treasury,
-      pauser,
-      operator
+      EarnVaultUpgradeable.initialize.selector, address(permitToken), owner, redistributor, treasury, pauser, operator
     );
     ERC1967Proxy proxy = new ERC1967Proxy(address(implementation), initData);
     EarnVaultUpgradeable permitVault = EarnVaultUpgradeable(payable(address(proxy)));
@@ -659,22 +623,16 @@ contract EarnVaultUpgradeableEdgeCasesTest is Test {
   /// @dev Verifies that permit amount must match deposit amount
   function test_Revert_DepositWithPermit_WrongAmountInSignature() public {
     MockERC20Permit permitToken = new MockERC20Permit('Permit Token', 'PERMIT');
-    
+
     EarnVaultUpgradeable implementation = new EarnVaultUpgradeable();
     bytes memory initData = abi.encodeWithSelector(
-      EarnVaultUpgradeable.initialize.selector,
-      address(permitToken),
-      owner,
-      redistributor,
-      treasury,
-      pauser,
-      operator
+      EarnVaultUpgradeable.initialize.selector, address(permitToken), owner, redistributor, treasury, pauser, operator
     );
     ERC1967Proxy proxy = new ERC1967Proxy(address(implementation), initData);
     EarnVaultUpgradeable permitVault = EarnVaultUpgradeable(payable(address(proxy)));
 
     uint256 permitAmount = 5000e6; // Amount in permit signature
-    uint256 depositAmount = 10000e6; // Different amount trying to deposit
+    uint256 depositAmount = 10_000e6; // Different amount trying to deposit
     permitToken.mint(tokenOwner, depositAmount);
 
     // Create signature with permitAmount (smaller than depositAmount)
@@ -698,16 +656,10 @@ contract EarnVaultUpgradeableEdgeCasesTest is Test {
   /// @dev Verifies that permit spender must be vault address
   function test_Revert_DepositWithPermit_WrongSpenderInSignature() public {
     MockERC20Permit permitToken = new MockERC20Permit('Permit Token', 'PERMIT');
-    
+
     EarnVaultUpgradeable implementation = new EarnVaultUpgradeable();
     bytes memory initData = abi.encodeWithSelector(
-      EarnVaultUpgradeable.initialize.selector,
-      address(permitToken),
-      owner,
-      redistributor,
-      treasury,
-      pauser,
-      operator
+      EarnVaultUpgradeable.initialize.selector, address(permitToken), owner, redistributor, treasury, pauser, operator
     );
     ERC1967Proxy proxy = new ERC1967Proxy(address(implementation), initData);
     EarnVaultUpgradeable permitVault = EarnVaultUpgradeable(payable(address(proxy)));
@@ -737,16 +689,10 @@ contract EarnVaultUpgradeableEdgeCasesTest is Test {
   /// @dev Verifies that transferFrom fails when balance is insufficient
   function test_Revert_DepositWithPermit_InsufficientBalance() public {
     MockERC20Permit permitToken = new MockERC20Permit('Permit Token', 'PERMIT');
-    
+
     EarnVaultUpgradeable implementation = new EarnVaultUpgradeable();
     bytes memory initData = abi.encodeWithSelector(
-      EarnVaultUpgradeable.initialize.selector,
-      address(permitToken),
-      owner,
-      redistributor,
-      treasury,
-      pauser,
-      operator
+      EarnVaultUpgradeable.initialize.selector, address(permitToken), owner, redistributor, treasury, pauser, operator
     );
     ERC1967Proxy proxy = new ERC1967Proxy(address(implementation), initData);
     EarnVaultUpgradeable permitVault = EarnVaultUpgradeable(payable(address(proxy)));
@@ -776,16 +722,10 @@ contract EarnVaultUpgradeableEdgeCasesTest is Test {
   /// @dev Verifies that same signature cannot be used twice (nonce protection)
   function test_Revert_DepositWithPermit_ReplayAttack() public {
     MockERC20Permit permitToken = new MockERC20Permit('Permit Token', 'PERMIT');
-    
+
     EarnVaultUpgradeable implementation = new EarnVaultUpgradeable();
     bytes memory initData = abi.encodeWithSelector(
-      EarnVaultUpgradeable.initialize.selector,
-      address(permitToken),
-      owner,
-      redistributor,
-      treasury,
-      pauser,
-      operator
+      EarnVaultUpgradeable.initialize.selector, address(permitToken), owner, redistributor, treasury, pauser, operator
     );
     ERC1967Proxy proxy = new ERC1967Proxy(address(implementation), initData);
     EarnVaultUpgradeable permitVault = EarnVaultUpgradeable(payable(address(proxy)));

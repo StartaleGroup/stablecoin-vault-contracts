@@ -2,9 +2,9 @@
 pragma solidity ^0.8.30;
 
 import './MockUSDSC.sol';
+import {Ownable} from 'lib/openzeppelin-contracts/contracts/access/Ownable.sol';
 import {IERC20} from 'lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol';
 import {IMYieldToOne} from 'm-extensions/projects/yieldToOne/IMYieldToOne.sol';
-import {Ownable} from 'lib/openzeppelin-contracts/contracts/access/Ownable.sol';
 
 contract MockExtension is IMYieldToOne, IERC20, Ownable {
   MockUSDSC public immutable USDSC;

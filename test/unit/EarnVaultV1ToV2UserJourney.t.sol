@@ -138,7 +138,9 @@ contract EarnVaultV1ToV2UserJourneyTest is Test {
     vm.prank(alice);
     vaultV1.claim();
     assertEq(
-      usdsc.balanceOf(alice), aliceBalanceBeforeClaim + aliceRound1Claimable, 'alice should receive round 1 yield as a liquid transfer'
+      usdsc.balanceOf(alice),
+      aliceBalanceBeforeClaim + aliceRound1Claimable,
+      'alice should receive round 1 yield as a liquid transfer'
     );
     assertEq(vaultV1.principal(alice), 1000e6, 'claiming must NOT change principal under V1 - no auto-compound exists');
 
@@ -189,10 +191,16 @@ contract EarnVaultV1ToV2UserJourneyTest is Test {
     assertEq(vault.globalIndex(), globalIndexBeforeUpgrade, 'globalIndex must survive the upgrade unchanged');
     assertEq(vault.claimReserve(), claimReserveBeforeUpgrade, 'claimReserve must survive the upgrade unchanged');
     assertEq(vault.totalPrincipal(), totalPrincipalBeforeUpgrade, 'totalPrincipal must survive the upgrade unchanged');
-    assertEq(usdsc.balanceOf(address(vault)), vaultBalanceBeforeUpgrade, 'vault USDSC balance must survive the upgrade unchanged');
+    assertEq(
+      usdsc.balanceOf(address(vault)),
+      vaultBalanceBeforeUpgrade,
+      'vault USDSC balance must survive the upgrade unchanged'
+    );
     assertEq(vault.principal(alice), alicePrincipalBeforeUpgrade, "alice's principal must hold across the upgrade");
     assertEq(vault.principal(bob), bobPrincipalBeforeUpgrade, "bob's principal must hold across the upgrade");
-    assertEq(vault.principal(charlie), charliePrincipalBeforeUpgrade, "charlie's principal must hold across the upgrade");
+    assertEq(
+      vault.principal(charlie), charliePrincipalBeforeUpgrade, "charlie's principal must hold across the upgrade"
+    );
 
     // Each user's pre-upgrade pending yield also carries forward exactly, now expressed via
     // V2's pendingYield() instead of V1's claimable() (same underlying globalIndex delta).
@@ -238,7 +246,9 @@ contract EarnVaultV1ToV2UserJourneyTest is Test {
       "alice's withdraw should auto-compound pending yield first, then subtract the withdrawn amount"
     );
     assertEq(
-      usdsc.balanceOf(alice), aliceBalanceBeforeWithdraw + 400e6, 'alice should receive exactly what she asked to withdraw'
+      usdsc.balanceOf(alice),
+      aliceBalanceBeforeWithdraw + 400e6,
+      'alice should receive exactly what she asked to withdraw'
     );
   }
 
@@ -254,7 +264,11 @@ contract EarnVaultV1ToV2UserJourneyTest is Test {
     // since the upgrade, never shrunk or stayed frozen.
     uint256 bobPendingBeforeKeeper = vault.pendingYield(bob);
     uint256 charliePendingBeforeKeeper = vault.pendingYield(charlie);
-    assertGe(bobPendingBeforeKeeper, bobPendingAtUpgrade, "bob's pending should have grown (Phase 3's yield round), never shrunk");
+    assertGe(
+      bobPendingBeforeKeeper,
+      bobPendingAtUpgrade,
+      "bob's pending should have grown (Phase 3's yield round), never shrunk"
+    );
     assertGe(charliePendingBeforeKeeper, charliePendingAtUpgrade, "charlie's pending should have grown too");
 
     uint256 bobPrincipalBeforeKeeper = vault.principal(bob);
@@ -268,7 +282,9 @@ contract EarnVaultV1ToV2UserJourneyTest is Test {
     console2.log('gas used: keeper compound(bob), single user, no active boost tokens', gasUsedForBobCompound);
 
     assertEq(
-      vault.principal(bob), bobPrincipalBeforeKeeper + bobPendingBeforeKeeper, "bob's principal should now include his compounded yield"
+      vault.principal(bob),
+      bobPrincipalBeforeKeeper + bobPendingBeforeKeeper,
+      "bob's principal should now include his compounded yield"
     );
     assertEq(vault.pendingYield(bob), 0);
     assertEq(vault.accrued(bob), 0, 'bob never claims - his yield only ever became principal, never accrued');
@@ -297,7 +313,11 @@ contract EarnVaultV1ToV2UserJourneyTest is Test {
     uint256 bobBalanceBeforeWithdraw = usdsc.balanceOf(bob);
     vm.prank(bob);
     vault.withdraw(bobPrincipalAfterKeeper); // full withdrawal
-    assertEq(usdsc.balanceOf(bob), bobBalanceBeforeWithdraw + bobPrincipalAfterKeeper, 'bob should receive his full (compounded) principal');
+    assertEq(
+      usdsc.balanceOf(bob),
+      bobBalanceBeforeWithdraw + bobPrincipalAfterKeeper,
+      'bob should receive his full (compounded) principal'
+    );
     assertEq(vault.principal(bob), 0);
 
     uint256 charliePrincipalAfterKeeper = vault.principal(charlie);
@@ -305,7 +325,9 @@ contract EarnVaultV1ToV2UserJourneyTest is Test {
     vm.prank(charlie);
     vault.withdraw(charliePrincipalAfterKeeper); // full withdrawal
     assertEq(
-      usdsc.balanceOf(charlie), charlieBalanceBeforeWithdraw + charliePrincipalAfterKeeper, "charlie should receive his full (compounded) principal"
+      usdsc.balanceOf(charlie),
+      charlieBalanceBeforeWithdraw + charliePrincipalAfterKeeper,
+      'charlie should receive his full (compounded) principal'
     );
     assertEq(vault.principal(charlie), 0);
   }
