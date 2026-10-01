@@ -18,7 +18,10 @@ import {console} from 'forge-std/Script.sol';
  *      implementation is deployed in the same run.
  * @dev Pre-flight refuses to send anything unless the proxy's ERC-1967 admin slot is exactly
  *      EXPECTED_PROXY_ADMIN (a UUPS-style or otherwise unexpected proxy fails here), the broadcaster
- *      owns that ProxyAdmin, and the proxy is still V1 at initialized version 1.
+ *      owns that ProxyAdmin, the proxy is still V1 at initialized version 1, and the current
+ *      yieldRedistributor is a contract that answers EarnVaultV2's JIT deposit lock getters
+ *      (lastSnapshotTimestamp/snapshotMaxAge) - an EOA or a getter-less contract there would make
+ *      V2's lock permanently fail-open or permanently fail-closed, respectively.
  * @dev IMPORTANT: forge script runs this locally (simulation) before broadcasting, so the
  *      post-flight here validates the SIMULATED state. After the broadcast lands, run
  *      VerifyEarnVaultV2Upgrade against the live chain.
@@ -81,6 +84,7 @@ contract UpgradeEarnVaultToV2 is EarnVaultV2UpgradeChecks {
     EarnVaultV2 v = EarnVaultV2(payable(p.proxy));
     require(keccak256(bytes(v.getVersion())) == keccak256('EarnVaultV1'), 'proxy is not on EarnVaultV1');
     require(_initializedVersion(p.proxy) == 1, 'unexpected initialized version (expected 1)');
+    _requireRedistributorSnapshotGetters(p.proxy);
 
     snap = V1Snapshot({
       roles: _readRoles(p.proxy),

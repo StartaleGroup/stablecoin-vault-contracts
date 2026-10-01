@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
+import {IRewardRedistributorSnapshot} from '../../interfaces/distributor/IRewardRedistributorSnapshot.sol';
 import {IEarnVaultEventsAndErrors} from '../../interfaces/vaults/earn/IEarnVaultEventsAndErrors.sol';
 import {BoostRewardsLib} from './BoostRewardsLib.sol';
 import {EarnVaultUpgradeable} from './EarnVaultUpgradeable.sol';
@@ -61,6 +62,17 @@ import {Math} from 'lib/openzeppelin-contracts/contracts/utils/math/Math.sol';
 ///      mean either modifying the shared library (widening blast radius onto V1's own
 ///      behavior) or duplicating its payout logic here - not worth it for a bounded,
 ///      low-single-digit-thousand-gas cost.
+/// @dev JIT DEPOSIT LOCK (Phase 2): _deposit() reverts DepositsLockedForDistribution while the
+///      yield redistributor's latest TVL snapshot is still usable by its distribute(), i.e. while
+///      `block.timestamp - lastSnapshotTimestamp <= snapshotMaxAge`. distribute() sizes toEarn from
+///      the snapshot principal P, but onYield() indexes it over the live principal; a deposit d
+///      landing in between would take toEarn * d / (P + d) from the existing depositors. Dividing
+///      onYield() by the snapshot principal instead does NOT work in this index-based vault: the
+///      late deposit would still accrue on its own principal, so total owed would exceed toEarn
+///      (insolvency). The lock does not cover a deposit made before the snapshot, nor onBoostReward()
+///      (boost tokens over live principal, no snapshot). See base-tier-auto-compounding.md, "JIT
+///      deposit lock (Phase 2)", for the full rationale, what stays open in the window and why, and
+///      the operational requirements.
 contract EarnVaultV2 is EarnVaultUpgradeable {
   using SafeERC20 for IERC20;
 
@@ -139,6 +151,10 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
   error EmptyBatch();
   error BoostBatchCapExceeded(uint256 credited, uint256 maxBoostPerBatch);
   error ZeroMaxBoostPerBatch();
+  /// @notice Thrown by deposit()/depositWithPermit() while the yield redistributor's latest TVL
+  ///         snapshot is still usable by distribute() - see the JIT deposit lock NatSpec above.
+  /// @param unlocksAt First timestamp at which deposits are allowed again
+  error DepositsLockedForDistribution(uint256 unlocksAt);
 
   modifier onlyBoostKeeper() {
     _onlyBoostKeeper();
@@ -495,15 +511,60 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
     }
   }
 
+  /// @notice Whether deposit()/depositWithPermit() currently revert DepositsLockedForDistribution,
+  ///         and, if so, the first timestamp at which they stop reverting
+  /// @dev (false, 0) whenever unlocked, including when the redistributor has never snapshotted
+  /// @return locked True while the yield redistributor's latest TVL snapshot is still usable by
+  ///         its distribute()
+  /// @return unlocksAt Meaningful only when locked == true
+  function depositsLocked() external view returns (bool locked, uint256 unlocksAt) {
+    return _depositLockState();
+  }
+
+  /// @dev Implements the JIT deposit lock (see contract NatSpec above). Mirrors exactly what
+  ///      RewardRedistributor._validateSnapShotAge() accepts by timestamp: a snapshot is still
+  ///      usable (so deposits are locked) iff `lastSnapshotTimestamp != 0` and
+  ///      `block.timestamp - lastSnapshotTimestamp <= snapshotMaxAge`. `block.timestamp < snapTs`
+  ///      cannot happen for the real RewardRedistributor (it can only snapshot the present);
+  ///      treated as locked purely so the subtraction below can never underflow.
+  /// @dev Fail-open only for an EOA yieldRedistributor (`code.length == 0`): there is no snapshot
+  ///      to respect (tests and local setups; the live redistributor is a contract). A CONTRACT
+  ///      yieldRedistributor must answer both getters via ordinary high-level calls - if either
+  ///      reverts or the address doesn't implement them, this call itself reverts, which reverts
+  ///      the deposit too (fail-closed). Deliberately NOT a try/catch or low-level call with a
+  ///      swallowed failure treated as "unlocked": that would let anyone able to make the sub-call
+  ///      fail (e.g. by starving it of gas) bypass the lock during a real distribution window.
+  /// @dev unlocksAt = snapTs + maxAge + 1, computed with Math.tryAdd so a redistributor reporting
+  ///      a pathological snapshotMaxAge (e.g. type(uint256).max) saturates to type(uint256).max
+  ///      instead of reverting this view.
+  function _depositLockState() internal view returns (bool locked, uint256 unlocksAt) {
+    address rr = _getStorage().yieldRedistributor;
+    if (rr.code.length == 0) return (false, 0);
+
+    uint256 snapTs = IRewardRedistributorSnapshot(rr).lastSnapshotTimestamp();
+    uint256 maxAge = IRewardRedistributorSnapshot(rr).snapshotMaxAge();
+    if (snapTs == 0) return (false, 0);
+    if (block.timestamp >= snapTs && block.timestamp - snapTs > maxAge) return (false, 0);
+
+    (bool ok, uint256 sum) = Math.tryAdd(snapTs, maxAge);
+    if (ok) (ok, sum) = Math.tryAdd(sum, 1);
+    return (true, ok ? sum : type(uint256).max);
+  }
+
   /// @dev Internal helper to handle deposit logic (shared by deposit() and depositWithPermit())
   /// @dev Overridden purely to drop V1's own boost-settle loop, which is redundant (though
   ///      harmless - BoostRewardsLib.settleBoost is idempotent on an unchanged index) once
   ///      _settle() itself always settles boost first, using pre-compound principal, before
   ///      this function even runs. Keeping it would rely on that idempotency as an unstated
   ///      convention rather than have correctness be structural.
+  /// @dev The JIT deposit lock check runs FIRST, before _settle() - a locked deposit must leave
+  ///      absolutely everything (including the caller's own pending yield) untouched.
   /// @param user Address of the user depositing
   /// @param amount Amount of USDSC tokens to deposit
   function _deposit(address user, uint256 amount) internal virtual override {
+    (bool locked, uint256 unlocksAt) = _depositLockState();
+    if (locked) revert DepositsLockedForDistribution(unlocksAt);
+
     EarnVaultStorage storage $ = _getStorage();
     _settle(user); // already settles boost (pre-compound principal) as part of settling USDSC yield
 

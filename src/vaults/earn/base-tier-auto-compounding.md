@@ -207,3 +207,46 @@ Measured by `test_Gas_OnBoostCredit_BatchSizingProjection` (`test/unit/EarnVault
 
 **Sizing `maxBoostPerBatch`.** The cap must exceed the largest *legitimate* batch total, or it rejects real credits. Size it with headroom over **one day's largest batch**. Because cycles can be opened back-to-back, the engine should catch up day by day rather than rolling deferred days into one cycle (which would multiply per-user amounts and batch totals). That way the cap never needs raising under pressure during an incident.
 
+## JIT deposit lock (Phase 2) (2026-10-01)
+
+**The problem.** `RewardRedistributor.snapshotVaultTVLs()` records `lastEarnTVL = earnVault.totalPrincipal()` (call it `P`). A later `distribute()` sizes the EarnVault share from that snapshot (`toEarn = net × P / S_base`), transfers it, and calls `earnVault.onYield(toEarn)`, which indexes `toEarn` over the **live** `totalPrincipal`. A deposit `d` landing after the snapshot but before `distribute()` makes the live principal `P + d`, so existing depositors receive `toEarn × P / (P + d)` instead of `toEarn`, and the late depositor takes `toEarn × d / (P + d)` of a distribution that was sized without them. This is the residual Quantstamp identified after Phase 1.
+
+**Why not change `onYield` instead.** The earlier plan (Phase 1b in `docs/Quantstamp-response-phase1-residual.md`) was `onYield(amount, snapshotPrincipal)` dividing by `min(snapshotPrincipal, totalPrincipal)`. In an index-based vault that is insolvent: with `delta = toEarn / P`, existing depositors correctly receive `toEarn` between them, but the late depositor's principal is also in the vault and accrues `d × delta` on top. Total owed becomes `toEarn × (P + d) / P > toEarn`, while `claimReserve` only grows by `toEarn`. Changing the divisor cannot fix who receives the index; only stopping new principal from entering during the window does.
+
+**The fix.** `EarnVaultV2._deposit()` (reached by both `deposit()` and `depositWithPermit()`) reverts `DepositsLockedForDistribution(unlocksAt)` as its first statement, before `_settle()` or any state change, while the redistributor's latest snapshot is still usable by `distribute()`. The condition matches `RewardRedistributor._validateSnapShotAge()` exactly by timestamp:
+
+```solidity
+snapTs = rr.lastSnapshotTimestamp(); maxAge = rr.snapshotMaxAge();
+locked = snapTs != 0 && (block.timestamp < snapTs || block.timestamp - snapTs <= maxAge);
+unlocksAt = snapTs + maxAge + 1;   // first second deposits are allowed; saturates instead of overflowing
+```
+
+(`block.timestamp < snapTs` cannot happen with the real redistributor; it is treated as locked only so the subtraction cannot underflow.) `depositsLocked()` exposes `(locked, unlocksAt)` so the frontend and keepers can check before submitting.
+
+Because the lock is keyed to the snapshot's own age rather than to whether `onYield` ran, it also covers a second `distribute()` that reuses the same snapshot, and a `distribute()` with `toEarn == 0` (which skips `onYield`). No change to `onYield`, to `RewardRedistributor` (which is not upgradeable), or to storage.
+
+**The window.** Deposits pause for up to `snapshotMaxAge` after each `snapshotVaultTVLs()`. `RewardRedistributor.setSnapshotMaxAge()` bounds it to `[1 minutes, 7 days]`; the live redistributor (`0xda798684ffD5eb509c2Ab7b8352EC55B31F18201`, read on 2026-10-01) has it at **300 s (5 minutes)**. Keep it short, e.g. 1–2 minutes: it is both the deposit pause and the keeper's deadline to call `distribute()`. An admin setting it to 7 days would pause deposits for up to 7 days after a snapshot. Withdrawals and claims are never paused.
+
+**Fail-open vs fail-closed.**
+
+- **`yieldRedistributor` has no code (an EOA): never locked.** No snapshot exists to respect. This is for tests and local setups; the live vault's redistributor is a contract.
+- **`yieldRedistributor` has code: it must answer both getters, or the deposit reverts.** The getters are ordinary high-level calls, not try/catch. Treating a failed call as "unlocked" would let anyone who can make that call fail (for example by starving it of gas) bypass the lock. The cost is that a contract redistributor without the getters makes every deposit revert, which is loud rather than silent. The upgrade and verify scripts refuse to proceed unless the redistributor is a contract that answers both getters (`EarnVaultV2UpgradeChecks._requireRedistributorSnapshotGetters`).
+
+**Deliberately not blocked during the window.**
+
+- **`withdraw()` and `claim()`** only reduce principal or pay out balances that are already reserved. A depositor who withdraws during the window gives up that cycle's yield to those who stay.
+- **`onBoostCredit()`** is callable only by the trusted boost keeper. Schedule boost-credit batches outside the window. A batch that does land inside it dilutes others by roughly `credited / P` for that one distribution; it cannot cause insolvency, because `onYield` divides by live principal.
+- **`compound()` / `compoundMany()`** are permissionless but only fold a user's own already-owed yield into their own principal; no new funds enter. The resulting dilution of one distribution is at most `(yield folded during the window) / P`, about one day's yield with daily compounding (~0.01–0.02%). No solvency effect, for the same reason.
+- **`onYield()`** is the redistributor's own call and has to work inside the window.
+
+**Not addressed here (open questions for review).**
+
+1. **JIT deposit before the snapshot.** A deposit made just before a predictable snapshot is legitimately in `lastEarnTVL`; the depositor collects that distribution and can withdraw right after. Quantstamp confirmed this does not reduce other depositors' yield: it reduces the share Startale retains (`toStartaleExtra`). Options: accept and document it; randomise snapshot/distribute timing operationally; add a minimum holding time on withdraw; or time-weighted balances (large redesign).
+2. **`onBoostReward()`** distributes boost tokens (ASTR, DOT, ...) over live `totalPrincipal` with no snapshot. A deposit just before it dilutes other depositors' boost rewards. Same class of issue, separate keeper; not covered by this lock.
+3. **sUSDSC recipient set** (the other half of Phase 2 in the Quantstamp thread) is unchanged; sUSDSC TVL is currently 0.
+
+**Operations.** Keep `snapshotMaxAge` short and call `distribute()` promptly after `snapshotVaultTVLs()`. Run boost-credit batches outside the window. Avoid a fixed, public snapshot schedule. Have the frontend read `depositsLocked()` and show the unlock time. Perform the V1 → V2 upgrade outside a snapshot window: V1 does not lock, so a deposit that lands in a window before the upgrade can still dilute that one distribution.
+
+**Upgrade.** No new storage and no new initializer: this is part of the V1 → V2 upgrade (`EarnVaultV2` is not deployed yet), and the lock reads only the existing `yieldRedistributor` slot plus the two view calls.
+
+**Gas** (`test_Gas_Deposit_ContractRedistributorOverheadVsEOA`). An unlocked `deposit()` costs ~146.1k gas with a contract redistributor versus ~140.8k with an EOA redistributor: ~5.3k for the two view calls and their storage reads. The `code.length` check itself (~2.6k, a cold account access) is paid in both cases, so the total cost of the lock over a V2 without it is roughly 8k gas per deposit. A locked deposit reverts before any state change.

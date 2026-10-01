@@ -95,9 +95,13 @@ forge script script/deploy/DeployRewardRedistributor.s.sol:DeployRewardRedistrib
   Proxy (EarnVault): 0xFdeB7e9F59cad080D9158ff850Ce79bCf6cdd5f0
 
 
-✅ RewardRedistributor
+✅ RewardRedistributor (current: Phase 1, EarnVault TVL snapshot)
 
-Contract: 0xFee1467934428Df54C696B36a4747c5Be86674CC
+Contract: 0xda798684ffD5eb509c2Ab7b8352EC55B31F18201
+
+Deployed 2026-04-22 (`broadcast/DeployRewardRedistributor.s.sol/1868/run-1776877817448.json`); the live EarnVault proxy's `yieldRedistributor`. Verified on-chain 2026-10-01: `snapshotMaxAge` = 300 s.
+
+Superseded (pre-Phase-1): 0xFee1467934428Df54C696B36a4747c5Be86674CC
 
 ---
 
