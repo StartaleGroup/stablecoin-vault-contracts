@@ -10,6 +10,11 @@ import {ITransparentUpgradeableProxy} from '@openzeppelin/contracts/proxy/transp
 import {StdInvariant} from 'forge-std/StdInvariant.sol';
 import {Test} from 'forge-std/Test.sol';
 
+/// @dev Finite per-batch cap the vault is initialized with. Handler entries are up to
+///      MAX_AMOUNT / 10 each and a batch has up to MAX_USERS eligible entries, so fuzzed batches land
+///      on both sides of it and the BoostBatchCapExceeded path is exercised, not just the happy path.
+uint256 constant BOOST_CAP = 500_000e6;
+
 /// @title EarnVaultV2Handler
 /// @notice Bounded fuzz-target actions for the invariant suite below, mirroring the
 ///         Handler pattern already used by SUSDSCVaultInvariants.t.sol. Every action is
@@ -21,17 +26,40 @@ contract EarnVaultV2Handler is Test {
   MockUSDSC public boostToken;
   address public redistributor;
   address public operator;
+  address public boostKeeper;
+  uint256 public boostCycleId;
+
+  /// @notice Upper bound on per-user settlements performed so far (each floors <= 1 wei of
+  ///         yield in the vault's favour). Over-counting only loosens the dust bound below.
+  uint256 public settleOps;
+  /// @notice Two INELIGIBLE entries mixed into credit batches: the vault itself and an
+  ///         always-blacklisted address. onBoostCredit() must skip both.
+  address public blacklistedAddr;
+  uint256 public constant INELIGIBLE_ENTRIES = 2;
+  /// @notice onYield() calls so far (each index update floors < 1 wei in the vault's favour)
+  uint256 public yieldOps;
 
   address[] public users;
   uint256 public constant MAX_USERS = 15;
   uint256 public constant MAX_AMOUNT = 1_000_000e6;
+  /// @notice onBoostCredit() batches the cap rejected (each must have changed nothing)
+  uint256 public capRejectedBatches;
 
-  constructor(EarnVaultV2 _vault, MockUSDSC _usdsc, MockUSDSC _boostToken, address _redistributor, address _operator) {
+  constructor(
+    EarnVaultV2 _vault,
+    MockUSDSC _usdsc,
+    MockUSDSC _boostToken,
+    address _redistributor,
+    address _operator,
+    address _boostKeeper
+  ) {
     vault = _vault;
     usdsc = _usdsc;
     boostToken = _boostToken;
     redistributor = _redistributor;
     operator = _operator;
+    boostKeeper = _boostKeeper;
+    blacklistedAddr = makeAddr('handlerBlacklisted');
 
     for (uint256 i = 0; i < MAX_USERS; i++) {
       address user = makeAddr(string(abi.encodePacked('handlerUser', i)));
@@ -49,6 +77,7 @@ contract EarnVaultV2Handler is Test {
     if (balance == 0) return;
     amount = bound(amount, 1, balance);
 
+    settleOps++;
     vm.prank(user);
     vault.deposit(amount);
   }
@@ -60,6 +89,7 @@ contract EarnVaultV2Handler is Test {
     if (p == 0) return;
     amount = bound(amount, 1, p);
 
+    settleOps++;
     vm.prank(user);
     vault.withdraw(amount);
   }
@@ -67,6 +97,7 @@ contract EarnVaultV2Handler is Test {
   function claim(uint256 userIndex) external {
     userIndex = bound(userIndex, 0, users.length - 1);
     address user = users[userIndex];
+    settleOps++;
 
     // claim() reverts with NothingToClaim() if there's nothing to pay out - avoid wasting a
     // fuzz run on a known-guaranteed revert by checking first.
@@ -87,6 +118,7 @@ contract EarnVaultV2Handler is Test {
 
   function compound(uint256 userIndex) external {
     userIndex = bound(userIndex, 0, users.length - 1);
+    settleOps++;
     vault.compound(users[userIndex]); // permissionless, never reverts on a no-op
   }
 
@@ -96,6 +128,7 @@ contract EarnVaultV2Handler is Test {
     for (uint256 i = 0; i < count; i++) {
       batch[i] = users[i];
     }
+    settleOps += count;
     vault.compoundMany(batch);
   }
 
@@ -106,8 +139,64 @@ contract EarnVaultV2Handler is Test {
     // Mint exactly `amount` more so the balance stays ahead of claimReserve + amount,
     // matching how a real yield redistributor funds the vault before calling onYield().
     usdsc.mint(address(vault), amount);
+    yieldOps++;
     vm.prank(redistributor);
     vault.onYield(amount);
+  }
+
+  /// @dev Credit pool index -> address: every handler user, then the vault itself, then the
+  ///      always-blacklisted address (the two ineligible entries onBoostCredit() must skip).
+  function _poolAddress(uint256 i) internal view returns (address) {
+    if (i < users.length) return users[i];
+    return i == users.length ? address(vault) : blacklistedAddr;
+  }
+
+  /// @dev Credits a batch of distinct addresses (contiguous from a random offset, wrapping), so
+  ///      it never trips the duplicate-in-batch StaleCycle revert; cycleId strictly increases
+  ///      per call, so it never trips the replay guard either. Amounts may be zero on purpose.
+  ///      A batch whose credited total exceeds BOOST_CAP is expected to revert whole; that path
+  ///      asserts nothing changed, and the invariants then check the state it left behind.
+  function onBoostCredit(uint256 offsetSeed, uint256 countSeed, uint256 amountSeed) external {
+    // pool = every user address plus the two ineligible ones; contiguous distinct window
+    uint256 pool = users.length + INELIGIBLE_ENTRIES;
+    uint256 count = bound(countSeed, 1, pool);
+    uint256 offset = bound(offsetSeed, 0, pool - 1);
+    address[] memory batch = new address[](count);
+    uint256[] memory amounts = new uint256[](count);
+    uint256 total = 0;
+    uint256 credited = 0; // what the vault will actually credit: skips excluded, like the cap
+    for (uint256 i = 0; i < count; i++) {
+      batch[i] = _poolAddress((offset + i) % pool);
+      amounts[i] = bound(uint256(keccak256(abi.encode(amountSeed, i))), 0, MAX_AMOUNT / 10);
+      total += amounts[i];
+      if (batch[i] != address(vault) && batch[i] != blacklistedAddr) credited += amounts[i];
+    }
+
+    // Fund first, exactly like the real keeper flow (transfer USDSC in, then call).
+    usdsc.mint(address(vault), total);
+    // Always open the next cycle, using latestCycleId + 1 read from chain (an all-skipped batch
+    // doesn't advance it, so the next call just retries that cycle).
+    boostCycleId = vault.latestCycleId() + 1;
+
+    if (credited > BOOST_CAP) {
+      uint256 latestBefore = vault.latestCycleId();
+      uint256 principalBefore = vault.totalPrincipal();
+      uint256 reserveBefore = vault.claimReserve();
+      vm.expectRevert(abi.encodeWithSelector(EarnVaultV2.BoostBatchCapExceeded.selector, credited, BOOST_CAP));
+      vm.prank(boostKeeper);
+      vault.onBoostCredit(boostCycleId, batch, amounts);
+      // Rejected whole: nothing credited, the cycle not opened. The funding stays as surplus,
+      // exactly as it would for a real keeper whose batch the cap rejected.
+      assertEq(vault.latestCycleId(), latestBefore, 'cap-rejected batch advanced latestCycleId');
+      assertEq(vault.totalPrincipal(), principalBefore, 'cap-rejected batch changed totalPrincipal');
+      assertEq(vault.claimReserve(), reserveBefore, 'cap-rejected batch changed claimReserve');
+      capRejectedBatches++;
+      return;
+    }
+
+    settleOps += count;
+    vm.prank(boostKeeper);
+    vault.onBoostCredit(boostCycleId, batch, amounts);
   }
 
   function onBoostReward(uint256 amount) external {
@@ -124,7 +213,7 @@ contract EarnVaultV2Handler is Test {
 /// @notice Deploys EarnVaultV2 directly (steady-state fuzzing, not the upgrade boundary -
 ///         that's covered separately by EarnVaultAutoCompound.t.sol's upgrade-path tests) and
 ///         runs arbitrary sequences of deposit/withdraw/claim/compound/compoundMany/onYield/
-///         onBoostReward via the handler above, checking these properties hold after every
+///         onBoostReward/onBoostCredit via the handler above, checking these properties hold after every
 ///         sequence regardless of ordering.
 contract EarnVaultV2Invariants is StdInvariant, Test {
   EarnVaultV2 internal vault;
@@ -158,15 +247,24 @@ contract EarnVaultV2Invariants is StdInvariant, Test {
     address proxyAdminAddress = address(uint160(uint256(vm.load(address(proxy), adminSlot))));
     ProxyAdmin proxyAdmin = ProxyAdmin(proxyAdminAddress);
 
+    address boostKeeper = makeAddr('boostKeeper');
+
     EarnVaultV2 v2Implementation = new EarnVaultV2();
     vm.prank(admin);
-    proxyAdmin.upgradeAndCall(ITransparentUpgradeableProxy(address(proxy)), address(v2Implementation), '');
+    proxyAdmin.upgradeAndCall(
+      ITransparentUpgradeableProxy(address(proxy)),
+      address(v2Implementation),
+      abi.encodeWithSelector(EarnVaultV2.initializeV2.selector, boostKeeper, BOOST_CAP)
+    );
 
     vault = EarnVaultV2(payable(address(proxy)));
 
-    handler = new EarnVaultV2Handler(vault, usdsc, boostToken, redistributor, operator);
+    handler = new EarnVaultV2Handler(vault, usdsc, boostToken, redistributor, operator, boostKeeper);
+    address blacklisted = handler.blacklistedAddr(); // read BEFORE the prank - an external call would consume it
+    vm.prank(owner);
+    vault.setBlacklisted(blacklisted, true);
 
-    bytes4[] memory selectors = new bytes4[](7);
+    bytes4[] memory selectors = new bytes4[](8);
     selectors[0] = EarnVaultV2Handler.deposit.selector;
     selectors[1] = EarnVaultV2Handler.withdraw.selector;
     selectors[2] = EarnVaultV2Handler.claim.selector;
@@ -174,9 +272,21 @@ contract EarnVaultV2Invariants is StdInvariant, Test {
     selectors[4] = EarnVaultV2Handler.compoundMany.selector;
     selectors[5] = EarnVaultV2Handler.onYield.selector;
     selectors[6] = EarnVaultV2Handler.onBoostReward.selector;
+    selectors[7] = EarnVaultV2Handler.onBoostCredit.selector;
 
     targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
     targetContract(address(handler));
+  }
+
+  /// @notice Guards the fuzz setup itself: with the handler's bounds, full batches do exceed
+  ///         BOOST_CAP, so the cap-rejected path is really exercised. If a later change to the
+  ///         bounds or the cap made it unreachable, this fails instead of the path going quiet.
+  function test_HandlerCapRejectedPathIsReachable() external {
+    uint256 fullPool = handler.MAX_USERS() + handler.INELIGIBLE_ENTRIES();
+    for (uint256 seed = 0; seed < 20 && handler.capRejectedBatches() == 0; seed++) {
+      handler.onBoostCredit(0, fullPool, seed);
+    }
+    assertGt(handler.capRejectedBatches(), 0, 'no fuzzed batch exceeded BOOST_CAP');
   }
 
   /// @notice totalPrincipal must always exactly equal the sum of every user's own principal -
@@ -200,13 +310,51 @@ contract EarnVaultV2Invariants is StdInvariant, Test {
       sumAccrued += vault.accrued(user);
       sumPending += vault.pendingYield(user);
     }
-    // Each independent settlement floors at RAY precision, so a few wei of dust can
-    // accumulate across many users/rounds over an invariant run's full depth.
-    assertApproxEqAbs(vault.claimReserve(), vault.totalPrincipal() + sumAccrued + sumPending, handler.MAX_USERS() * 2);
+    uint256 owed = vault.totalPrincipal() + sumAccrued + sumPending;
+    uint256 reserve = vault.claimReserve();
+    // Solvency, exact: every rounding step floors in the vault's favour, so the reserve can
+    // never fall below what users are owed - not even by 1 wei.
+    assertGe(reserve, owed, 'claimReserve below accounted user value');
+    // Dust bound - DERIVED, not fitted:
+    //  - claimReserve moves 1:1 with deposits, withdrawals, onYield amounts and credited boost.
+    //  - onYield indexes with a remainder carry: delta = floor((amount*RAY + carry)/TP), carry kept.
+    //    Summed over all yields this telescopes: total yield = indexed value + carry/RAY, and
+    //    carry < TP, so the index side leaves < 1 wei IN TOTAL (while TP < 1e27 raw units).
+    //  - Every principal change (_deposit, withdraw, _creditBoostEntry) settles the user first, so
+    //    each settlement floors one p*(gi-ui)/RAY: a fractional loss in [0, 1).
+    //  - pendingYield() floors each user's un-settled amount the same way in `owed` above.
+    //  => 0 <= reserve - owed < 1 + settlements + users, and both sides are integers, so
+    //     reserve - owed <= settlements + users. The bound below is that plus yieldOps (slack the
+    //     carry makes unnecessary); settleOps over-counts settlements, which only loosens it. A fixed
+    //     tolerance instead grows stale with run depth, which is why the old one failed spuriously.
+    //  Mutation-checked: over-crediting 1 wei per settle fails the assertGe above; leaking 1000 wei
+    //  per settle fails the assertLe below.
+    assertLe(
+      reserve - owed, handler.settleOps() + handler.yieldOps() + handler.MAX_USERS(), 'rounding dust exceeds bound'
+    );
   }
 
   /// @notice The vault must always hold enough USDSC to cover claimReserve - the funding
   ///         invariant carried over unchanged from V1.
+  /// @notice Skipped entries never credit anyone: the vault's own address and the blacklisted
+  ///         address (both mixed into every credit pool) never hold principal.
+  /// @notice No address's replay guard can ever be ahead of the global cycle counter - the property
+  ///         that makes a permanent lockout structurally impossible (the keeper can always credit
+  ///         anyone at latestCycleId + 1).
+  function invariant_LastCreditedCycleNeverExceedsLatestCycle() external view {
+    uint256 latest = vault.latestCycleId();
+    for (uint256 i = 0; i < handler.MAX_USERS(); i++) {
+      assertLe(vault.lastCreditedCycle(handler.users(i)), latest);
+    }
+    assertLe(vault.lastCreditedCycle(handler.blacklistedAddr()), latest);
+    assertLe(vault.lastCreditedCycle(address(vault)), latest);
+  }
+
+  function invariant_IneligibleAddressesNeverCredited() external view {
+    assertEq(vault.principal(address(vault)), 0);
+    assertEq(vault.principal(handler.blacklistedAddr()), 0);
+  }
+
   function invariant_VaultBalanceCoversClaimReserve() external view {
     assertGe(usdsc.balanceOf(address(vault)), vault.claimReserve());
   }

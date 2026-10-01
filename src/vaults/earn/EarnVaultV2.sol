@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
+import {IEarnVaultEventsAndErrors} from '../../interfaces/vaults/earn/IEarnVaultEventsAndErrors.sol';
 import {BoostRewardsLib} from './BoostRewardsLib.sol';
 import {EarnVaultUpgradeable} from './EarnVaultUpgradeable.sol';
+import {ERC1967Utils} from 'lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Utils.sol';
 import {IERC20} from 'lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol';
 import {SafeERC20} from 'lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol';
 import {Math} from 'lib/openzeppelin-contracts/contracts/utils/math/Math.sol';
@@ -12,11 +14,43 @@ import {Math} from 'lib/openzeppelin-contracts/contracts/utils/math/Math.sol';
 ///         pending USDSC yield now folds directly into their own principal on every
 ///         settlement, instead of sitting in a separately-claimable `accrued` balance. See
 ///         base-tier-auto-compounding.md for the full design rationale.
-/// @dev Adds NO new storage - this is a pure logic upgrade over V1. Upgrading a V1 proxy to
-///      this implementation needs no initializer call (upgrade with empty calldata). V1 itself
-///      is left untouched and stays the frozen, currently-live reference; do not add feature
-///      logic there going forward - extend it here, or in a further V3/V4/... subclass of this
-///      contract, mirroring this same pattern.
+/// @dev Also adds a boostKeeper role (own ERC-7201 namespace, separate from V1's base storage) for
+///      onBoostCredit(), which credits VIP boost as principal directly to user ADDRESSES - no on-chain
+///      identity registry. A V1 proxy is upgraded to this implementation with
+///      ProxyAdmin.upgradeAndCall carrying initializeV2(initialBoostKeeper, initialMaxBoostPerBatch)
+///      (reinitializer(2)) - see script/upgrade/UpgradeEarnVaultToV2.s.sol, then verify on the live
+///      chain with script/upgrade/VerifyEarnVaultV2Upgrade.s.sol.
+/// @dev TRUST MODEL for onBoostCredit(), stated rather than implied:
+///      - Against a BUGGY rewards engine: the per-batch cap (maxBoostPerBatch). It catches a
+///        decimals-style bug on the first batch, but not a modest overpayment spread across many
+///        batches; that residual is covered by off-chain monitoring of BoostCycleCredited totals
+///        against the engine's own expected totals.
+///      - Against a COMPROMISED keeper: the funding check (a credit can only draw on USDSC held above
+///        claimReserve) plus operational discipline - the keeper holds and sends only each batch's
+///        funding just-in-time, the owner sweeps surplus regularly (skipped amounts and donations
+///        accumulate as surplus), and setBoostKeeper() replaces a compromised keeper. The security
+///        budget is therefore: the keeper wallet's balance + the vault's accumulated surplus.
+///        The contract deliberately does not try to bound this further in state.
+/// @dev Boost is AA-wallet-only for v1: the backend created those wallets and holds the
+///      user -> AA-address mapping, so the keeper passes addresses and the vault never needs to
+///      resolve an identity. Restoring identity-based crediting later, if ever wanted:
+///      (A) EOAs eligible, mapping kept off-chain - no contract change; the keeper just passes those
+///          addresses too.
+///      (B) mapping on-chain - a V3 subclass adds a registry reference in its OWN ERC-7201
+///          namespace and an onBoostCreditByIdentity() that resolves identityId -> address and feeds
+///          the same address-keyed path (_creditBoostEntry). Purely additive: onBoostCredit() can
+///          stay live alongside it, so AA users (by address) and identity-linked EOAs (by identity)
+///          can be credited in parallel with no hard cutover; the keeper chooses which to call.
+///          A ready-made, unaudited IdentityRegistry for this is kept on the
+///          feat/identity-registry-simplified branch, outside this codebase and out of audit scope.
+/// @dev One address per user is currently guaranteed only by the backend (each user has exactly
+///      one AA wallet); nothing on-chain enforces it. If EOAs become eligible, that becomes a real
+///      uniqueness constraint the reward engine (scenario A) or the registry (scenario B) must
+///      enforce, or a user can split a balance across addresses to capture top boost bands.
+///      V1 stays the
+///      frozen, currently-live reference - its only changes were `virtual` modifiers and NatSpec
+///      so this contract can override it, with no behaviour change; do not add feature logic there
+///      going forward - extend it here, or in a further V3/V4/... subclass of this contract.
 /// @dev Known, accepted inefficiency: withdraw()/claim() (inherited unchanged from V1) call
 ///      _settle() - which already settles every active boost token here - and then call the
 ///      inherited _claimBoostRewards(), whose BoostRewardsLib.claimBoostReward() internally
@@ -37,9 +71,304 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
   ///      deliberate, since that interface is meant to stay untouched as V1's frozen surface
   event Compounded(address indexed user, uint256 amount);
 
+  /// @custom:storage-location erc7201:startale.storage.EarnVaultV2.BoostCredit
+  /// @dev An earlier revision had an `identityRegistry` field between these two. It was deleted
+  ///      outright - NOT replaced by a gap placeholder - because EarnVaultV2 had never been
+  ///      deployed, so lastCreditedCycle now sits at base + 1. Once deployed, never remove or
+  ///      reorder fields here; add new state in a new namespace (see scenario B above).
+  struct BoostCreditStorage {
+    address boostKeeper;
+    mapping(address user => uint256) lastCreditedCycle;
+    // Highest cycleId under which anything has been credited. onBoostCredit() only accepts
+    // cycleId == latestCycleId (current) or latestCycleId + 1 (next), so no address's
+    // lastCreditedCycle can ever exceed it (no permanent lockout is possible) and closed cycles
+    // can never be reopened.
+    uint256 latestCycleId;
+    // Cap on the total amount CREDITED (skips excluded) by any single onBoostCredit() call.
+    uint256 maxBoostPerBatch;
+  }
+
+  // keccak256(abi.encode(uint256(keccak256("startale.storage.EarnVaultV2.BoostCredit")) - 1)) & ~bytes32(uint256(0xff))
+  bytes32 private constant BOOST_CREDIT_STORAGE_LOCATION =
+    0x554142adb35c10dc49454118de8343ddca3b3dda8789b6f7bf924bfb6955ee00;
+
+  function _getBoostCreditStorage() internal pure returns (BoostCreditStorage storage $$) {
+    assembly {
+      $$.slot := BOOST_CREDIT_STORAGE_LOCATION
+    }
+  }
+
+  event BoostKeeperChanged(address indexed actor, address indexed oldKeeper, address indexed newKeeper);
+  event MaxBoostPerBatchChanged(address indexed actor, uint256 oldMax, uint256 newMax);
+  event BoostCredited(address indexed user, uint256 amount, uint256 indexed cycleId);
+  /// @notice Why onBoostCredit() skipped an entry instead of crediting it
+  /// @dev VaultAddress: the entry is this vault's own address. Blacklisted: the address is
+  ///      blacklisted (which can happen at any time, including after earlier credits). ZeroAmount:
+  ///      the entry's amount is 0 - treated like any other no-credit case, so it does not consume
+  ///      the cycleId.
+  enum BoostSkipReason {
+    VaultAddress,
+    Blacklisted,
+    ZeroAmount
+  }
+
+  /// @notice Emitted for an entry onBoostCredit() skipped instead of crediting. Its amount stays in
+  ///         the vault as unreserved surplus (recoverable via sweepSurplusToTreasury()), and its
+  ///         cycleId is NOT consumed - so it can still be credited under that cycleId, but ONLY
+  ///         while that cycle is still the current one. Once the next cycle opens, the engine must
+  ///         roll the deferred amount forward into a later cycle's amount.
+  event BoostCreditSkipped(address indexed user, uint256 amount, uint256 indexed cycleId, BoostSkipReason reason);
+  /// @notice Emitted once per onBoostCredit() call, after every entry has been processed - lets the
+  ///         off-chain reward engine confirm "did all of cycle N's batches land?" with a single
+  ///         indexed query instead of aggregating every BoostCredited event
+  /// @param entryCount Entries submitted in the batch
+  /// @param total Sum of all submitted amounts (the amount the funding check required)
+  /// @param skippedCount Entries skipped (see BoostCreditSkipped); entryCount - skippedCount were credited
+  /// @param skippedTotal Sum of skipped amounts - left in the vault as unreserved surplus
+  event BoostCycleCredited(
+    uint256 indexed cycleId, uint256 entryCount, uint256 total, uint256 skippedCount, uint256 skippedTotal
+  );
+
+  error NotBoostKeeper();
+  error NotProxyAdmin();
+  error LengthMismatch();
+  error StaleCycle();
+  error ZeroCycleId();
+  error CycleIdTooFarAhead(uint256 cycleId, uint256 latestCycleId);
+  error CycleIdTooOld(uint256 cycleId, uint256 latestCycleId);
+  error EmptyBatch();
+  error BoostBatchCapExceeded(uint256 credited, uint256 maxBoostPerBatch);
+  error ZeroMaxBoostPerBatch();
+
+  modifier onlyBoostKeeper() {
+    _onlyBoostKeeper();
+    _;
+  }
+
   /// @custom:oz-upgrades-unsafe-allow constructor
   constructor() {
     _disableInitializers();
+  }
+
+  /// @notice Initialize the boost-credit config added on top of V1 (reinitializer for upgrades)
+  /// @dev SECURITY: callable only by the proxy's ERC-1967 admin, i.e. the ProxyAdmin contract.
+  ///      An OZ v5 TransparentUpgradeableProxy lets its admin reach the implementation only via
+  ///      upgradeToAndCall (any other admin call reverts ProxyDeniedAdminAccess), and OZ v5's
+  ///      ProxyAdmin only issues that from upgradeAndCall. So this runs only as the calldata of
+  ///      `ProxyAdmin.upgradeAndCall(proxy, v2Impl, abi.encodeCall(EarnVaultV2.initializeV2, (...)))`,
+  ///      atomically with the upgrade, and cannot be front-run.
+  /// @dev What the gate prevents: without it, after an upgrade with empty calldata anyone could call
+  ///      this first and install themselves as boostKeeper. The funding check in onBoostCredit()
+  ///      bounds what they could credit to USDSC held above claimReserve (e.g. donations, or funding
+  ///      transferred ahead of a separate credit call), and the owner could replace them via
+  ///      setBoostKeeper() - but it is still an attacker-controlled role and must not be possible.
+  /// @dev If an upgrade lands without this call, boostKeeper is address(0), so onlyBoostKeeper
+  ///      rejects every caller (the rest of the vault works) - and reinitializer(2) is still
+  ///      UNCONSUMED (initialized version stays 1). Proper fix: repeat upgradeAndCall to the same
+  ///      implementation with this call. Stopgap: the owner calls BOTH setBoostKeeper() and
+  ///      setMaxBoostPerBatch() (the cap is also 0, so every credit would revert
+  ///      BoostBatchCapExceeded). That enables boost credit but leaves the version at 1, so
+  ///      initializeV2 stays runnable - only by the ProxyAdmin via upgradeAndCall, and it would
+  ///      overwrite the keeper and cap. A later V3 using reinitializer(3) still works
+  ///      from either state.
+  /// @dev Deliberately NOT `msg.sender == owner()`: under upgradeAndCall, msg.sender here is the
+  ///      ProxyAdmin contract, not this vault's owner, so that gate would revert every upgrade.
+  ///      (The ProxyAdmin can't usefully be the owner either: the proxy blocks it from calling any
+  ///      vault function, including acceptOwnership().)
+  /// @dev Fresh deploy (no V1 history): do NOT pass this as the proxy's constructor calldata - OZ
+  ///      v5's TransparentUpgradeableProxy runs that calldata before it creates the ProxyAdmin, so
+  ///      the admin slot is still zero and this reverts NotProxyAdmin. Construct the proxy with the
+  ///      base initialize(), then ProxyAdmin.upgradeAndCall to the same implementation with this.
+  ///      Between the two transactions boostKeeper is unset (boost credit disabled), so any deploy
+  ///      script must treat the second transaction as mandatory, not optional cleanup.
+  /// @dev Assumes upgrades go through a TransparentUpgradeableProxy's ProxyAdmin. Where the caller
+  ///      is not the ERC-1967 admin - a proxy with no admin (the admin slot is zero), or a UUPS-style
+  ///      upgrade path where the owner calls upgradeToAndCall - this rejects the call and any
+  ///      upgradeToAndCall carrying it reverts as a whole. Such a move needs this gate replaced
+  ///      (owner() would then be the right check); test_InitializeV2_ProxyWithoutAdmin_RejectsEvenOwner
+  ///      pins the current behaviour, so changing the gate also requires updating that test. A unit
+  ///      test cannot detect a proxy migration (that happens in deploy scripts), so any upgrade
+  ///      script must pre-check that the ERC-1967 admin slot is the expected ProxyAdmin before
+  ///      sending upgradeAndCall.
+  /// @param initialBoostKeeper Address authorized to call onBoostCredit()
+  /// @param initialMaxBoostPerBatch Cap on total USDSC credited by one onBoostCredit() call (non-zero)
+  function initializeV2(address initialBoostKeeper, uint256 initialMaxBoostPerBatch) public reinitializer(2) {
+    if (msg.sender != ERC1967Utils.getAdmin()) revert NotProxyAdmin();
+    if (initialBoostKeeper == address(0)) revert IEarnVaultEventsAndErrors.CanNotBeZeroAddress();
+    if (initialMaxBoostPerBatch == 0) revert ZeroMaxBoostPerBatch();
+    BoostCreditStorage storage $$ = _getBoostCreditStorage();
+    $$.boostKeeper = initialBoostKeeper;
+    $$.maxBoostPerBatch = initialMaxBoostPerBatch;
+    emit BoostKeeperChanged(msg.sender, address(0), initialBoostKeeper);
+    emit MaxBoostPerBatchChanged(msg.sender, 0, initialMaxBoostPerBatch);
+  }
+
+  /// @notice Current address authorized to call onBoostCredit()
+  function boostKeeper() external view returns (address) {
+    return _getBoostCreditStorage().boostKeeper;
+  }
+
+  /// @notice Update the boost keeper address
+  /// @param newKeeper New boost keeper address
+  function setBoostKeeper(address newKeeper) external onlyOwner {
+    if (newKeeper == address(0)) revert IEarnVaultEventsAndErrors.CanNotBeZeroAddress();
+    BoostCreditStorage storage $$ = _getBoostCreditStorage();
+    address old = $$.boostKeeper;
+    $$.boostKeeper = newKeeper;
+    emit BoostKeeperChanged(msg.sender, old, newKeeper);
+  }
+
+  /// @notice Current cap on the total USDSC credited by a single onBoostCredit() call
+  function maxBoostPerBatch() external view returns (uint256) {
+    return _getBoostCreditStorage().maxBoostPerBatch;
+  }
+
+  /// @notice Highest cycleId under which anything has been credited. onBoostCredit() accepts only
+  ///         this (current cycle) or this + 1 (next cycle).
+  /// @dev The engine should read this from chain and use latestCycleId + 1 for a new cycle, rather
+  ///      than deriving cycle IDs from dates - then any desync is harmless - and record its own
+  ///      date -> cycleId mapping when it submits.
+  function latestCycleId() external view returns (uint256) {
+    return _getBoostCreditStorage().latestCycleId;
+  }
+
+  /// @notice Update the per-batch credit cap
+  /// @dev Guards against a buggy rewards engine (e.g. a decimals error inflating amounts): a batch
+  ///      crediting more than this reverts whole. Size it with headroom over the largest LEGITIMATE
+  ///      single batch - one day's largest batch; the engine should open cycles back-to-back to
+  ///      catch up rather than roll several days into one cycle, so the cap never needs raising
+  ///      under pressure. Must be non-zero (halt credits via pause()/setBoostKeeper()).
+  /// @param newMax New cap on total USDSC credited per onBoostCredit() call
+  function setMaxBoostPerBatch(uint256 newMax) external onlyOwner {
+    if (newMax == 0) revert ZeroMaxBoostPerBatch();
+    BoostCreditStorage storage $$ = _getBoostCreditStorage();
+    uint256 old = $$.maxBoostPerBatch;
+    $$.maxBoostPerBatch = newMax;
+    emit MaxBoostPerBatchChanged(msg.sender, old, newMax);
+  }
+
+  function _onlyBoostKeeper() internal view {
+    if (msg.sender != _getBoostCreditStorage().boostKeeper) revert NotBoostKeeper();
+  }
+
+  /// @notice Last cycleId successfully credited to `user` - the replay guard
+  function lastCreditedCycle(address user) external view returns (uint256) {
+    return _getBoostCreditStorage().lastCreditedCycle[user];
+  }
+
+  /// @notice Credit VIP boost directly as principal to each address in the batch
+  /// @dev MUST be called AFTER transferring the batch's total USDSC to this contract - mirrors
+  ///      onYield()'s discipline: verify balance covers claimReserve + total BEFORE crediting
+  ///      anything, so a failed batch credits nothing. Gated whenNotPaused, like the other
+  ///      principal-changing entry points (deposit()/withdraw()/claim()/compound()/compoundMany()).
+  /// @dev All-or-nothing (the whole batch reverts) for funding, replay, cycle bounds, the cap and
+  ///      malformed input: insufficient balance; an empty batch; cycleId 0 (ZeroCycleId); a cycleId
+  ///      other than latestCycleId (current) or latestCycleId + 1 (next) - CycleIdTooOld /
+  ///      CycleIdTooFarAhead; cycleId <= an address's lastCreditedCycle (StaleCycle - so a duplicate
+  ///      address in one batch reverts on its second occurrence); a zero address; a length mismatch;
+  ///      or the batch's credited total exceeding maxBoostPerBatch (BoostBatchCapExceeded).
+  /// @dev Cycle rules: several batches may share the current cycle, and cycles may be opened
+  ///      back-to-back (catch-up after downtime). The next cycle opens - latestCycleId advances -
+  ///      only when a batch under it actually credits something: an all-skipped batch (e.g. every
+  ///      entry blacklisted) must not close the current cycle, or it would block legitimate
+  ///      same-cycle re-credits. Closed cycles are never reopened, and no address can ever be locked
+  ///      out (lastCreditedCycle <= latestCycleId always holds).
+  /// @dev Per-entry skip (BoostCreditSkipped, nothing credited, cycleId NOT consumed) for the
+  ///      vault's own address, a blacklisted address, or a zero amount - so one ineligible entry
+  ///      cannot fail everyone else's credit (mirrors compoundMany()'s skip-blacklisted). A skipped
+  ///      entry can still be credited under the same cycleId, but only while that cycle is current;
+  ///      once the next cycle opens the engine must roll the amount forward into a later cycle. The
+  ///      funding check still covers skipped amounts; they stay as unreserved surplus,
+  ///      recoverable via sweepSurplusToTreasury() or reusable by a later credit. Skips do not count
+  ///      toward maxBoostPerBatch.
+  /// @param cycleId latestCycleId (current) or latestCycleId + 1 (next); the engine should read
+  ///        latestCycleId from chain rather than derive cycle IDs from dates
+  /// @param users Addresses to credit (AA wallets for v1 - the backend resolves user -> address)
+  /// @param amounts USDSC amounts to credit, index-aligned with users
+  function onBoostCredit(
+    uint256 cycleId,
+    address[] calldata users,
+    uint256[] calldata amounts
+  ) external whenNotPaused onlyBoostKeeper nonReentrant {
+    if (users.length != amounts.length) revert LengthMismatch();
+    if (users.length == 0) revert EmptyBatch();
+    _checkCycle(cycleId);
+
+    uint256 total = 0;
+    for (uint256 i = 0; i < amounts.length; i++) {
+      total += amounts[i];
+    }
+
+    EarnVaultStorage storage $ = _getStorage();
+    uint256 bal = $.USDSC.balanceOf(address(this));
+    if (bal < $.claimReserve + total) revert IEarnVaultEventsAndErrors.InsufficientFunding();
+
+    uint256 skippedCount = 0;
+    uint256 skippedTotal = 0;
+    for (uint256 i = 0; i < users.length; i++) {
+      if (!_creditBoostEntry(cycleId, users[i], amounts[i])) {
+        skippedCount++;
+        skippedTotal += amounts[i];
+      }
+    }
+
+    uint256 credited = total - skippedTotal;
+    uint256 maxBatch = _getBoostCreditStorage().maxBoostPerBatch;
+    if (credited > maxBatch) revert BoostBatchCapExceeded(credited, maxBatch);
+    if (credited > 0) _advanceCycle(cycleId);
+    emit BoostCycleCredited(cycleId, users.length, total, skippedCount, skippedTotal);
+  }
+
+  /// @dev Accepts only the current cycle (cycleId == latestCycleId) or the next one
+  ///      (latestCycleId + 1). Closed cycles are never reopened.
+  function _checkCycle(uint256 cycleId) internal view {
+    if (cycleId == 0) revert ZeroCycleId();
+    uint256 latest = _getBoostCreditStorage().latestCycleId;
+    if (cycleId > latest + 1) revert CycleIdTooFarAhead(cycleId, latest);
+    if (cycleId < latest) revert CycleIdTooOld(cycleId, latest);
+  }
+
+  /// @dev Records a new high only when this batch actually credited something, so an empty or
+  ///      all-skipped batch cannot close the current cycle. Every lastCreditedCycle written in this
+  ///      batch equals cycleId, so lastCreditedCycle <= latestCycleId still holds.
+  function _advanceCycle(uint256 cycleId) internal {
+    BoostCreditStorage storage $$ = _getBoostCreditStorage();
+    if (cycleId > $$.latestCycleId) $$.latestCycleId = cycleId;
+  }
+
+  /// @dev Processes one onBoostCredit() entry. Reverts (failing the whole batch) on a zero address
+  ///      or a stale cycleId; returns false - having emitted BoostCreditSkipped and changed nothing
+  ///      else - when `user` is this vault or blacklisted; otherwise credits it and returns true.
+  ///      Address-keyed on purpose: a future identity-based entry point (see contract NatSpec,
+  ///      scenario B) resolves identityId -> address and calls this unchanged.
+  function _creditBoostEntry(uint256 cycleId, address user, uint256 amount) internal returns (bool credited) {
+    if (user == address(0)) revert IEarnVaultEventsAndErrors.CanNotBeZeroAddress();
+    BoostCreditStorage storage $$ = _getBoostCreditStorage();
+    if (cycleId <= $$.lastCreditedCycle[user]) revert StaleCycle();
+
+    // Per-entry eligibility skips; it does not fail the batch. The vault's own address is the ONLY
+    // guard against crediting principal to itself. An address can become blacklisted at any time,
+    // including after earlier credits. Either way the entry is skipped, not credited.
+    EarnVaultStorage storage $ = _getStorage();
+    if (user == address(this) || $.isBlacklisted[user] || amount == 0) {
+      BoostSkipReason reason = user == address(this)
+        ? BoostSkipReason.VaultAddress
+        : ($.isBlacklisted[user] ? BoostSkipReason.Blacklisted : BoostSkipReason.ZeroAmount);
+      emit BoostCreditSkipped(user, amount, cycleId, reason);
+      return false;
+    }
+
+    // Replay guard written only on an actual credit - a skip is not a payment.
+    $$.lastCreditedCycle[user] = cycleId;
+
+    _settle(user);
+
+    $.principal[user] += amount;
+    $.totalPrincipal += amount;
+    $.claimReserve += amount;
+
+    emit BoostCredited(user, amount, cycleId);
+    return true;
   }
 
   /// @notice Settle `user`'s pending USDSC yield, folding it into their own principal
@@ -79,6 +408,11 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
   ///         principal - i.e. what compound()/deposit()/withdraw()/claim() would fold in if
   ///         called right now
   function pendingYield(address user) external view returns (uint256) {
+    return _pendingYield(user);
+  }
+
+  /// @dev Internal body of pendingYield(), so views here don't pay for an external self-call
+  function _pendingYield(address user) internal view returns (uint256) {
     EarnVaultStorage storage $ = _getStorage();
     uint256 p = $.principal[user];
     if (p == 0) return 0;
@@ -102,7 +436,7 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
   ///      yield hasn't been folded into principal yet but still belongs to them
   function totalValue(address user) external view virtual override returns (uint256) {
     EarnVaultStorage storage $ = _getStorage();
-    return $.principal[user] + $.accrued[user] + this.pendingYield(user);
+    return $.principal[user] + $.accrued[user] + _pendingYield(user);
   }
 
   /// @notice Get user's complete account info in one call
@@ -121,13 +455,7 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
     userLastIndex = $.userIndex[user];
     userClaimable = $.accrued[user];
 
-    uint256 pending = 0;
-    uint256 gi = $.globalIndex;
-    if (userPrincipal > 0 && gi > userLastIndex) {
-      pending = Math.mulDiv(userPrincipal, gi - userLastIndex, $.RAY);
-    }
-
-    userTotal = userPrincipal + userClaimable + pending;
+    userTotal = userPrincipal + userClaimable + _pendingYield(user);
   }
 
   /// @notice Get version info
@@ -153,7 +481,7 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
     EarnVaultStorage storage $ = _getStorage();
     _checkNotBlacklisted(user);
 
-    usdscClaimable = $.accrued[user] + this.pendingYield(user);
+    usdscClaimable = $.accrued[user] + _pendingYield(user);
 
     boostTokens = new address[]($.activeBoostTokens.length);
     boostAmounts = new uint256[]($.activeBoostTokens.length);

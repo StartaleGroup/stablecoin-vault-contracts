@@ -183,7 +183,11 @@ contract EarnVaultV1ToV2UserJourneyTest is Test {
 
     EarnVaultV2 v2Implementation = new EarnVaultV2();
     vm.prank(admin);
-    proxyAdmin.upgradeAndCall(ITransparentUpgradeableProxy(address(proxy)), address(v2Implementation), '');
+    proxyAdmin.upgradeAndCall(
+      ITransparentUpgradeableProxy(address(proxy)),
+      address(v2Implementation),
+      abi.encodeWithSelector(EarnVaultV2.initializeV2.selector, makeAddr('boostKeeper'), type(uint256).max)
+    );
     vault = EarnVaultV2(payable(address(proxy)));
 
     // Nothing about the upgrade itself moves a single wei or changes anyone's recorded
