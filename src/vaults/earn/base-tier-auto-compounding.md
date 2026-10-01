@@ -104,8 +104,8 @@ The first pass at this implementation edited `EarnVaultUpgradeable.sol` (V1) dir
 
 - **Audit baseline.** V1 stays frozen and byte-for-byte the currently-live contract (aside from adding the `virtual` keyword to 3 view functions - a zero-behavior-change touch required so V2 can override them). An auditor gets two clean, independently reviewable contracts instead of a diff against a moving target.
 - **Real upgrade testing.** `test/unit/EarnVaultAutoCompound.t.sol`'s `setUp()` now deploys the actual V1 implementation behind a `TransparentUpgradeableProxy`, builds genuine pre-upgrade state (including a real legacy `accrued` balance and a never-settled backlog carried across the boundary), then upgrades that same proxy to `EarnVaultV2` - exactly the production upgrade path - before any test runs. This wasn't possible when V2's logic just replaced V1's source in place, since there was no old implementation left in the repo to upgrade *from*.
-- **No new storage, so no reinitializer needed.** `EarnVaultV2`'s constructor just calls `_disableInitializers()`; upgrading a live V1 proxy to it needs an empty-calldata `upgradeAndCall`, nothing more.
-- **Naming/versioning:** the VIP boost branch (`feat/earn-v2-loyalty-identity-boost`) already committed its own real `EarnVaultV2` (`depositFor`/`autoReinvestKeeper`). Rather than merge that branch and renumber one of the two V2s, the plan is to treat that branch as a frozen reference and port its features onto *this* branch later as `EarnVaultV3 is EarnVaultV2`, never merging it directly.
+- **Storage/initialization, as originally shipped vs. now.** At the time this was written, `EarnVaultV2`'s constructor just called `_disableInitializers()` and upgrading a live V1 proxy to it needed only an empty-calldata `upgradeAndCall`. That's no longer true: a later change (the `onBoostCredit()` VIP-boost work) added a boostKeeper role directly to this same `EarnVaultV2.sol`, in its own ERC-7201 namespace (boost is credited to addresses; no identity registry is wired). Upgrading a live V1 proxy to the current `EarnVaultV2` now requires calling `initializeV2(initialBoostKeeper, initialMaxBoostPerBatch)` via `reinitializer(2)`, bundled into the same `ProxyAdmin.upgradeAndCall` transaction as the upgrade itself. `initializeV2` enforces this on-chain: it only accepts the proxy's ERC-1967 admin (the ProxyAdmin) as caller, which on a Transparent proxy can only reach it through `upgradeAndCall` - see that function's NatSpec.
+- **Naming/versioning:** the VIP boost branch (`feat/earn-v2-loyalty-identity-boost`) separately committed its own real `EarnVaultV2` (`depositFor`/`autoReinvestKeeper`) - a different, frozen reference implementation, not merged here. The original plan here was to port that branch's features onto *this* branch later as a separate `EarnVaultV3 is EarnVaultV2`, to avoid modifying an already-deployed `EarnVaultV2`. That did not end up happening: checking the actual deployment broadcast logs found `EarnVaultV2` (auto-compound) had never been deployed or upgraded-to on any real network, so there was no live-deployment milestone a separate V3 needed to protect. The boostKeeper/`onBoostCredit()` work was therefore added directly to `EarnVaultV2.sol` instead.
 
 ## Cadence and gas sizing (2026-08-31)
 
@@ -165,3 +165,45 @@ function compoundMany(address[] calldata users) external whenNotPaused nonReentr
 ```
 
 **Correct the gas accounting before treating this as a big win.** `_settle()` already partially self-skips today: when `globalIndex == userIndex[user]`, the `if (gi > ui)` branch never runs, so an already-settled user avoids the `principal`/`totalPrincipal` writes regardless of whether there's an explicit early check. Going through the *existing* logic, an already-settled user in a batch costs roughly: blacklist check (~2,100) + `principal` SLOAD (~2,100) + `userIndex` SLOAD (~2,100) + a near-free no-op `userIndex` rewrite (~100) ≈ **~4,500 gas**, not the full per-user cost of an actual fold. An explicit early check (the sketch above) gets an already-settled user down to **~2,100 gas** — just the one `userIndex` read needed to make the skip decision, before touching `principal` or the blacklist mapping at all. Real, but roughly half, not the dramatic saving it might sound like at first — precisely because `_settle`'s existing structure already avoids the expensive part (the actual `principal`/`totalPrincipal` SSTOREs). The bigger lever for cost reduction remains the off-chain filtering above, since that's what actually shrinks the array and the calldata.
+
+## `onBoostCredit` batch sizing (2026-09-25)
+
+Measured by `test_Gas_OnBoostCredit_BatchSizingProjection` (`test/unit/EarnVaultAutoCompound.t.sol`): projected tx gas = 21k + calldata + execution, with **2 active boost tokens** (`_settle` loops every active boost token per credited address). Soneium's execution limit is 40M; the keeper should target ≤ 60% (24M) per batch.
+
+| State | 100 entries | 300 | 500 | ≈ per entry |
+|---|---|---|---|---|
+| A. Worst-case cold — first-ever credit to addresses never settled since the boost tokens were activated | 12.4M | 37.1M | **61.9M (over the block limit)** | ~124k |
+| B. First credit after the daily `compoundMany` already settled those addresses (only `lastCreditedCycle` is a fresh slot) | 3.2M | 9.6M | 16.0M | ~32k |
+| C. Warm steady state (later cycle, already-credited addresses) | 1.4M | 4.1M | 6.8M | ~13.5k |
+| D. Warm, 20% of entries skipped (blacklisted) | 1.2M | 3.5M | 5.9M | ~11.8k |
+
+**Keeper guidance:**
+
+- **Size the first cycle(s) by state A**, not the steady state: ≈ **190 entries per batch** at 60% of the block when boost slots are cold. If `compoundMany` runs first and warms every recipient, state B applies (≈ 700 entries per batch). **This relocates gas rather than saving it:** `compoundMany` then pays the cold zero→non-zero boost-slot writes that `onBoostCredit` would otherwise pay, so total daily gas is roughly the same — it only lets `onBoostCredit` batches be larger.
+- **Cycle rules:** a cycle's batches all use the current `latestCycleId` (read it from chain); the next cycle is `latestCycleId + 1`, and it opens only when a batch under it actually credits something (an all-skipped batch does not close the current cycle). Cycles may be opened back-to-back, so after downtime **catch up by opening one cycle per missed day** rather than rolling several days into one cycle.
+- **Steady state** (state C) fits ≈ 1,700 entries per batch; a 500-entry batch uses ~6.8M.
+- Skipped entries cost roughly a third of a credited one, so skips lower the average (state D).
+- Cost scales with the number of **active boost tokens** — re-measure if more are activated (up to `MAX_BOOST_TOKENS = 10`).
+- A batch that runs out of gas reverts as a whole (nothing is credited); resubmit it split, with the same `cycleId`.
+- The test asserts a warm 500-entry batch and a worst-case-cold 100-entry batch each fit 60% of the block, so a gas regression fails CI.
+- L1 data-posting cost (OP-Stack) is separate and not included — get a live quote before finalising.
+
+## EarnVaultV2 upgrade and engine handoff (2026-09-26)
+
+1. Upgrade the proxy to `EarnVaultV2` with **one** `ProxyAdmin.upgradeAndCall(proxy, v2Impl, initializeV2(boostKeeper, maxBoostPerBatch))` — use `script/upgrade/UpgradeEarnVaultToV2.s.sol` (pre-checks the admin slot; optional `IMPLEMENTATION` to upgrade to a pre-deployed, explorer-verified implementation), then **run `script/upgrade/VerifyEarnVaultV2Upgrade.s.sol` against the live chain** (the upgrade script's own post-flight only checks the simulation). `initializeV2` only accepts the ProxyAdmin as caller, so it cannot be run any other way; if an upgrade lands without it, boost credit is disabled (no boostKeeper) and `reinitializer(2)` stays unconsumed. Proper fix: repeat `upgradeAndCall` to the same implementation with it. Stopgap: the owner calls `setBoostKeeper` and `setMaxBoostPerBatch` (the cap is 0 too until set), which enables boost credit but leaves the initialized version at 1.
+   - *Fresh deploy instead (no V1 history):* construct the proxy with the base `initialize()`, then `upgradeAndCall` to the same implementation with `initializeV2`. It cannot go in the proxy's constructor calldata: OZ v5 runs that before the ProxyAdmin exists, so it reverts `NotProxyAdmin`. Until the second transaction lands, `boostKeeper` is unset, so the deploy script must treat it as mandatory.
+2. Hand the engine team the event ABI (`BoostCredited(user, amount, cycleId)`, `BoostCreditSkipped(user, amount, cycleId, reason)` and `BoostCycleCredited` for reconciliation) and the cycle rules: **read `latestCycleId` from chain** and use it for the current cycle's batches or `latestCycleId + 1` to open the next one, rather than deriving cycle IDs from dates, and record its own date → cycleId mapping when submitting. Closed cycles cannot be reopened; cycles can be opened back-to-back, so catch up one cycle per missed day. Each batch's credited total is capped by `maxBoostPerBatch`. A skipped entry (vault address, blacklisted, or zero amount) does not consume its `cycleId`, so it can be re-credited under it while that cycle is current; once the next cycle opens, the engine must roll the deferred amount forward. Skipped funding stays as unreserved surplus (recoverable via `sweepSurplusToTreasury`, or reused by a later credit). The trust model, security budget and cap sizing are in the next section.
+
+## `onBoostCredit` trust model, security budget and cap sizing (2026-09-25)
+
+**Trust model — stated, not implied.**
+
+- **Against a buggy rewards engine: the per-batch cap** (`maxBoostPerBatch`). A batch crediting more than the cap reverts whole. It catches a decimals-style bug on the first batch, but not a modest overpayment spread across many batches. That residual is covered by monitoring `BoostCycleCredited` totals against the engine's own expected totals — **TBD: which system performs that comparison, and who gets paged when it disagrees.**
+- **Against a compromised keeper: the funding check plus operational discipline.** A credit can only draw on USDSC held above `claimReserve`, so the contract does not try to bound a compromised keeper further in state. The **security budget is the keeper wallet's balance plus the vault's accumulated surplus**:
+  - the keeper holds and sends **only each batch's funding, just-in-time** — top it up per cycle, never several cycles' worth;
+  - treat the keeper as a **hot wallet holding funds**, not just a signing key (key storage, rotation and access controls accordingly; see the runbook);
+  - the owner **sweeps surplus regularly** (`sweepSurplusToTreasury`) — skipped amounts and donations accumulate as surplus;
+  - a compromised keeper is replaced with `setBoostKeeper`.
+
+**Sizing `maxBoostPerBatch`.** The cap must exceed the largest *legitimate* batch total, or it rejects real credits. Size it with headroom over **one day's largest batch**. Because cycles can be opened back-to-back, the engine should catch up day by day rather than rolling deferred days into one cycle (which would multiply per-user amounts and batch totals). That way the cap never needs raising under pressure during an incident.
+
