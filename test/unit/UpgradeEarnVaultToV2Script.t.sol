@@ -104,6 +104,9 @@ contract UpgradeEarnVaultToV2ScriptTest is Test {
     assertEq(v2.maxBoostPerBatch(), CAP);
     assertEq(v2.principal(makeAddr('depositor')), principalBefore);
     assertEq(address(uint160(uint256(vm.load(proxy, IMPL_SLOT)))), impl);
+    // Foundry's test EVM does not enforce EIP-170, so assert it: the implementation the script
+    // deploys must be deployable on a real chain (EarnVaultV2 sits close to the limit).
+    assertLe(impl.code.length, 24_576, 'EarnVaultV2 runtime exceeds EIP-170 (24,576 bytes)');
   }
 
   /// @dev IMPLEMENTATION path: upgrades to the given, pre-deployed (explorer-verified) address
