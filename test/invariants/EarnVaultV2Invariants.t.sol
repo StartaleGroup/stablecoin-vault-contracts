@@ -3,6 +3,7 @@ pragma solidity ^0.8.30;
 
 import {EarnVaultUpgradeable} from '../../src/vaults/earn/EarnVaultUpgradeable.sol';
 import {EarnVaultV2} from '../../src/vaults/earn/EarnVaultV2.sol';
+import {MockSnapshotRedistributor} from '../mocks/MockSnapshotRedistributor.sol';
 import {MockUSDSC} from '../mocks/MockUSDSC.sol';
 import {ProxyAdmin} from '@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol';
 import {TransparentUpgradeableProxy} from '@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol';
@@ -24,10 +25,15 @@ contract EarnVaultV2Handler is Test {
   EarnVaultV2 public vault;
   MockUSDSC public usdsc;
   MockUSDSC public boostToken;
+  MockSnapshotRedistributor public snapshotRedistributor;
   address public redistributor;
   address public operator;
   address public boostKeeper;
   uint256 public boostCycleId;
+
+  /// @notice deposit() calls the handler issued while vault.depositsLocked() was true - each one
+  ///         asserted DepositsLockedForDistribution and changed nothing (see deposit() below).
+  uint256 public lockedDepositAttempts;
 
   /// @notice Upper bound on per-user settlements performed so far (each floors <= 1 wei of
   ///         yield in the vault's favour). Over-counting only loosens the dust bound below.
@@ -49,14 +55,15 @@ contract EarnVaultV2Handler is Test {
     EarnVaultV2 _vault,
     MockUSDSC _usdsc,
     MockUSDSC _boostToken,
-    address _redistributor,
+    MockSnapshotRedistributor _redistributor,
     address _operator,
     address _boostKeeper
   ) {
     vault = _vault;
     usdsc = _usdsc;
     boostToken = _boostToken;
-    redistributor = _redistributor;
+    snapshotRedistributor = _redistributor;
+    redistributor = address(_redistributor);
     operator = _operator;
     boostKeeper = _boostKeeper;
     blacklistedAddr = makeAddr('handlerBlacklisted');
@@ -70,6 +77,10 @@ contract EarnVaultV2Handler is Test {
     }
   }
 
+  /// @dev When vault.depositsLocked() is locked, deposit() must revert
+  ///      DepositsLockedForDistribution and change nothing - asserted here with vm.expectRevert
+  ///      rather than skipped, so fail_on_revert = true actually exercises the locked path
+  ///      instead of a stray unexpected revert killing the run.
   function deposit(uint256 userIndex, uint256 amount) external {
     userIndex = bound(userIndex, 0, users.length - 1);
     address user = users[userIndex];
@@ -77,9 +88,46 @@ contract EarnVaultV2Handler is Test {
     if (balance == 0) return;
     amount = bound(amount, 1, balance);
 
+    // Expected lock computed from the redistributor's own state, independently of the vault, so
+    // a wrong lock formula in the vault fails here (fail_on_revert) instead of being mirrored.
+    (bool locked, uint256 unlocksAt) = expectedLock();
+    if (locked) {
+      lockedDepositAttempts++;
+      vm.expectRevert(abi.encodeWithSelector(EarnVaultV2.DepositsLockedForDistribution.selector, unlocksAt));
+      vm.prank(user);
+      vault.deposit(amount);
+      return;
+    }
+
     settleOps++;
     vm.prank(user);
     vault.deposit(amount);
+  }
+
+  /// @notice Independent oracle for the deposit lock: the redistributor's snapshot is usable by
+  ///         distribute() (RewardRedistributor._validateSnapShotAge semantics), and unlocksAt =
+  ///         ts + maxAge + 1 (no saturation needed: ts and maxAge are small here).
+  function expectedLock() public view returns (bool locked, uint256 unlocksAt) {
+    uint256 ts = snapshotRedistributor.lastSnapshotTimestamp();
+    uint256 maxAge = snapshotRedistributor.snapshotMaxAge();
+    locked = ts != 0 && (block.timestamp < ts || block.timestamp - ts <= maxAge);
+    unlocksAt = locked ? ts + maxAge + 1 : 0;
+  }
+
+  /// @notice Takes a fresh snapshot on the mock redistributor at the current block timestamp,
+  ///         with a bounded maxAge - the only way the fuzzer can put the vault into the locked
+  ///         state, since MockSnapshotRedistributor's snapshot is otherwise inert.
+  function snapshot(uint256 maxAgeSeed) external {
+    uint256 maxAge = bound(maxAgeSeed, 1 minutes, 1 hours);
+    snapshotRedistributor.setSnapshot(block.timestamp, maxAge);
+  }
+
+  /// @notice Advances block.timestamp by a bounded amount, so fuzzed sequences cross in and out
+  ///         of a snapshot's lock window (bounded well above the [1 minutes, 1 hours] maxAge
+  ///         snapshot() can set, so both "still locked" and "expired" are reachable).
+  function warp(uint256 secondsSeed) external {
+    uint256 delta = bound(secondsSeed, 0, 2 hours);
+    vm.warp(block.timestamp + delta);
   }
 
   function withdraw(uint256 userIndex, uint256 amount) external {
@@ -225,7 +273,10 @@ contract EarnVaultV2Invariants is StdInvariant, Test {
 
   address internal admin = makeAddr('admin');
   address internal owner = makeAddr('owner');
-  address internal redistributor = makeAddr('redistributor');
+  /// @dev A contract redistributor (not an EOA, as the original harness used) so the handler's
+  ///      snapshot()/warp() actions can actually exercise the JIT deposit lock - an EOA
+  ///      redistributor would leave it permanently fail-open and never test the locked path.
+  MockSnapshotRedistributor internal redistributor;
   address internal treasury = makeAddr('treasury');
   address internal pauser = makeAddr('pauser');
   address internal operator = makeAddr('operator');
@@ -233,13 +284,20 @@ contract EarnVaultV2Invariants is StdInvariant, Test {
   function setUp() external {
     usdsc = new MockUSDSC();
     boostToken = new MockUSDSC();
+    redistributor = new MockSnapshotRedistributor(5 minutes);
 
     EarnVaultUpgradeable v1Implementation = new EarnVaultUpgradeable();
     TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(
       address(v1Implementation),
       admin,
       abi.encodeWithSelector(
-        EarnVaultUpgradeable.initialize.selector, address(usdsc), owner, redistributor, treasury, pauser, operator
+        EarnVaultUpgradeable.initialize.selector,
+        address(usdsc),
+        owner,
+        address(redistributor),
+        treasury,
+        pauser,
+        operator
       )
     );
 
@@ -264,7 +322,7 @@ contract EarnVaultV2Invariants is StdInvariant, Test {
     vm.prank(owner);
     vault.setBlacklisted(blacklisted, true);
 
-    bytes4[] memory selectors = new bytes4[](8);
+    bytes4[] memory selectors = new bytes4[](10);
     selectors[0] = EarnVaultV2Handler.deposit.selector;
     selectors[1] = EarnVaultV2Handler.withdraw.selector;
     selectors[2] = EarnVaultV2Handler.claim.selector;
@@ -273,6 +331,8 @@ contract EarnVaultV2Invariants is StdInvariant, Test {
     selectors[5] = EarnVaultV2Handler.onYield.selector;
     selectors[6] = EarnVaultV2Handler.onBoostReward.selector;
     selectors[7] = EarnVaultV2Handler.onBoostCredit.selector;
+    selectors[8] = EarnVaultV2Handler.snapshot.selector;
+    selectors[9] = EarnVaultV2Handler.warp.selector;
 
     targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
     targetContract(address(handler));
@@ -287,6 +347,27 @@ contract EarnVaultV2Invariants is StdInvariant, Test {
       handler.onBoostCredit(0, fullPool, seed);
     }
     assertGt(handler.capRejectedBatches(), 0, 'no fuzzed batch exceeded BOOST_CAP');
+  }
+
+  /// @notice Guards the fuzz setup for the JIT deposit lock: a snapshot() followed by a deposit()
+  ///         in the same block really does hit the locked branch (asserted via vm.expectRevert
+  ///         inside the handler), so this path isn't going quiet if a later change to the bounds
+  ///         or the lock condition made it unreachable.
+  function test_HandlerLockedDepositPathIsReachable() external {
+    handler.snapshot(1 minutes);
+    for (uint256 seed = 0; seed < 20 && handler.lockedDepositAttempts() == 0; seed++) {
+      handler.deposit(seed, seed + 1);
+    }
+    assertGt(handler.lockedDepositAttempts(), 0, 'no fuzzed deposit hit the locked path');
+  }
+
+  /// @notice The vault's depositsLocked() view always equals the redistributor-window formula,
+  ///         across every fuzzed sequence of snapshots, warps, yields and deposits.
+  function invariant_DepositsLockedMatchesRedistributorWindow() external view {
+    (bool locked, uint256 unlocksAt) = vault.depositsLocked();
+    (bool expLocked, uint256 expUnlocksAt) = handler.expectedLock();
+    assertEq(locked, expLocked, 'depositsLocked() != redistributor window');
+    assertEq(unlocksAt, expUnlocksAt, 'unlocksAt mismatch');
   }
 
   /// @notice totalPrincipal must always exactly equal the sum of every user's own principal -
