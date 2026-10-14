@@ -53,6 +53,16 @@ contract EarnVaultV2Handler is Test {
   uint256 public capRejectedBatches;
   /// @notice Unfunded USDSC boost / onYield attempts made (each asserted to revert)
   uint256 public unfundedAttempts;
+  /// @notice Vault owner, pauser and treasury, for the sweep/recover actions
+  address public owner;
+  address public pauser;
+  address public treasury;
+
+  function setAdmins(address owner_, address pauser_, address treasury_) external {
+    owner = owner_;
+    pauser = pauser_;
+    treasury = treasury_;
+  }
 
   constructor(
     EarnVaultV2 _vault,
@@ -289,6 +299,38 @@ contract EarnVaultV2Handler is Test {
     vault.onBoostReward(address(usdsc), amount);
   }
 
+  /// @notice A donation: USDSC arrives without any accounting
+  function donate(uint256 amount) external {
+    usdsc.mint(address(vault), bound(amount, 1, MAX_AMOUNT / 10));
+  }
+
+  /// @notice The owner sweeps surplus: it may only ever take the free USDSC
+  function sweep() external {
+    uint256 free = freeUsdsc();
+    uint256 before = usdsc.balanceOf(treasury);
+    vm.prank(owner);
+    vault.sweepSurplusToTreasury();
+    assertEq(usdsc.balanceOf(treasury) - before, free, 'sweep took more than the free USDSC');
+  }
+
+  /// @notice The owner recovers USDSC while paused: up to the free USDSC succeeds, one more reverts
+  function recoverSurplus(uint256 amount) external {
+    uint256 free = freeUsdsc();
+    vm.prank(pauser);
+    vault.pause();
+    if (free > 0) {
+      amount = bound(amount, 1, free);
+      vm.prank(owner);
+      vault.recoverERC20(address(usdsc), treasury, amount);
+    }
+    uint256 overLimit = freeUsdsc() + 1; // computed first: it makes external calls
+    vm.expectRevert(); // ExceedsSurplus, or InsufficientFunding when nothing is free
+    vm.prank(owner);
+    vault.recoverERC20(address(usdsc), treasury, overLimit);
+    vm.prank(pauser);
+    vault.unpause();
+  }
+
   /// @notice Likewise an onYield() larger than the free USDSC, with nothing sent in
   function unfundedOnYield(uint256 extra) external {
     uint256 amount = freeUsdsc() + bound(extra, 1, MAX_AMOUNT);
@@ -360,11 +402,12 @@ contract EarnVaultV2Invariants is StdInvariant, Test {
     vault = EarnVaultV2(payable(address(proxy)));
 
     handler = new EarnVaultV2Handler(vault, usdsc, boostToken, redistributor, operator, boostKeeper);
+    handler.setAdmins(owner, pauser, treasury);
     address blacklisted = handler.blacklistedAddr(); // read BEFORE the prank - an external call would consume it
     vm.prank(owner);
     vault.setBlacklisted(blacklisted, true);
 
-    bytes4[] memory selectors = new bytes4[](13);
+    bytes4[] memory selectors = new bytes4[](16);
     selectors[0] = EarnVaultV2Handler.deposit.selector;
     selectors[1] = EarnVaultV2Handler.withdraw.selector;
     selectors[2] = EarnVaultV2Handler.claim.selector;
@@ -378,6 +421,9 @@ contract EarnVaultV2Invariants is StdInvariant, Test {
     selectors[10] = EarnVaultV2Handler.onBoostRewardUsdsc.selector;
     selectors[11] = EarnVaultV2Handler.unfundedUsdscBoost.selector;
     selectors[12] = EarnVaultV2Handler.unfundedOnYield.selector;
+    selectors[13] = EarnVaultV2Handler.donate.selector;
+    selectors[14] = EarnVaultV2Handler.sweep.selector;
+    selectors[15] = EarnVaultV2Handler.recoverSurplus.selector;
 
     targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
     targetContract(address(handler));
@@ -489,6 +535,11 @@ contract EarnVaultV2Invariants is StdInvariant, Test {
   ///         reserves at once, exactly (no tolerance)
   function invariant_UsdscBalanceCoversClaimAndBoostReserves() external view {
     assertGe(usdsc.balanceOf(address(vault)), vault.claimReserve() + vault.boostClaimReserve(address(usdsc)));
+  }
+
+  /// @notice surplusUSDSC() reports exactly the USDSC above both reserves
+  function invariant_SurplusUsdscMatchesFreeBalance() external view {
+    assertEq(vault.surplusUSDSC(), handler.freeUsdsc());
   }
 
   /// @notice Each boost token's balance covers its own boost reserve

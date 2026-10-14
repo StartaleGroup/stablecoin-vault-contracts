@@ -511,6 +511,14 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     userTotal = userPrincipal + userClaimable;
   }
 
+  /// @notice USDSC held above everything the vault owes in USDSC (claimReserve plus USDSC boost
+  ///         rewards owed), floored at zero. The surplus sweepable to the treasury; for monitoring.
+  function surplusUSDSC() external view returns (uint256) {
+    uint256 bal = USDSC.balanceOf(address(this));
+    uint256 required = _requiredUSDSC();
+    return bal > required ? bal - required : 0;
+  }
+
   /// @notice Get vault's overall statistics
   function getVaultStats()
     external

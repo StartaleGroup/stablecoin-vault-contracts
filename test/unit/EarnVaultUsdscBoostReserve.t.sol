@@ -228,6 +228,46 @@ contract EarnVaultUsdscBoostReserveTest is Test {
   // The same aliasing, other direction: paths that must not spend owed USDSC boost rewards
   // ---------------------------------------------------------------------------------------------
 
+  function test_SurplusUsdscIsTheTrueSurplus() public {
+    assertEq(vault.surplusUSDSC(), 0, 'setUp leaves no surplus');
+    usdsc.mint(address(vault), 7e6);
+    assertEq(vault.surplusUSDSC(), 7e6);
+    vm.prank(owner);
+    vault.sweepSurplusToTreasury();
+    assertEq(vault.surplusUSDSC(), 0);
+    assertEq(usdsc.balanceOf(treasury), 7e6);
+  }
+
+  /// @dev The upgradeable vault's boost getters return the same values as the non-upgradeable
+  ///      twin's public state for the same sequence of actions
+  function test_BoostGettersMatchTwin() public {
+    EarnVault twin = new EarnVault(address(usdsc), owner, redistributor, treasury, pauser, boostRewardKeeper);
+    EarnVaultV2 v2 = _freshV2();
+    address[2] memory vs = [address(v2), address(twin)];
+    for (uint256 i = 0; i < 2; i++) {
+      address v = vs[i];
+      _depositInto(v, alice, 600e6);
+      _depositInto(v, bob, 400e6);
+      usdsc.mint(v, 30e6);
+      vm.prank(boostRewardKeeper);
+      EarnVaultUpgradeable(payable(v)).onBoostReward(address(usdsc), 30e6);
+      _depositInto(v, alice, 1e6); // settles alice: index updated, boost moved into accrued
+    }
+    assertEq(v2.boostGlobalIndex(address(usdsc)), twin.boostGlobalIndex(address(usdsc)));
+    assertEq(v2.boostGlobalIndex(address(usdsc)), uint256(30e6) * 1e27 / 1000e6);
+    assertEq(v2.userBoostIndex(alice, address(usdsc)), twin.userBoostIndex(alice, address(usdsc)));
+    assertEq(v2.userBoostIndex(alice, address(usdsc)), v2.boostGlobalIndex(address(usdsc)));
+    assertEq(v2.userBoostIndex(bob, address(usdsc)), twin.userBoostIndex(bob, address(usdsc)));
+    assertEq(v2.userBoostAccrued(alice, address(usdsc)), twin.userBoostAccrued(alice, address(usdsc)));
+    assertEq(v2.userBoostAccrued(alice, address(usdsc)), 18e6);
+    assertEq(v2.userBoostAccrued(bob, address(usdsc)), 0, 'bob not settled yet');
+    assertEq(v2.activeBoostTokens(0), twin.activeBoostTokens(0));
+    assertEq(v2.activeBoostTokens(0), address(usdsc));
+    assertEq(v2.boostClaimReserve(address(usdsc)), twin.boostClaimReserve(address(usdsc)));
+    vm.expectRevert();
+    v2.activeBoostTokens(1);
+  }
+
   function test_SweepLeavesOwedBoostRewards() public {
     usdsc.mint(address(vault), 7e6); // a real donation
     vm.prank(owner);
@@ -330,8 +370,10 @@ contract EarnVaultUsdscBoostReserveTest is Test {
     twin.onYield(1);
 
     usdsc.mint(address(twin), 3e6);
+    assertEq(twin.surplusUSDSC(), 3e6);
     vm.prank(owner);
     twin.sweepSurplusToTreasury();
+    assertEq(twin.surplusUSDSC(), 0);
     assertEq(usdsc.balanceOf(treasury), 3e6);
 
     usdsc.mint(address(twin), 2e6);
@@ -372,6 +414,40 @@ contract EarnVaultUsdscBoostReserveTest is Test {
     vm.store(address(vault), slot, bytes32(uint256(vm.load(address(vault), slot)) + amount));
     usdsc.mint(address(vault), amount);
     _assertSolvent();
+  }
+
+  function _freshV2() internal returns (EarnVaultV2 v2) {
+    TransparentUpgradeableProxy p = new TransparentUpgradeableProxy(
+      address(new EarnVaultUpgradeable()),
+      admin,
+      abi.encodeWithSelector(
+        EarnVaultUpgradeable.initialize.selector,
+        address(usdsc),
+        owner,
+        redistributor,
+        treasury,
+        pauser,
+        boostRewardKeeper
+      )
+    );
+    bytes32 adminSlot = bytes32(uint256(keccak256('eip1967.proxy.admin')) - 1);
+    ProxyAdmin pa = ProxyAdmin(address(uint160(uint256(vm.load(address(p), adminSlot)))));
+    address impl = address(new EarnVaultV2());
+    vm.prank(admin);
+    pa.upgradeAndCall(
+      ITransparentUpgradeableProxy(address(p)),
+      impl,
+      abi.encodeCall(EarnVaultV2.initializeV2, (boostKeeper, type(uint256).max))
+    );
+    v2 = EarnVaultV2(payable(address(p)));
+  }
+
+  function _depositInto(address v, address user, uint256 amount) internal {
+    usdsc.mint(user, amount);
+    vm.startPrank(user);
+    usdsc.approve(v, amount);
+    EarnVaultUpgradeable(payable(v)).deposit(amount);
+    vm.stopPrank();
   }
 
   function _deposit(address user, uint256 amount) internal {

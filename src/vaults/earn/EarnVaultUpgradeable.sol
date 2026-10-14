@@ -346,8 +346,7 @@ contract EarnVaultUpgradeable is
   /// @notice Distribute boost rewards (ASTR, DOT, etc.) to vault users
   /// @dev MUST be called AFTER transferring `amount` of `token` to this contract
   /// @dev Uses same logic as USDSC yield - distributed proportionally based on principal
-  /// @dev USDT is NOT supported as a boost reward token - it does not return a value on transfer()/transferFrom()
-  /// @param token Token address to distribute as boost rewards (must be ERC20-compliant, not USDT)
+  /// @param token Token address to distribute as boost rewards
   /// @param amount Amount of boost tokens to distribute
   function onBoostReward(address token, uint256 amount) external whenNotPaused onlyBoostRewardKeeper nonReentrant {
     EarnVaultStorage storage $ = _getStorage();
@@ -466,6 +465,39 @@ contract EarnVaultUpgradeable is
   function globalIndex() external view returns (uint256) {
     EarnVaultStorage storage $ = _getStorage();
     return $.globalIndex;
+  }
+
+  /// @notice USDSC held above everything the vault owes in USDSC (claimReserve plus USDSC boost
+  ///         rewards owed), floored at zero. The surplus sweepable to the treasury; for monitoring.
+  function surplusUSDSC() external view returns (uint256) {
+    EarnVaultStorage storage $ = _getStorage();
+    uint256 bal = $.USDSC.balanceOf(address(this));
+    uint256 required = _requiredUSDSC();
+    return bal > required ? bal - required : 0;
+  }
+
+  /// @notice Global boost index for `token` (RAY-scaled reward per unit of principal)
+  function boostGlobalIndex(address token) external view returns (uint256) {
+    EarnVaultStorage storage $ = _getStorage();
+    return $.boostGlobalIndex[token];
+  }
+
+  /// @notice `user`'s boost index for `token` at their last settlement
+  function userBoostIndex(address user, address token) external view returns (uint256) {
+    EarnVaultStorage storage $ = _getStorage();
+    return $.userBoostIndex[user][token];
+  }
+
+  /// @notice `token` boost rewards settled to `user` and not yet paid out
+  function userBoostAccrued(address user, address token) external view returns (uint256) {
+    EarnVaultStorage storage $ = _getStorage();
+    return $.userBoostAccrued[user][token];
+  }
+
+  /// @notice The `index`-th active boost token (same shape as EarnVault's public array getter)
+  function activeBoostTokens(uint256 index) external view returns (address) {
+    EarnVaultStorage storage $ = _getStorage();
+    return $.activeBoostTokens[index];
   }
 
   /// @notice Amount of `token` reserved for boost rewards users have earned but not yet claimed

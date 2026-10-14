@@ -108,6 +108,15 @@ interface IEarnVaultEventsAndErrors {
   /// @param amount Amount of boost rewards that failed to transfer
   event BoostRewardTransferFailed(address indexed user, address indexed token, uint256 amount);
 
+  /// @notice Emitted when a boost payout is skipped because the token's boost reserve is smaller
+  ///         than what the user is owed. Nothing is paid and the entitlement is kept. This means the
+  ///         boost accounting is out of balance and needs attention.
+  /// @param user Address whose boost payout was skipped
+  /// @param token Boost token
+  /// @param owed Boost rewards the user is owed in `token`
+  /// @param reserve boostClaimReserve[token] at the time
+  event BoostRewardReserveShortfall(address indexed user, address indexed token, uint256 owed, uint256 reserve);
+
   /// @notice Emitted when a boost reward token is removed from activeBoostTokens array
   /// @param token Token address that was removed
   event BoostRewardTokenRemoved(address indexed token);
