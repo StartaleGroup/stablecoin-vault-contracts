@@ -6,6 +6,11 @@ import {UpgradeEarnVaultToV2} from '../../script/upgrade/UpgradeEarnVaultToV2.s.
 import {VerifyEarnVaultV2Upgrade} from '../../script/upgrade/VerifyEarnVaultV2Upgrade.s.sol';
 import {EarnVaultUpgradeable} from '../../src/vaults/earn/EarnVaultUpgradeable.sol';
 import {EarnVaultV2} from '../../src/vaults/earn/EarnVaultV2.sol';
+import {
+  MockEmptyReturnRedistributor,
+  MockRevertingSnapshotRedistributor,
+  MockSnapshotRedistributor
+} from '../mocks/MockSnapshotRedistributor.sol';
 import {MockUSDSC} from '../mocks/MockUSDSC.sol';
 import {ERC1967Proxy} from '@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol';
 import {ProxyAdmin} from '@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol';
@@ -24,7 +29,10 @@ contract UpgradeEarnVaultToV2ScriptTest is Test {
 
   address internal owner = makeAddr('owner');
   address internal treasury = makeAddr('treasury');
-  address internal redistributor = makeAddr('redistributor');
+  /// @dev A real RewardRedistributor deployment is a contract with the JIT-lock snapshot
+  ///      getters; use the mock (not an EOA like the other role addresses) so the happy-path
+  ///      upgrade/verify tests exercise the real _requireRedistributorSnapshotGetters() check.
+  MockSnapshotRedistributor internal redistributor = new MockSnapshotRedistributor(5 minutes);
   address internal pauser = makeAddr('pauser');
   address internal operator = makeAddr('operator'); // V1's boostRewardKeeper
   address internal keeper = makeAddr('boostKeeper');
@@ -33,9 +41,25 @@ contract UpgradeEarnVaultToV2ScriptTest is Test {
   bytes32 internal constant IMPL_SLOT = bytes32(uint256(keccak256('eip1967.proxy.implementation')) - 1);
 
   function _v1InitData() internal view returns (bytes memory) {
+    return _v1InitDataWithRedistributor(address(redistributor));
+  }
+
+  /// @dev Lets the redistributor-rejection tests stand up an alternate V1 proxy without
+  ///      disturbing setUp()'s own proxy (which already uses the valid mock redistributor).
+  function _v1InitDataWithRedistributor(address rdist) internal view returns (bytes memory) {
     return abi.encodeWithSelector(
-      EarnVaultUpgradeable.initialize.selector, address(usdsc), owner, redistributor, treasury, pauser, operator
+      EarnVaultUpgradeable.initialize.selector, address(usdsc), owner, rdist, treasury, pauser, operator
     );
+  }
+
+  /// @dev Deploys a second, independent V1 proxy wired to `rdist` as its yieldRedistributor.
+  function _deployV1ProxyWithRedistributor(address rdist) internal returns (address p, address proxyAdmin) {
+    p = address(
+      new TransparentUpgradeableProxy(
+        address(new EarnVaultUpgradeable()), address(script), _v1InitDataWithRedistributor(rdist)
+      )
+    );
+    proxyAdmin = address(uint160(uint256(vm.load(p, ADMIN_SLOT))));
   }
 
   function _params(address impl) internal view returns (UpgradeEarnVaultToV2.Params memory) {
@@ -45,7 +69,11 @@ contract UpgradeEarnVaultToV2ScriptTest is Test {
 
   function _roles() internal view returns (EarnVaultV2UpgradeChecks.Roles memory) {
     return EarnVaultV2UpgradeChecks.Roles({
-      owner: owner, treasury: treasury, yieldRedistributor: redistributor, pauser: pauser, boostRewardKeeper: operator
+      owner: owner,
+      treasury: treasury,
+      yieldRedistributor: address(redistributor),
+      pauser: pauser,
+      boostRewardKeeper: operator
     });
   }
 
@@ -76,6 +104,9 @@ contract UpgradeEarnVaultToV2ScriptTest is Test {
     assertEq(v2.maxBoostPerBatch(), CAP);
     assertEq(v2.principal(makeAddr('depositor')), principalBefore);
     assertEq(address(uint160(uint256(vm.load(proxy, IMPL_SLOT)))), impl);
+    // Foundry's test EVM does not enforce EIP-170, so assert it: the implementation the script
+    // deploys must be deployable on a real chain (EarnVaultV2 sits close to the limit).
+    assertLe(impl.code.length, 24_576, 'EarnVaultV2 runtime exceeds EIP-170 (24,576 bytes)');
   }
 
   /// @dev IMPLEMENTATION path: upgrades to the given, pre-deployed (explorer-verified) address
@@ -138,7 +169,7 @@ contract UpgradeEarnVaultToV2ScriptTest is Test {
     assertEq(ProxyAdmin(pa).owner(), address(script));
     assertEq(snap.roles.owner, owner);
     assertEq(snap.roles.treasury, treasury);
-    assertEq(snap.roles.yieldRedistributor, redistributor);
+    assertEq(snap.roles.yieldRedistributor, address(redistributor));
     assertEq(snap.roles.pauser, pauser);
     assertEq(snap.roles.boostRewardKeeper, operator, 'boostRewardKeeper read from its storage slot');
   }
@@ -165,5 +196,69 @@ contract UpgradeEarnVaultToV2ScriptTest is Test {
     address v1Impl = address(uint160(uint256(vm.load(proxy, IMPL_SLOT))));
     vm.expectRevert(bytes('version is not EarnVaultV2'));
     verifier.verify(proxy, pa, v1Impl, keeper, CAP, _roles());
+  }
+
+  /// @dev An EOA yieldRedistributor would make EarnVaultV2's JIT deposit lock permanently
+  ///      fail-open (no snapshot to respect, ever) - preflight refuses to upgrade onto one.
+  function test_Preflight_RevertsOnEOARedistributor() public {
+    (address p, address padm) = _deployV1ProxyWithRedistributor(makeAddr('eoaRedistributor'));
+    UpgradeEarnVaultToV2.Params memory p2 = _params(address(0));
+    p2.proxy = p;
+    p2.expectedAdmin = padm;
+    vm.expectRevert(bytes('yieldRedistributor has no code'));
+    script.upgrade(p2, address(script));
+  }
+
+  /// @dev A contract yieldRedistributor missing the snapshot getters would make EarnVaultV2's
+  ///      JIT deposit lock permanently fail-closed (every deposit reverts) - preflight refuses
+  ///      to upgrade onto one too.
+  function test_Preflight_RevertsOnRedistributorWithoutSnapshotGetters() public {
+    (address p, address padm) = _deployV1ProxyWithRedistributor(address(usdsc));
+    UpgradeEarnVaultToV2.Params memory p2 = _params(address(0));
+    p2.proxy = p;
+    p2.expectedAdmin = padm;
+    vm.expectRevert(bytes('yieldRedistributor missing snapshot getters'));
+    script.upgrade(p2, address(script));
+  }
+
+  /// @dev The remaining failure branches of the getter check: getters that revert, and a
+  ///      contract that answers with empty return data (the length check).
+  function test_Preflight_RevertsOnRedistributorWithRevertingOrEmptyGetters() public {
+    address[2] memory bad =
+      [address(new MockRevertingSnapshotRedistributor()), address(new MockEmptyReturnRedistributor())];
+    for (uint256 i = 0; i < bad.length; i++) {
+      (address p, address padm) = _deployV1ProxyWithRedistributor(bad[i]);
+      UpgradeEarnVaultToV2.Params memory p2 = _params(address(0));
+      p2.proxy = p;
+      p2.expectedAdmin = padm;
+      vm.expectRevert(bytes('yieldRedistributor missing snapshot getters'));
+      script.upgrade(p2, address(script));
+    }
+  }
+
+  /// @dev Mirrors the preflight EOA case, but caught by the live-verify script - e.g. if
+  ///      setYieldRedistributor() swapped in an EOA between broadcast and verification.
+  function test_Verify_FailsOnEOARedistributor() public {
+    address impl = script.upgrade(_params(address(0)), address(script));
+    address eoa = makeAddr('eoaRedistributor');
+    vm.prank(owner);
+    EarnVaultV2(payable(proxy)).setYieldRedistributor(eoa);
+
+    EarnVaultV2UpgradeChecks.Roles memory roles = _roles();
+    roles.yieldRedistributor = eoa;
+    vm.expectRevert(bytes('yieldRedistributor has no code'));
+    verifier.verify(proxy, pa, impl, keeper, CAP, roles);
+  }
+
+  /// @dev Mirrors the preflight getter-less-contract case, caught by the live-verify script.
+  function test_Verify_FailsOnRedistributorWithoutSnapshotGetters() public {
+    address impl = script.upgrade(_params(address(0)), address(script));
+    vm.prank(owner);
+    EarnVaultV2(payable(proxy)).setYieldRedistributor(address(usdsc));
+
+    EarnVaultV2UpgradeChecks.Roles memory roles = _roles();
+    roles.yieldRedistributor = address(usdsc);
+    vm.expectRevert(bytes('yieldRedistributor missing snapshot getters'));
+    verifier.verify(proxy, pa, impl, keeper, CAP, roles);
   }
 }

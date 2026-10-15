@@ -73,6 +73,24 @@ abstract contract EarnVaultV2UpgradeChecks is Script {
     );
   }
 
+  /// @dev Confirms the proxy's `yieldRedistributor()` is a CONTRACT that answers both snapshot
+  ///      getters EarnVaultV2's JIT deposit lock depends on (see
+  ///      IRewardRedistributorSnapshot.sol / EarnVaultV2._depositLockState()). An EOA
+  ///      redistributor makes the lock permanently fail-open (no snapshot to respect ever
+  ///      blocks a deposit); a contract redistributor that doesn't implement the getters makes
+  ///      EVERY deposit revert post-upgrade (fail-closed). Both are upgrade-time misconfigurations
+  ///      worth refusing to send, so this uses raw staticcall (not a Solidity interface call)
+  ///      purely to produce the specific require message below instead of an opaque low-level
+  ///      revert.
+  function _requireRedistributorSnapshotGetters(address proxy) internal view {
+    address rr = EarnVaultV2(payable(proxy)).yieldRedistributor();
+    require(rr.code.length > 0, 'yieldRedistributor has no code');
+
+    (bool ok1, bytes memory data1) = rr.staticcall(abi.encodeWithSignature('lastSnapshotTimestamp()'));
+    (bool ok2, bytes memory data2) = rr.staticcall(abi.encodeWithSignature('snapshotMaxAge()'));
+    require(ok1 && ok2 && data1.length == 32 && data2.length == 32, 'yieldRedistributor missing snapshot getters');
+  }
+
   /// @dev The upgraded proxy: expected implementation and admin, V2, initialized (version 2), config.
   function _requireV2Config(
     address proxy,

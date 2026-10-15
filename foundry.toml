@@ -8,6 +8,10 @@ optimizer_runs = 999999
 solc_version = "0.8.30"
 libs = ['node_modules', 'lib']
 verbosity = 3
+# EarnVaultV2 is close to the EIP-170 limit (24,576 B): at 999999 runs it is 24,784 B. 10,000 runs
+# gives ~22.3k (~2.3k headroom) for ~0.1-1.4% more gas. Verify it on explorers with runs = 10000.
+additional_compiler_profiles = [{ name = "size", optimizer_runs = 10_000 }]
+compilation_restrictions = [{ paths = "src/vaults/earn/EarnVaultV2.sol", optimizer_runs = 10_000 }]
 
 [lint]
 exclude_lints = ["mixed-case-variable", "unaliased-plain-import", "mixed-case-function"]

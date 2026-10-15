@@ -8,7 +8,10 @@ import {console} from 'forge-std/Script.sol';
  * @title VerifyEarnVaultV2Upgrade
  * @notice READ-ONLY post-upgrade verification against the LIVE chain. Run after
  *         UpgradeEarnVaultToV2 has broadcast (whose own post-flight only checked the simulation).
- *         Never broadcasts anything.
+ *         Never broadcasts anything. Also re-checks (as UpgradeEarnVaultToV2.preflight did
+ *         pre-upgrade) that yieldRedistributor is a contract answering EarnVaultV2's JIT deposit
+ *         lock getters - catches a setYieldRedistributor() call landing between broadcast and
+ *         this verification.
  * @dev Env: EARN_VAULT_PROXY, EXPECTED_PROXY_ADMIN, EXPECTED_IMPLEMENTATION, BOOST_KEEPER_ADDRESS,
  *      MAX_BOOST_PER_BATCH, and the expected roles EXPECTED_OWNER,
  *      EXPECTED_TREASURY, EXPECTED_YIELD_REDISTRIBUTOR, EXPECTED_PAUSER, EXPECTED_BOOST_REWARD_KEEPER.
@@ -44,6 +47,7 @@ contract VerifyEarnVaultV2Upgrade is EarnVaultV2UpgradeChecks {
   ) public view {
     _requireV2Config(proxy, expectedAdmin, expectedImpl, keeper, cap);
     _requireRoles(proxy, expectedRoles);
+    _requireRedistributorSnapshotGetters(proxy);
     console.log('Live verification OK: EarnVaultV2 initialized with expected config and roles');
   }
 }
