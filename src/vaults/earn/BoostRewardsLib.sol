@@ -10,10 +10,11 @@ import {Math} from 'lib/openzeppelin-contracts/contracts/utils/math/Math.sol';
 /// @notice Handles boost rewards logic separately from main EarnVault contract
 /// @dev Uses same logic as USDSC yield - distributed proportionally based on principal
 ///
-/// @dev IMPORTANT: USDT is NOT supported as a boost reward token.
-///      USDT's transfer() and transferFrom() methods do not return a boolean value,
-///      which is incompatible with the standard IERC20 interface expected by this library.
-///      Attempting to use USDT will result in transaction failures.
+/// @dev Token transfers use SafeERC20.trySafeTransfer: tokens that return no value on transfer()
+///      (USDT-style) are paid normally. A boost payout that fails for any reason (the token reverts,
+///      returns false or returns a malformed value) is restored to the user and can be claimed later;
+///      it never blocks withdraw() or claim(). As with SafeERC20, a call that returns no data is
+///      treated as a successful transfer, so a boost token must implement transfer() properly.
 library BoostRewardsLib {
   using SafeERC20 for IERC20;
 
@@ -23,8 +24,7 @@ library BoostRewardsLib {
 
   /// @notice Distribute boost rewards to vault users
   /// @dev Uses same logic as USDSC yield - distributed proportionally based on principal
-  /// @dev USDT is NOT supported - see library-level documentation for details
-  /// @param token Token address to distribute as boost rewards (must be ERC20-compliant, not USDT)
+  /// @param token Token address to distribute as boost rewards
   /// @param amount Amount of boost tokens to distribute
   /// @param totalPrincipal Total principal amount in vault
   /// @param treasury Treasury address for when no deposits exist
@@ -54,17 +54,13 @@ library BoostRewardsLib {
       // No deposits: transfer to treasury
       if (bal < amount) revert IEarnVaultEventsAndErrors.InsufficientBoostTokenBalance();
 
-      try IERC20(token).transfer(treasury, amount) returns (bool success) {
-        if (!success) {
-          revert IEarnVaultEventsAndErrors.InsufficientBoostTokenBalance();
-        }
-        emit IEarnVaultEventsAndErrors.BoostRewardTransferredToTreasury(token, amount);
-        return;
-      } catch {
-        // Transfer failed (token may be frozen, paused, etc.)
-        // Revert the operation - treasury transfer failure should be handled by keeper
+      // Any failed transfer (revert, false, malformed return value) reverts the whole call; the
+      // keeper handles it. A token that returns nothing (USDT-style) is accepted.
+      if (!IERC20(token).trySafeTransfer(treasury, amount)) {
         revert IEarnVaultEventsAndErrors.InsufficientBoostTokenBalance();
       }
+      emit IEarnVaultEventsAndErrors.BoostRewardTransferredToTreasury(token, amount);
+      return;
     }
 
     // Deposits exist: distribute proportionally based on principal (same as USDSC yield)
@@ -128,9 +124,8 @@ library BoostRewardsLib {
   }
 
   /// @notice Claim boost rewards for a specific token
-  /// @dev USDT is NOT supported - see library-level documentation for details
   /// @param user User address claiming rewards
-  /// @param token Token address to claim boost rewards for (must be ERC20-compliant, not USDT)
+  /// @param token Token address to claim boost rewards for
   /// @param principal User's principal amount
   /// @param boostGlobalIndex Global boost index for this token
   /// @param userBoostIndex Mapping of user => token => boost index
@@ -152,32 +147,29 @@ library BoostRewardsLib {
     claimedAmount = userBoostAccrued[user][token];
 
     if (claimedAmount == 0) return 0;
-    if (boostClaimReserve[token] < claimedAmount) revert IEarnVaultEventsAndErrors.InsufficientBoostClaimReserve();
+    // The reserve should always cover every entitlement. If it ever doesn't, skip this payout and
+    // keep the entitlement rather than revert: a revert here would block the caller's withdraw()
+    // and lock their USDSC principal.
+    uint256 reserve = boostClaimReserve[token];
+    if (reserve < claimedAmount) {
+      emit IEarnVaultEventsAndErrors.BoostRewardReserveShortfall(user, token, claimedAmount, reserve);
+      return 0;
+    }
 
     userBoostAccrued[user][token] = 0;
     boostClaimReserve[token] -= claimedAmount;
 
-    try IERC20(token).transfer(user, claimedAmount) returns (bool success) {
-      if (!success) {
-        // Transfer returned false - revert accounting changes
-        userBoostAccrued[user][token] = claimedAmount;
-        boostClaimReserve[token] += claimedAmount;
-        emit IEarnVaultEventsAndErrors.BoostRewardTransferFailed(user, token, claimedAmount);
-        return 0;
-      }
-      emit IEarnVaultEventsAndErrors.BoostRewardClaimed(user, token, claimedAmount);
-    } catch {
-      // Transfer failed (token may be frozen, paused, etc.)
-      // Revert accounting changes to maintain consistency
+    // trySafeTransfer never reverts: a token that reverts, returns false, returns a malformed value
+    // or has no code counts as a failed payout, and a token that returns nothing (USDT-style)
+    // counts as paid. A failed payout restores the entitlement so it can be claimed later, and
+    // never blocks the caller's withdraw()/claim() or the other boost tokens.
+    if (!IERC20(token).trySafeTransfer(user, claimedAmount)) {
       userBoostAccrued[user][token] = claimedAmount;
       boostClaimReserve[token] += claimedAmount;
-
-      // Emit failure event for monitoring
       emit IEarnVaultEventsAndErrors.BoostRewardTransferFailed(user, token, claimedAmount);
-
-      // Returning 0 to indicate failure, allowing other tokens to still be claimed
       return 0;
     }
+    emit IEarnVaultEventsAndErrors.BoostRewardClaimed(user, token, claimedAmount);
   }
 
   /// @notice Get user's claimable boost rewards for a specific token

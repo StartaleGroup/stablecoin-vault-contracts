@@ -215,7 +215,7 @@ sequenceDiagram
     
     Owner->>Vault: sweepSurplusToTreasury()
     Vault->>Vault: check paused()
-    Vault->>Vault: surplus = balance - claimReserve
+    Vault->>Vault: surplus = balance - claimReserve - boostClaimReserve[USDSC]
     Vault->>USDSC: transfer(treasury, surplus)
     Vault-->>Owner: emit EmergencySweep(USDSC, treasury, surplus)
     
