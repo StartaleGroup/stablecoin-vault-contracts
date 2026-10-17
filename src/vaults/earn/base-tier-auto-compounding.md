@@ -199,7 +199,7 @@ Measured by `test_Gas_OnBoostCredit_BatchSizingProjection` (`test/unit/EarnVault
 **Trust model — stated, not implied.**
 
 - **Against a buggy rewards engine: the per-batch cap** (`maxBoostPerBatch`). A batch crediting more than the cap reverts whole. It catches a decimals-style bug on the first batch, but not a modest overpayment spread across many batches. That residual is covered by monitoring `BoostCycleCredited` totals against the engine's own expected totals — **TBD: which system performs that comparison, and who gets paged when it disagrees.**
-- **Against a compromised keeper: the funding check plus operational discipline.** A credit can only draw on USDSC held above `claimReserve`, so the contract does not try to bound a compromised keeper further in state. The **security budget is the keeper wallet's balance plus the vault's accumulated surplus**:
+- **Against a compromised keeper: the funding check plus operational discipline.** A credit can only draw on USDSC held above `claimReserve + boostClaimReserve[USDSC]` (USDSC is also a V1 boost token, so USDSC owed as boost rewards is not surplus either), so the contract does not try to bound a compromised keeper further in state. The **security budget is the keeper wallet's balance plus the vault's accumulated surplus**:
   - the keeper holds and sends **only each batch's funding, just-in-time** — top it up per cycle, never several cycles' worth;
   - treat the keeper as a **hot wallet holding funds**, not just a signing key (key storage, rotation and access controls accordingly; see the runbook);
   - the owner **sweeps surplus regularly** (`sweepSurplusToTreasury`) — skipped amounts and donations accumulate as surplus;

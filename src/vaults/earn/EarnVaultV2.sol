@@ -175,9 +175,10 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
   ///      atomically with the upgrade, and cannot be front-run.
   /// @dev What the gate prevents: without it, after an upgrade with empty calldata anyone could call
   ///      this first and install themselves as boostKeeper. The funding check in onBoostCredit()
-  ///      bounds what they could credit to USDSC held above claimReserve (e.g. donations, or funding
-  ///      transferred ahead of a separate credit call), and the owner could replace them via
-  ///      setBoostKeeper() - but it is still an attacker-controlled role and must not be possible.
+  ///      bounds what they could credit to USDSC held above claimReserve + boostClaimReserve[USDSC]
+  ///      (e.g. donations, or funding transferred ahead of a separate credit call), and the owner
+  ///      could replace them via setBoostKeeper() - but it would still be a keeper nobody appointed,
+  ///      so it must not be possible.
   /// @dev If an upgrade lands without this call, boostKeeper is address(0), so onlyBoostKeeper
   ///      rejects every caller (the rest of the vault works) - and reinitializer(2) is still
   ///      UNCONSUMED (initialized version stays 1). Proper fix: repeat upgradeAndCall to the same
@@ -274,8 +275,8 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
 
   /// @notice Credit VIP boost directly as principal to each address in the batch
   /// @dev MUST be called AFTER transferring the batch's total USDSC to this contract - mirrors
-  ///      onYield()'s discipline: verify balance covers claimReserve + total BEFORE crediting
-  ///      anything, so a failed batch credits nothing. Gated whenNotPaused, like the other
+  ///      onYield()'s discipline: verify balance covers claimReserve + boostClaimReserve[USDSC] + total
+  ///      BEFORE crediting anything, so a failed batch credits nothing. Gated whenNotPaused, like the other
   ///      principal-changing entry points (deposit()/withdraw()/claim()/compound()/compoundMany()).
   /// @dev All-or-nothing (the whole batch reverts) for funding, replay, cycle bounds, the cap and
   ///      malformed input: insufficient balance; an empty batch; cycleId 0 (ZeroCycleId); a cycleId
@@ -317,7 +318,8 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
 
     EarnVaultStorage storage $ = _getStorage();
     uint256 bal = $.USDSC.balanceOf(address(this));
-    if (bal < $.claimReserve + total) revert IEarnVaultEventsAndErrors.InsufficientFunding();
+    // Must stay covered: claimReserve AND USDSC owed as V1 boost rewards (USDSC is also a boost token)
+    if (bal < _requiredUSDSC() + total) revert IEarnVaultEventsAndErrors.InsufficientFunding();
 
     uint256 skippedCount = 0;
     uint256 skippedTotal = 0;
