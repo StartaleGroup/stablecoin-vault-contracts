@@ -8,7 +8,7 @@ This system consists of three main components:
 
 1. **RewardRedistributor**: A non-upgradeable contract that claims yield from the USDSC token (M0 extension) and distributes it proportionally to two vault types based on their total value locked (TVL).
 
-2. **EarnVault**: An upgradeable vault where users deposit USDSC and earn claimable yield. Users maintain full control over their principal and can withdraw anytime, with all accrued rewards automatically claimed on withdrawal. Supports dual rewards: USDSC yield + boost rewards in other tokens (ASTR, DOT, etc.).
+2. **EarnVault**: An upgradeable vault where users deposit USDSC and earn claimable yield. Users maintain full control over their principal and can withdraw anytime, with all accrued rewards automatically claimed on withdrawal. Supports dual rewards: USDSC yield + USDSC boost rewards (USDSC is the only boost reward token).
 
 3. **sUSDSC Vault**: An ERC-4626 compliant passive yield vault where users deposit USDSC and receive sUSDSC shares. External yield inflows automatically increase the price per share (PPS) for all holders.
 
@@ -64,7 +64,7 @@ RewardRedistributor
 **Key Features**:
 - Index-based yield accounting with RAY precision (1e27)
 - Automatic reward claiming on withdrawal
-- Multi-token boost rewards (ASTR, DOT, etc.)
+- USDSC boost rewards (USDSC is the only boost reward token)
 - Principal protection with full withdrawal control
 
 **Key Functions**:

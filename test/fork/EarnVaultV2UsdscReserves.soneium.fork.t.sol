@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.30;
 
+import {UpgradeEarnVaultToV2} from '../../script/upgrade/UpgradeEarnVaultToV2.s.sol';
 import {RewardRedistributor} from '../../src/distributor/RewardRedistributor.sol';
 import {IEarnVaultEventsAndErrors} from '../../src/interfaces/vaults/earn/IEarnVaultEventsAndErrors.sol';
 import {EarnVaultV2} from '../../src/vaults/earn/EarnVaultV2.sol';
@@ -39,6 +40,21 @@ contract EarnVaultV2UsdscReservesSoneiumFork is Test {
     boostRewardKeeper = address(uint160(uint256(vm.load(address(VAULT), bytes32(uint256(EARN_VAULT_STORAGE) + 2)))));
 
     address impl = address(new EarnVaultV2());
+
+    // The upgrade script's own pre-flight must pass on today's live state, run as the owner Safe:
+    // admin slot, ownership, V1 + init version, redistributor getters, and USDSC-only boost tokens.
+    new UpgradeEarnVaultToV2()
+      .preflight(
+        UpgradeEarnVaultToV2.Params({
+        proxy: address(VAULT),
+        expectedAdmin: address(PROXY_ADMIN),
+        keeper: boostKeeper,
+        cap: 10_000e6,
+        implementation: impl
+      }),
+        OWNER_SAFE
+      );
+
     vm.prank(OWNER_SAFE);
     PROXY_ADMIN.upgradeAndCall(
       ITransparentUpgradeableProxy(address(VAULT)),
@@ -55,6 +71,34 @@ contract EarnVaultV2UsdscReservesSoneiumFork is Test {
   function test_LiveVaultCoversBothReserves() public view {
     assertGt(VAULT.boostClaimReserve(address(usdsc)), 0, 'live vault has USDSC owed as boost');
     _assertSolvent();
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Boost rewards are USDSC-only, and boost tokens can't be removed
+  // ---------------------------------------------------------------------------------------------
+
+  function test_LiveVaultHasOnlyUsdscAsBoostToken() public view {
+    (, address[] memory tokens,) = VAULT.getAllClaimables(WHALE);
+    assertEq(tokens.length, 1);
+    assertEq(tokens[0], address(usdsc));
+  }
+
+  function test_NonUsdscBoostRevertsEvenWhenFunded() public {
+    address other = address(new FundedToken());
+    FundedToken(other).mint(address(VAULT), 1e18);
+    vm.prank(boostRewardKeeper);
+    vm.expectRevert(IEarnVaultEventsAndErrors.BoostTokenNotUSDSC.selector);
+    VAULT.onBoostReward(other, 1e18);
+  }
+
+  function test_RemoveBoostRewardTokenNoLongerExists() public {
+    // A never-registered token: the old removeBoostRewardToken() returned early with success for it,
+    // so this call can only fail because the function is gone
+    vm.prank(OWNER_SAFE);
+    (bool ok,) = address(VAULT).call(abi.encodeWithSignature('removeBoostRewardToken(address)', address(0xdEaD)));
+    assertFalse(ok, 'removeBoostRewardToken still exists');
+    (, address[] memory tokens,) = VAULT.getAllClaimables(WHALE);
+    assertEq(tokens.length, 1, 'USDSC still registered');
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -217,5 +261,20 @@ contract EarnVaultV2UsdscReservesSoneiumFork is Test {
     u = new address[](1);
     a = new uint256[](1);
     (u[0], a[0]) = (user, amount);
+  }
+}
+
+/// @dev A plain ERC20-shaped token with a working transfer, to show funding doesn't matter
+contract FundedToken {
+  mapping(address => uint256) public balanceOf;
+
+  function mint(address to, uint256 amount) external {
+    balanceOf[to] += amount;
+  }
+
+  function transfer(address to, uint256 amount) external returns (bool) {
+    balanceOf[msg.sender] -= amount;
+    balanceOf[to] += amount;
+    return true;
   }
 }

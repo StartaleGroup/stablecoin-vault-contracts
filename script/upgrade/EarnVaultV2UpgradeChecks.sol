@@ -91,6 +91,19 @@ abstract contract EarnVaultV2UpgradeChecks is Script {
     require(ok1 && ok2 && data1.length == 32 && data2.length == 32, 'yieldRedistributor missing snapshot getters');
   }
 
+  /// @dev EarnVault accepts only USDSC as a boost reward token, and boost tokens can no longer be
+  ///      removed. Refuse to upgrade a vault that has any other boost token registered: its holders
+  ///      could otherwise never be paid. Reads activeBoostTokens (struct field 18, no V1 getter).
+  function _requireUsdscOnlyBoostTokens(address proxy) internal view {
+    bytes32 arraySlot = bytes32(uint256(EARN_VAULT_STORAGE_LOCATION) + 18);
+    uint256 length = uint256(vm.load(proxy, arraySlot));
+    require(length <= 1, 'more than one boost token registered');
+    if (length == 1) {
+      address token = address(uint160(uint256(vm.load(proxy, keccak256(abi.encode(arraySlot))))));
+      require(token == EarnVaultV2(payable(proxy)).asset(), 'a boost token other than USDSC is registered');
+    }
+  }
+
   /// @dev The upgraded proxy: expected implementation and admin, V2, initialized (version 2), config.
   function _requireV2Config(
     address proxy,

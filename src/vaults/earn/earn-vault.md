@@ -2,20 +2,20 @@
 
 ## Overview
 
-Users deposit USDSC tokens and earn claimable yield over time, plus additional boost rewards in other ERC20 tokens (ASTR, DOT, etc.). Users maintain full control over their principal and can withdraw any amount up to their principal, with all accrued rewards (USDSC yield + boost rewards) automatically claimed on any withdrawal.
+Users deposit USDSC tokens and earn claimable yield over time, plus additional boost rewards paid in USDSC. Users maintain full control over their principal and can withdraw any amount up to their principal, with all accrued rewards (USDSC yield + boost rewards) automatically claimed on any withdrawal.
 
 > **Note**: This contract is designed to be upgradeable. The upgradeable version is available at `src/vaults/earn/EarnVaultUpgradeable.sol` with comprehensive upgrade testing and documentation in `src/vaults/earn/earn-vault-upgradeable.md`.
 
 ## Key Features
 
 - **Principal Protection**: Withdraw original deposit anytime
-- **Dual Reward System**: USDSC yield + boost rewards in other tokens
+- **Dual Reward System**: USDSC yield + USDSC boost rewards
 - **Automatic Reward Claiming**: Any withdrawal automatically claims ALL rewards (USDSC yield + boost rewards)
 - **Withdrawal**: Withdraw any amount up to principal, get all rewards automatically
 - **Proportional Distribution**: Both USDSC yield and boost rewards distributed based on deposit amounts
 - **RAY Precision**: 1e27 precision for zero yield loss (MakerDAO standard)
 - **Direct Treasury Transfer**: Yield goes directly to treasury when no deposits exist
-- **Multi-Token Support**: Support for multiple boost reward tokens
+- **USDSC-Only Boost**: USDSC is the only boost reward token; `onBoostReward` rejects any other token
 - **Library Architecture**: Boost logic separated into reusable library
 - **Role-Based Access Control**: Separate roles for different operations
 - **Blacklist Support**: Simple compliance controls
@@ -45,7 +45,7 @@ getAllClaimables(address user) → (uint256 usdscClaimable, address[] boostToken
 onYield(uint256 amount)                    // Distribute USDSC yield (called by RewardRedistributor contract)
 
 // Boost rewards distribution (boostRewardKeeper only)
-onBoostReward(address token, uint256 amount)  // Distribute boost rewards (ASTR, DOT, etc.) (called by keeper/operator)
+onBoostReward(address token, uint256 amount)  // Distribute USDSC boost rewards; token must be USDSC (called by keeper/operator)
 
 // Access control (owner only)
 setYieldRedistributor(address who)         // Update yield redistributor
@@ -256,7 +256,7 @@ When yield arrives with no deposits (`totalPrincipal = 0`):
 ### Dual Reward Architecture
 The vault supports two types of rewards:
 1. **USDSC Yield**: Traditional yield in the same token as deposits
-2. **Boost Rewards**: Additional rewards in other ERC20 tokens (ASTR, DOT, etc.)
+2. **Boost Rewards**: Additional rewards, paid in USDSC
 
 ### Boost Reward Distribution
 Boost rewards use the **same proportional logic** as USDSC yield:
@@ -264,11 +264,12 @@ Boost rewards use the **same proportional logic** as USDSC yield:
 - **Precision**: RAY (1e27) precision for exact calculations
 - **Fairness**: Users with more principal get proportionally more boost rewards
 
-### Multi-Token Support
-The vault tracks multiple boost reward tokens:
-- **`activeBoostTokens[]`**: Array of all tokens that have been distributed
-- **Per-token accounting**: Each token has its own global index and claim reserves
-- **Automatic claiming**: All active boost tokens are claimed together
+### USDSC-Only Boost
+USDSC is the only boost reward token:
+- **`onBoostReward`** reverts `BoostTokenNotUSDSC` for any other token, so `activeBoostTokens[]` only ever holds USDSC
+- **Separate reserve**: USDSC owed as boost rewards is tracked in `boostClaimReserve[USDSC]`, on top of `claimReserve`; every USDSC funding and surplus check counts both
+- **No removal**: the boost token can't be removed, so it can never be re-registered with a stale index
+- **Automatic claiming**: boost rewards are claimed together with yield
 
 ### Boost Reward States
 ```solidity
@@ -362,13 +363,13 @@ function sweepNative(address payable to, uint256 amount) external onlyOwner {
 ###  Withdrawal Logic
 **Key Rule**: User can only withdraw up to their principal amount, but ANY withdrawal automatically claims ALL rewards (USDSC yield + boost rewards).
 
-Given: User has 1000 USDSC principal + 100 USDSC accrued interest + 50 ASTR boost rewards
+Given: User has 1000 USDSC principal + 100 USDSC accrued interest + 50 USDSC boost rewards
 
 | Function Call | Amount | Result | Remaining |
 |---------------|--------|--------|-----------|
-| `withdraw(500)` | 500 USDSC | Gets 500 USDSC + 100 USDSC interest + 50 ASTR | 500 principal + 0 interest + 0 ASTR |
-| `withdraw(1000)` | 1000 USDSC | Gets 1000 USDSC + 100 USDSC interest + 50 ASTR | 0 principal + 0 interest + 0 ASTR |
-| `withdraw(1100)` | ❌ **REVERT** | Cannot withdraw more than principal | 1000 principal + 100 interest + 50 ASTR |
+| `withdraw(500)` | 500 USDSC | Gets 500 USDSC + 100 USDSC interest + 50 USDSC boost | 500 principal + 0 interest + 0 boost |
+| `withdraw(1000)` | 1000 USDSC | Gets 1000 USDSC + 100 USDSC interest + 50 USDSC boost | 0 principal + 0 interest + 0 boost |
+| `withdraw(1100)` | ❌ **REVERT** | Cannot withdraw more than principal | 1000 principal + 100 interest + 50 boost |
 ### Key Benefits
 - **Simple**: Just withdraw any amount up to principal, get all rewards automatically
 - **No Confusion**: No need to remember different functions or complex logic
@@ -392,16 +393,16 @@ yieldRedistributor.transfer(address(vault), 100e6);
 vault.onYield(100e6);
 // Result: globalIndex increases proportionally
 
-// 50 ASTR boost rewards are distributed
-astr.transfer(address(vault), 50e18);
-vault.onBoostReward(address(astr), 50e18);
-// Result: boostGlobalIndex[astr] increases proportionally
+// 50 USDSC boost rewards are distributed (funded first, then indexed)
+usdsc.transfer(address(vault), 50e6);
+vault.onBoostReward(address(usdsc), 50e6);
+// Result: boostGlobalIndex[usdsc] increases proportionally
 
 // Alice checks and claims everything
 uint256 usdscClaimable = vault.claimable(alice);  // Returns 100e6
-uint256 astrClaimable = vault.getClaimableBoostReward(alice, address(astr));  // Returns 50e18
+uint256 boostClaimable = vault.getClaimableBoostReward(alice, address(usdsc));  // Returns 50e6
 vault.claim();
-// Result: Alice receives 100 USDSC + 50 ASTR, principal stays 1000
+// Result: Alice receives 100 USDSC yield + 50 USDSC boost, principal stays 1000
 ```
 
 ### Example 2: Multiple Users with Boost Rewards
@@ -413,72 +414,50 @@ vault.deposit(3000e6);  // Bob
 // 400 USDSC yield arrives
 vault.onYield(400e6);
 
-// 200 ASTR boost rewards arrive
-astr.transfer(address(vault), 200e18);
-vault.onBoostReward(address(astr), 200e18);
+// 200 USDSC boost rewards arrive
+usdsc.transfer(address(vault), 200e6);
+vault.onBoostReward(address(usdsc), 200e6);
 
 // Proportional distribution:
 vault.claimable(alice);  // Returns 100e6 USDSC (25% of 400)
 vault.claimable(bob);    // Returns 300e6 USDSC (75% of 400)
 
-vault.getClaimableBoostReward(alice, address(astr));  // Returns 50e18 ASTR (25% of 200)
-vault.getClaimableBoostReward(bob, address(astr));    // Returns 150e18 ASTR (75% of 200)
+vault.getClaimableBoostReward(alice, address(usdsc));  // Returns 50e6 USDSC boost (25% of 200)
+vault.getClaimableBoostReward(bob, address(usdsc));    // Returns 150e6 USDSC boost (75% of 200)
 ```
 
 ### Example 3: Withdrawal with Automatic Reward Claiming
 ```solidity
-// Alice has 1000 principal + 50 USDSC claimable + 25 ASTR boost rewards
+// Alice has 1000 principal + 50 USDSC claimable + 25 USDSC boost rewards
 vault.principal(alice);   // 1000e6
 vault.claimable(alice);   // 50e6 USDSC
-vault.getClaimableBoostReward(alice, address(astr));  // 25e18 ASTR
+vault.getClaimableBoostReward(alice, address(usdsc));  // 25e6 USDSC boost
 
 // Option 1: Withdraw partial principal (ALL rewards claimed automatically)
 vault.withdraw(500e6);  
-// Result: Alice receives 500 USDSC + 50 USDSC + 25 ASTR, 500 principal remains
+// Result: Alice receives 500 USDSC + 50 USDSC + 25 USDSC boost, 500 principal remains
 
 // Option 2: Withdraw all principal (ALL rewards claimed automatically)
 vault.withdraw(1000e6);  
-// Result: Alice receives 1000 USDSC + 50 USDSC + 25 ASTR, nothing remains
+// Result: Alice receives 1000 USDSC + 50 USDSC + 25 USDSC boost, nothing remains
 
 // Option 3: Claim rewards without withdrawing principal
 vault.claim();
-// Result: Alice receives 50 USDSC + 25 ASTR, 1000 principal remains
+// Result: Alice receives 50 USDSC + 25 USDSC boost, 1000 principal remains
 ```
 
-### Example 4: Multi-Token Boost Rewards
-```solidity
-// Alice deposits 1000 USDSC
-vault.deposit(1000e6);
-
-// Multiple boost rewards are distributed
-astr.transfer(address(vault), 100e18);
-vault.onBoostReward(address(astr), 100e18);
-
-dot.transfer(address(vault), 50e10);
-vault.onBoostReward(address(dot), 50e10);
-
-// Alice claims all rewards at once
-vault.claim();
-// Result: Alice receives 100 ASTR + 50 DOT automatically
-
-// Check individual token rewards
-vault.getClaimableBoostReward(alice, address(astr));  // Returns 0 (claimed)
-vault.getClaimableBoostReward(alice, address(dot));   // Returns 0 (claimed)
-```
-
-### Example 5: Direct Treasury Transfer
+### Example 4: Direct Treasury Transfer
 ```solidity
 // Yield arrives when no one has deposited
 uint256 initialTreasuryBalance = usdsc.balanceOf(treasury);
 vault.onYield(500e6);    // USDSC yield goes directly to treasury
 
 // Boost rewards also go to treasury when no deposits
-astr.transfer(address(vault), 100e18);
-vault.onBoostReward(address(astr), 100e18);  // ASTR goes to treasury
+usdsc.transfer(address(vault), 100e6);
+vault.onBoostReward(address(usdsc), 100e6);  // the USDSC boost goes to treasury
 
-// Treasury receives both yields immediately
-usdsc.balanceOf(treasury); // Returns initialTreasuryBalance + 500e6
-astr.balanceOf(treasury);  // Returns 100e18
+// Treasury receives both immediately
+usdsc.balanceOf(treasury); // Returns initialTreasuryBalance + 600e6
 
 // Later, Alice deposits
 vault.deposit(1000e6);   
@@ -498,13 +477,9 @@ vault.claimable(alice);   // Returns 200e6 (Alice gets new yield)
 USDSC.transfer(vault, yieldAmount);
 vault.onYield(yieldAmount);
 
-// 2. Transfer boost rewards to vault
-astr.transfer(vault, boostAmount);
-vault.onBoostReward(address(astr), boostAmount);
-
-// 3. Multiple boost tokens supported
-dot.transfer(vault, dotAmount);
-vault.onBoostReward(address(dot), dotAmount);
+// 2. Transfer USDSC boost rewards to vault, then index them (USDSC is the only boost token)
+USDSC.transfer(vault, boostAmount);
+vault.onBoostReward(address(USDSC), boostAmount);
 ```
 
 ### For Frontend
@@ -518,9 +493,8 @@ uint256 total = vault.totalValue(user);             // Principal + USDSC interes
 uint256 deposited = vault.principal(user);          // Principal only
 bool blocked = vault.isBlacklisted(user);           // Blacklist status
 
-// Check boost rewards for specific tokens
-uint256 astrRewards = vault.getClaimableBoostReward(user, address(astr));
-uint256 dotRewards = vault.getClaimableBoostReward(user, address(dot));
+// Check USDSC boost rewards
+uint256 boostRewards = vault.getClaimableBoostReward(user, address(usdsc));
 
 // Get vault statistics (including pendingDelta)
 (uint256 tvl, uint256 reserves, uint256 index, uint256 pending, uint256 balance) = vault.getVaultStats();

@@ -194,16 +194,19 @@ contract EarnVaultUsdscBoostReserveTest is Test {
     assertEq(fresh.boostClaimReserve(address(usdsc)), DAILY_BOOST);
   }
 
-  function test_NonUsdscBoostTokenUnaffected() public {
+  function test_NonUsdscBoostTokenRejected_EvenWhenFunded() public {
     MockERC20 astr = new MockERC20('Astar', 'ASTR', 18);
     astr.mint(address(vault), 1000e18);
     vm.prank(boostRewardKeeper);
+    vm.expectRevert(IEarnVaultEventsAndErrors.BoostTokenNotUSDSC.selector);
     vault.onBoostReward(address(astr), 1000e18);
-    assertEq(vault.boostClaimReserve(address(astr)), 1000e18);
+    assertEq(vault.boostClaimReserve(address(astr)), 0);
+  }
 
-    vm.prank(boostRewardKeeper);
-    vm.expectRevert(IEarnVaultEventsAndErrors.InsufficientBoostClaimReserve.selector);
-    vault.onBoostReward(address(astr), 1);
+  function test_RemoveBoostRewardTokenNoLongerExists() public {
+    vm.prank(owner);
+    (bool ok,) = address(vault).call(abi.encodeWithSignature('removeBoostRewardToken(address)', address(0xdEaD)));
+    assertFalse(ok);
   }
 
   // ---------------------------------------------------------------------------------------------

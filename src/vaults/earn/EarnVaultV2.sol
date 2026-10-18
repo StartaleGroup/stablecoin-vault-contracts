@@ -49,15 +49,16 @@ import {Math} from 'lib/openzeppelin-contracts/contracts/utils/math/Math.sol';
 ///      uniqueness constraint the reward engine (scenario A) or the registry (scenario B) must
 ///      enforce, or a user can split a balance across addresses to capture top boost bands.
 ///      V1 stays the
-///      frozen, currently-live reference - its only changes were `virtual` modifiers and NatSpec
-///      so this contract can override it, with no behaviour change; do not add feature logic there
-///      going forward - extend it here, or in a further V3/V4/... subclass of this contract.
+///      frozen, currently-live reference - its changes are `virtual` modifiers and NatSpec (so this
+///      contract can override it) plus audit-remediation fixes that ship with this upgrade: every
+///      USDSC check counts both USDSC reserves, and boost rewards are USDSC-only. Do not add feature
+///      logic there going forward - extend it here, or in a further V3/V4/... subclass.
 /// @dev Known, accepted inefficiency: withdraw()/claim() (inherited unchanged from V1) call
 ///      _settle() - which already settles every active boost token here - and then call the
 ///      inherited _claimBoostRewards(), whose BoostRewardsLib.claimBoostReward() internally
 ///      re-runs settleBoost() per token before paying out. That re-run computes a zero delta
 ///      (the index is already caught up) but still costs a bounded number of extra SLOADs
-///      (at most MAX_BOOST_TOKENS = 10). Not fixed here: claimBoostReward() combines
+///      (one boost token: USDSC is the only boost reward token). Not fixed here: claimBoostReward() combines
 ///      settle-then-pay in one library call used by both V1 and V2, so avoiding this would
 ///      mean either modifying the shared library (widening blast radius onto V1's own
 ///      behavior) or duplicating its payout logic here - not worth it for a bounded,

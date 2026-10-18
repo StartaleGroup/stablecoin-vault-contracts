@@ -48,6 +48,7 @@ contract VerifyEarnVaultV2Upgrade is EarnVaultV2UpgradeChecks {
     _requireV2Config(proxy, expectedAdmin, expectedImpl, keeper, cap);
     _requireRoles(proxy, expectedRoles);
     _requireRedistributorSnapshotGetters(proxy);
+    _requireUsdscOnlyBoostTokens(proxy);
     console.log('Live verification OK: EarnVaultV2 initialized with expected config and roles');
   }
 }

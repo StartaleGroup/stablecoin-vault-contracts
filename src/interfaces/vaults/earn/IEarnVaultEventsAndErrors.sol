@@ -109,6 +109,8 @@ interface IEarnVaultEventsAndErrors {
   event BoostRewardTransferFailed(address indexed user, address indexed token, uint256 amount);
 
   /// @notice Emitted when a boost reward token is removed from activeBoostTokens array
+  /// @dev No longer emitted: boost rewards are USDSC-only and the token can't be removed. Kept so
+  ///      indexers can still decode past events.
   /// @param token Token address that was removed
   event BoostRewardTokenRemoved(address indexed token);
 
@@ -172,4 +174,8 @@ interface IEarnVaultEventsAndErrors {
 
   /// @notice Thrown when attempting to add more boost tokens than the maximum allowed
   error TooManyBoostTokens();
+
+  /// @notice Thrown when onBoostReward() is called with a token other than USDSC: USDSC is the only
+  ///         boost reward token
+  error BoostTokenNotUSDSC();
 }

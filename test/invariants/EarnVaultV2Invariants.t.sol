@@ -25,7 +25,8 @@ uint256 constant BOOST_CAP = 500_000e6;
 contract EarnVaultV2Handler is Test {
   EarnVaultV2 public vault;
   MockUSDSC public usdsc;
-  MockUSDSC public boostToken;
+  /// @notice A second token used only to prove non-USDSC boosts are always rejected
+  MockUSDSC public nonUsdscToken = new MockUSDSC();
   MockSnapshotRedistributor public snapshotRedistributor;
   address public redistributor;
   address public operator;
@@ -67,14 +68,12 @@ contract EarnVaultV2Handler is Test {
   constructor(
     EarnVaultV2 _vault,
     MockUSDSC _usdsc,
-    MockUSDSC _boostToken,
     MockSnapshotRedistributor _redistributor,
     address _operator,
     address _boostKeeper
   ) {
     vault = _vault;
     usdsc = _usdsc;
-    boostToken = _boostToken;
     snapshotRedistributor = _redistributor;
     redistributor = address(_redistributor);
     operator = _operator;
@@ -260,16 +259,17 @@ contract EarnVaultV2Handler is Test {
     vault.onBoostCredit(boostCycleId, batch, amounts);
   }
 
-  function onBoostReward(uint256 amount) external {
-    if (vault.totalPrincipal() == 0) return;
+  /// @notice Boost rewards are USDSC-only: a fully funded boost in any other token must always be refused
+  function nonUsdscBoostRejected(uint256 amount) external {
     amount = bound(amount, 1, MAX_AMOUNT / 10);
 
-    boostToken.mint(address(vault), amount);
+    nonUsdscToken.mint(address(vault), amount);
+    vm.expectRevert(IEarnVaultEventsAndErrors.BoostTokenNotUSDSC.selector);
     vm.prank(operator);
-    vault.onBoostReward(address(boostToken), amount);
+    vault.onBoostReward(address(nonUsdscToken), amount);
   }
 
-  /// @notice USDSC is also a boost token on the live vault: a funded USDSC boost, as the keeper sends it
+  /// @notice USDSC is the only boost token: a funded USDSC boost, as the keeper sends it
   function onBoostRewardUsdsc(uint256 amount) external {
     if (vault.totalPrincipal() == 0) return;
     amount = bound(amount, 1, MAX_AMOUNT / 10);
@@ -355,7 +355,6 @@ contract EarnVaultV2Handler is Test {
 contract EarnVaultV2Invariants is StdInvariant, Test {
   EarnVaultV2 internal vault;
   MockUSDSC internal usdsc;
-  MockUSDSC internal boostToken;
   EarnVaultV2Handler internal handler;
 
   uint256 internal constant RAY = 1e27;
@@ -372,7 +371,6 @@ contract EarnVaultV2Invariants is StdInvariant, Test {
 
   function setUp() external {
     usdsc = new MockUSDSC();
-    boostToken = new MockUSDSC();
     redistributor = new MockSnapshotRedistributor(5 minutes);
 
     EarnVaultUpgradeable v1Implementation = new EarnVaultUpgradeable();
@@ -406,7 +404,7 @@ contract EarnVaultV2Invariants is StdInvariant, Test {
 
     vault = EarnVaultV2(payable(address(proxy)));
 
-    handler = new EarnVaultV2Handler(vault, usdsc, boostToken, redistributor, operator, boostKeeper);
+    handler = new EarnVaultV2Handler(vault, usdsc, redistributor, operator, boostKeeper);
     handler.setAdmins(owner, pauser, treasury);
     address blacklisted = handler.blacklistedAddr(); // read BEFORE the prank - an external call would consume it
     vm.prank(owner);
@@ -419,7 +417,7 @@ contract EarnVaultV2Invariants is StdInvariant, Test {
     selectors[3] = EarnVaultV2Handler.compound.selector;
     selectors[4] = EarnVaultV2Handler.compoundMany.selector;
     selectors[5] = EarnVaultV2Handler.onYield.selector;
-    selectors[6] = EarnVaultV2Handler.onBoostReward.selector;
+    selectors[6] = EarnVaultV2Handler.nonUsdscBoostRejected.selector;
     selectors[7] = EarnVaultV2Handler.onBoostCredit.selector;
     selectors[8] = EarnVaultV2Handler.snapshot.selector;
     selectors[9] = EarnVaultV2Handler.warp.selector;
@@ -542,9 +540,14 @@ contract EarnVaultV2Invariants is StdInvariant, Test {
     assertGe(usdsc.balanceOf(address(vault)), vault.claimReserve() + vault.boostClaimReserve(address(usdsc)));
   }
 
-  /// @notice Each boost token's balance covers its own boost reserve
-  function invariant_BoostTokenBalanceCoversBoostReserve() external view {
-    assertGe(boostToken.balanceOf(address(vault)), vault.boostClaimReserve(address(boostToken)));
+  /// @notice USDSC is the only boost token that can ever be registered: slot 0 is USDSC (or empty),
+  ///         there is never a slot 1, and no other token ever has a boost reserve
+  function invariant_OnlyUsdscIsEverABoostToken() external view {
+    (bool ok0, bytes memory ret0) = address(vault).staticcall(abi.encodeWithSignature('activeBoostTokens(uint256)', 0));
+    if (ok0) assertEq(abi.decode(ret0, (address)), address(usdsc));
+    (bool ok1,) = address(vault).staticcall(abi.encodeWithSignature('activeBoostTokens(uint256)', 1));
+    assertFalse(ok1);
+    assertEq(vault.boostClaimReserve(address(handler.nonUsdscToken())), 0);
   }
 
   /// @notice The USDSC boost reserve covers what every tracked user could claim of it
@@ -560,17 +563,6 @@ contract EarnVaultV2Invariants is StdInvariant, Test {
   ///         ever adds a non-negative delta; nothing in this contract can decrease it).
   function invariant_GlobalIndexNeverBelowInitialRay() external view {
     assertGe(vault.globalIndex(), RAY);
-  }
-
-  /// @notice The vault must always hold enough of a boost token to cover what every tracked
-  ///         user could currently claim of it - the boost-side funding invariant, unaffected
-  ///         by USDSC auto-compounding since the two are independent index systems.
-  function invariant_BoostTokenBalanceCoversClaimableAcrossUsers() external view {
-    uint256 sumClaimable = 0;
-    for (uint256 i = 0; i < handler.MAX_USERS(); i++) {
-      sumClaimable += vault.getClaimableBoostReward(handler.users(i), address(boostToken));
-    }
-    assertGe(boostToken.balanceOf(address(vault)), sumClaimable);
   }
 
   /// @notice The read-only accounting views must never revert for any tracked user, regardless

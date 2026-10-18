@@ -285,7 +285,7 @@ contract EarnVaultV2DepositLockTest is Test {
     // pays legacy `accrued` USDSC, which a fresh post-upgrade user never has (pending USDSC
     // yield auto-compounds into principal instead) - a boost reward is the only way to give a
     // brand-new V2 user something claim() actually pays.
-    MockERC20Permit boostToken = new MockERC20Permit('Boost', 'BST');
+    MockERC20Permit boostToken = usdsc; // boosts are USDSC-only
     boostToken.mint(address(vault), 100e18);
     vm.prank(operator);
     vault.onBoostReward(address(boostToken), 100e18);

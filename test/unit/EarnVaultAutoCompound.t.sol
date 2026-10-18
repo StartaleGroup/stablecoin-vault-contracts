@@ -271,16 +271,33 @@ contract EarnVaultAutoCompoundTest is Test {
     // claim() - give alice a boost reward so claim() has something to pay out and doesn't
     // revert with NothingToClaim(), then verify it still emits Compounded for the pending
     // USDSC yield it folds in along the way.
-    MockUSDSC boostToken = new MockUSDSC();
-    boostToken.mint(address(vault), 10e18);
+    MockUSDSC boostToken = usdsc; // boosts are USDSC-only
+    boostToken.mint(address(vault), 10e6);
     vm.prank(operator);
-    vault.onBoostReward(address(boostToken), 10e18);
+    vault.onBoostReward(address(boostToken), 10e6);
     _distributeYield(100e6);
     uint256 alicePendingBeforeClaim = vault.pendingYield(alice);
     vm.expectEmit(true, false, false, true, address(vault));
     emit EarnVaultV2.Compounded(alice, alicePendingBeforeClaim);
     vm.prank(alice);
     vault.claim();
+  }
+
+  /// @notice V2 proxy: boost rewards are USDSC-only, even when the other token is funded
+  function test_OnBoostReward_NonUsdscToken_Reverts_V2() public {
+    _deposit(alice, 1000e6);
+    MockUSDSC other = new MockUSDSC();
+    other.mint(address(vault), 100e6);
+    vm.prank(operator);
+    vm.expectRevert(IEarnVaultEventsAndErrors.BoostTokenNotUSDSC.selector);
+    vault.onBoostReward(address(other), 100e6);
+  }
+
+  /// @notice V2 proxy: removeBoostRewardToken no longer exists
+  function test_RemoveBoostRewardToken_NoLongerExists_V2() public {
+    vm.prank(owner);
+    (bool ok,) = address(vault).call(abi.encodeWithSignature('removeBoostRewardToken(address)', address(0xdEaD)));
+    assertFalse(ok);
   }
 
   function test_Compound_RevertsForBlacklistedUser() public {
@@ -566,7 +583,7 @@ contract EarnVaultAutoCompoundTest is Test {
     _deposit(alice, 1000e6);
     _deposit(bob, 1000e6); // bob just to give totalPrincipal a non-trivial denominator
 
-    MockUSDSC boostToken = new MockUSDSC();
+    MockUSDSC boostToken = usdsc; // boosts are USDSC-only
 
     // Boost reward #1, distributed while alice still holds only her original 1000e6.
     boostToken.mint(address(vault), 200e6);
@@ -605,7 +622,7 @@ contract EarnVaultAutoCompoundTest is Test {
     uint256 aliceBoostBefore = boostToken.balanceOf(alice);
     vm.prank(alice);
     vault.claim();
-    assertEq(boostToken.balanceOf(alice), aliceBoostBefore + totalBoostOwed);
+    assertEq(boostToken.balanceOf(alice) - aliceBoostBefore, totalBoostOwed);
   }
 
   // ========================================================================
@@ -753,17 +770,16 @@ contract EarnVaultAutoCompoundTest is Test {
   }
 
   function test_Gas_CompoundMany_BatchSizingProjection_WithActiveBoostTokens() public {
-    // Same projection, but with 2 active boost tokens (a realistic production state, since
-    // this vault already distributes ASTR/DOT-style boosts) - _settle() loops all active
-    // boost tokens per user. Measured in two rounds:
+    // Same projection, but with the single (USDSC) boost token active (boosts are USDSC-only,
+    // so this is the maximum production state) - _settle() loops all active boost tokens per
+    // user. Measured in two rounds:
     //   - "cold" (round 1): every (user, token) storage slot goes from zero to non-zero for
     //     the first time - this pays Ethereum's zero->non-zero SSTORE penalty on top of the
     //     usual cold-access cost, and only ever happens once per (user, token) pair, ever.
     //   - "warm" (round 2): a second yield + boost round, then compounding again - all those
     //     slots are now non-zero, so writes are the much cheaper non-zero->non-zero case. This
     //     is what an ongoing DAILY keeper cadence actually costs after day one.
-    MockUSDSC boostA = new MockUSDSC();
-    MockUSDSC boostB = new MockUSDSC();
+    MockUSDSC boostA = usdsc;
 
     uint256 smallBatch = 200;
     uint256 largeBatch = 2000;
@@ -772,9 +788,6 @@ contract EarnVaultAutoCompoundTest is Test {
     boostA.mint(address(vault), 1000e6);
     vm.prank(operator);
     vault.onBoostReward(address(boostA), 1000e6);
-    boostB.mint(address(vault), 1000e6);
-    vm.prank(operator);
-    vault.onBoostReward(address(boostB), 1000e6);
 
     address[] memory small = new address[](smallBatch);
     for (uint256 i = 0; i < smallBatch; i++) {
@@ -796,7 +809,7 @@ contract EarnVaultAutoCompoundTest is Test {
 
     uint256 marginalGasPerUserCold = (gasLargeCold - gasSmallCold) / (largeBatch - smallBatch);
     console2.log(
-      'marginal execution gas per user, ROUND 1 / cold (2 boost tokens, first-ever touch)', marginalGasPerUserCold
+      'marginal execution gas per user, ROUND 1 / cold (1 boost token, first-ever touch)', marginalGasPerUserCold
     );
 
     // Round 2 (warm): a fresh yield + boost round, then compound again - the steady-state,
@@ -805,9 +818,6 @@ contract EarnVaultAutoCompoundTest is Test {
     boostA.mint(address(vault), 1000e6);
     vm.prank(operator);
     vault.onBoostReward(address(boostA), 1000e6);
-    boostB.mint(address(vault), 1000e6);
-    vm.prank(operator);
-    vault.onBoostReward(address(boostB), 1000e6);
 
     uint256 gasBeforeSmallWarm = gasleft();
     vault.compoundMany(small);
@@ -819,7 +829,7 @@ contract EarnVaultAutoCompoundTest is Test {
 
     uint256 marginalGasPerUserWarm = (gasLargeWarm - gasSmallWarm) / (largeBatch - smallBatch);
     console2.log(
-      'marginal execution gas per user, ROUND 2 / warm (2 boost tokens, steady state)', marginalGasPerUserWarm
+      'marginal execution gas per user, ROUND 2 / warm (1 boost token, steady state)', marginalGasPerUserWarm
     );
 
     uint256 targetGasPerBatch = (SONEIUM_BLOCK_GAS_LIMIT * 60) / 100;
@@ -930,15 +940,11 @@ contract EarnVaultAutoCompoundTest is Test {
     }
   }
 
-  function _activateTwoBoostTokens() internal returns (MockUSDSC boostA) {
-    boostA = new MockUSDSC();
-    MockUSDSC boostB = new MockUSDSC();
+  function _activateBoostToken() internal returns (MockUSDSC boostA) {
+    boostA = usdsc; // boosts are USDSC-only
     boostA.mint(address(vault), 1000e6);
     vm.prank(operator);
     vault.onBoostReward(address(boostA), 1000e6);
-    boostB.mint(address(vault), 1000e6);
-    vm.prank(operator);
-    vault.onBoostReward(address(boostB), 1000e6);
   }
 
   function test_Gas_OnBoostCredit_BatchSizingProjection() public {
@@ -949,7 +955,7 @@ contract EarnVaultAutoCompoundTest is Test {
     address[] memory all = _seedUsers(1800, 1000e6, 1800 * 10e6);
     address[] memory setS = _slice(all, 0, 900);
     address[] memory setW = _slice(all, 900, 900);
-    MockUSDSC boostA = _activateTwoBoostTokens();
+    MockUSDSC boostA = _activateBoostToken();
 
     // state B precondition: the auto-compound keeper has already settled setW
     vault.compoundMany(setW);

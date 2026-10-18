@@ -361,14 +361,16 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     emit YieldIndexed(amount, globalIndex, claimReserve);
   }
 
-  /// @notice Distribute boost rewards (ASTR, DOT, etc.) to vault users
-  /// @dev MUST be called AFTER transferring `amount` of `token` to this contract
+  /// @notice Distribute USDSC boost rewards to vault users
+  /// @dev MUST be called AFTER transferring `amount` USDSC to this contract
   /// @dev Uses same logic as USDSC yield - distributed proportionally based on principal
-  /// @dev Can be called by boost reward keeper (keeper/operator address)
-  /// @param token Token address to distribute as boost rewards
-  /// @param amount Amount of boost tokens to distribute
+  /// @dev Can be called by boost reward keeper (keeper/operator address). USDSC is the only boost
+  ///      reward token: any other token reverts BoostTokenNotUSDSC
+  /// @param token Boost reward token; must be USDSC
+  /// @param amount Amount of USDSC to distribute
   function onBoostReward(address token, uint256 amount) external onlyBoostRewardKeeper whenNotPaused nonReentrant {
-    _requireUSDSCBoostFunded(token, amount);
+    if (token != address(USDSC)) revert IEarnVaultEventsAndErrors.BoostTokenNotUSDSC();
+    _requireUSDSCBoostFunded(amount);
     BoostRewardsLib.distributeBoostReward(
       token, amount, totalPrincipal, treasury, boostGlobalIndex, boostClaimReserve, activeBoostTokens, boostTokenIndex
     );
@@ -429,33 +431,6 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     if (!success) revert IEarnVaultEventsAndErrors.SweepFailed();
 
     emit NativeSwept(to, amount);
-  }
-
-  /// @notice Remove a boost reward token from activeBoostTokens array (only owner)
-  /// @dev Can be used to clean up tokens that are frozen or no longer used
-  /// @dev Only allows removal if boostClaimReserve[token] == 0 (no pending claims)
-  /// @param token Token address to remove from activeBoostTokens array
-  function removeBoostRewardToken(address token) external onlyOwner nonReentrant {
-    if (token == address(0)) revert IEarnVaultEventsAndErrors.CanNotBeZeroAddress();
-
-    uint256 index = boostTokenIndex[token];
-    if (index == 0) return;
-
-    if (boostClaimReserve[token] > 0) {
-      revert IEarnVaultEventsAndErrors.InsufficientBoostClaimReserve();
-    }
-
-    uint256 lastIndex = activeBoostTokens.length - 1;
-    if (index != lastIndex + 1) {
-      address lastToken = activeBoostTokens[lastIndex];
-      activeBoostTokens[index - 1] = lastToken;
-      boostTokenIndex[lastToken] = index;
-    }
-
-    activeBoostTokens.pop();
-    delete boostTokenIndex[token];
-
-    emit IEarnVaultEventsAndErrors.BoostRewardTokenRemoved(token);
   }
 
   // ================================================================
@@ -660,8 +635,8 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
 
   /// @dev A USDSC boost must be funded on top of everything already owed in USDSC (see
   ///      EarnVaultUpgradeable._requireUSDSCBoostFunded)
-  function _requireUSDSCBoostFunded(address token, uint256 amount) internal view {
-    if (token != address(USDSC) || amount == 0) return;
+  function _requireUSDSCBoostFunded(uint256 amount) internal view {
+    if (amount == 0) return;
     if (USDSC.balanceOf(address(this)) < _requiredUSDSC() + amount) {
       if (totalPrincipal == 0) revert IEarnVaultEventsAndErrors.InsufficientBoostTokenBalance();
       revert IEarnVaultEventsAndErrors.InsufficientBoostClaimReserve();
