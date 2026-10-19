@@ -1,6 +1,15 @@
 # EarnVaultV2: integration guide (backend, keepers, indexer)
 
-> **Status: pre-audit.** The contracts are at the audit commit `5326a7d3824e9c78ae292b248e25720469b5f310` (PR #84, which includes PR #83). Signatures and semantics may still change with audit findings; any change will be flagged here.
+> **Status: audit remediations applied** (branch `earn-v2-remediations`; audited commit `5326a7d3824e9c78ae292b248e25720469b5f310`). Anything that changes before the upgrade will be flagged here.
+>
+> **Changed since the audited commit:**
+> - `onBoostCredit` is blocked during the deposit-lock window, like deposits (section 5).
+> - `onBoostCredit` funding is checked after the batch, against what is actually credited: skipped entries need no funding, and the vault must still cover `claimReserve + boostClaimReserve(USDSC)` (section 3).
+> - `getAllClaimables(user).usdscClaimable` is now exactly what `claim()` pays (legacy accrued only). Read pending yield from `pendingYield(user)`.
+> - New `withdrawAll()`: a full exit, including yield compounded by the call itself.
+> - New views `surplusUSDSC()` and `boostClaimReserve(token)`.
+> - `onBoostReward` accepts only USDSC (`BoostTokenNotUSDSC` otherwise); `removeBoostRewardToken` was removed.
+> - `depositWithPermit` still goes ahead when the permit was already used, if the existing allowance covers the amount.
 
 This guide covers what the reward engine, keepers, frontend and indexer need in order to integrate with `EarnVaultV2`. The design rationale is in `src/vaults/earn/base-tier-auto-compounding.md`. The full ABI is in [`EarnVaultV2.abi.json`](EarnVaultV2.abi.json).
 
@@ -18,7 +27,6 @@ All USDSC amounts are in **6-decimal base units** (`1 USDSC = 1_000_000`).
 | RewardRedistributor (the vault's `yieldRedistributor`) | `0xda798684ffD5eb509c2Ab7b8352EC55B31F18201` |
 | ProxyAdmin | `0xDBc42e5c7E6BF89886F2f359F9b0BB9344824066` |
 | Owner of the vault and ProxyAdmin, and pauser (Safe, 3 of 5) | `0x3C27038D9906caa5D68355B1800625EAcaCd93dA` |
-| Redistributor operator (snapshot / distribute) | `0x86bE13a26d548FA5407Ee3E5a8321B4E1019333C` |
 
 The boost keeper address and the `maxBoostPerBatch` value are set at upgrade time; both are still to be decided.
 
@@ -46,7 +54,7 @@ All salts are tagged `TEST_…`, so test addresses can never coincide with produ
 | **Boost keeper** (reward engine) | `onBoostCredit(cycleId, users, amounts)` | Only the address set as `boostKeeper`. It must fund the vault first. |
 | **Compound keeper** | `compoundMany(users)` / `compound(user)` | Permissionless; any address can call them. It only grows each user's own principal. Run it daily. |
 | **Redistributor operator** | `RewardRedistributor.snapshotVaultTVLs()`, then `distribute()` | Existing flow. It now opens and closes the deposit lock (section 5). |
-| **Users / frontend** | `deposit`, `depositWithPermit`, `withdraw`, `claim` | `claim()` pays boost-token rewards and any legacy V1 `accrued` USDSC. Base yield auto-compounds into principal. |
+| **Users / frontend** | `deposit`, `depositWithPermit`, `withdraw`, `withdrawAll`, `claim` | `claim()` pays USDSC boost rewards and any legacy V1 `accrued` USDSC. Base yield auto-compounds into principal. For a full exit use `withdrawAll()`: `withdraw(principal(user))` quoted before the call leaves the yield compounded by that call behind as principal. |
 | **Owner (Safe)** | `setBoostKeeper`, `setMaxBoostPerBatch`, `setBlacklisted`, pause / unpause, sweep / recover | Admin only. |
 
 ---
@@ -59,9 +67,10 @@ All salts are tagged `TEST_…`, so test addresses can never coincide with produ
 2. **Choose the cycle ID:**
    - more batches for the *current* cycle use `cycleId = latestCycleId`;
    - opening the *next* cycle uses `cycleId = latestCycleId + 1`.
-3. **Fund:** transfer the batch's total USDSC to the vault. The vault checks `balance >= claimReserve + sum(amounts)` before crediting anything.
-4. **Call** `onBoostCredit(cycleId, users[], amounts[])` from the boost keeper.
-5. **Reconcile** using `BoostCycleCredited`, plus one `BoostCredited` or `BoostCreditSkipped` per entry.
+3. **Check** `depositsLocked()` on the vault. If it is locked, wait until `unlocksAt` (section 5).
+4. **Fund:** transfer the batch's credited total in USDSC to the vault, just before the call. Entries that will be skipped need no funding. After crediting, the vault checks that its balance still covers `claimReserve + boostClaimReserve(USDSC)`; `claimReserve` has grown by the credited amounts. `surplusUSDSC()` shows how much is already free.
+5. **Call** `onBoostCredit(cycleId, users[], amounts[])` from the boost keeper.
+6. **Reconcile** using `BoostCycleCredited`, plus one `BoostCredited` or `BoostCreditSkipped` per entry.
 
 ### Rules
 
@@ -73,23 +82,23 @@ All salts are tagged `TEST_…`, so test addresses can never coincide with produ
   - Cycles can be opened back to back; after downtime, **catch up one cycle per missed day**. Don't roll several days into one cycle.
 - **Replay guard.** Each address can be credited at most once per cycle. Its `cycleId` must be greater than `lastCreditedCycle(user)`, or the batch reverts `StaleCycle`. A duplicate address inside one batch also reverts.
 - **Per-batch cap.** If the credited total (skipped entries excluded) exceeds `maxBoostPerBatch()`, the whole batch reverts `BoostBatchCapExceeded(credited, max)`. Split large cycles into several batches; each batch can use the full cap.
-- **All-or-nothing reverts:** insufficient funding, a bad cycle, a stale cycle or duplicate, a zero address, a length mismatch, an empty batch, or exceeding the cap.
+- **All-or-nothing reverts:** the deposit-lock window, insufficient funding, a bad cycle, a stale cycle or duplicate, a zero address, a length mismatch, an empty batch, or exceeding the cap.
 - **Per-entry skips** (the batch continues): the vault's own address, blacklisted addresses, and zero amounts.
   - The event is `BoostCreditSkipped(user, amount, cycleId, reason)`, with `reason` 0 = VaultAddress, 1 = Blacklisted, 2 = ZeroAmount.
   - A skipped entry can be re-credited **only while that cycle is current**; after that, roll the amount into a later cycle.
-  - Skipped funding stays in the vault as surplus.
+  - Skipped entries need no funding; USDSC sent for one stays in the vault as surplus.
 - **Addresses must be AA wallets** (v1 policy). Exactly one address per user is guaranteed off-chain, by the engine.
-- **Avoid the deposit-lock window** (section 5). Boost credit isn't blocked during it, but scheduling it outside the window keeps the yield split clean.
+- **Deposit-lock window** (section 5). `onBoostCredit` reverts `DepositsLockedForDistribution(unlocksAt)` during it, with no side effects: nothing is credited and the cycle doesn't move. Resend the same batch unchanged from `unlocksAt`.
 
 ### Batch sizing
 
-Gas figures assume 2 active boost tokens, against Soneium's 40M block limit. Target at most 60% of the block, about 24M gas, per transaction.
+Gas figures are measured with `forge test --isolate` (each batch pays its own cold storage access, as a real transaction does), with USDSC as the one active boost token, against Soneium's 40M block limit. Target at most 60% of the block, about 24M gas, per transaction. Details: `src/vaults/earn/base-tier-auto-compounding.md`.
 
 | State of the credited addresses | Gas per entry | Entries per batch (≤ 24M gas) |
 |---|---|---|
-| Worst-case cold (first credit, never settled since the boost tokens were activated) | ~124k | **~190** |
-| Already settled by `compoundMany` | ~32k | ~700 |
-| Warm (later cycles) | ~13.5k | ~1,700 |
+| Worst-case cold (first credit, never settled since the boost token was activated) | ~89k | **~265** |
+| Already settled by `compoundMany` | ~41k | ~580 |
+| Warm (later cycles) | ~38k | ~630 |
 
 A batch that runs out of gas reverts whole; split it and resubmit with the same `cycleId`.
 
@@ -100,13 +109,14 @@ A batch that runs out of gas reverts whole; split it and resubmit with the same 
 | `CycleIdTooOld(cycleId, latest)` | The cycle is closed | Re-read `latestCycleId`; roll the amounts into the current or next cycle |
 | `CycleIdTooFarAhead(cycleId, latest)` | Skipped ahead | Use `latest` or `latest + 1` |
 | `StaleCycle()` | An address was already credited for this cycle, or appears twice in the batch | Drop the duplicates. It's already credited, so don't resend. |
-| `InsufficientFunding()` | The vault's balance doesn't cover `claimReserve + total` | Transfer the shortfall and retry |
+| `DepositsLockedForDistribution(unlocksAt)` | A redistributor snapshot is still usable by `distribute()` | Resend the same batch from `unlocksAt` |
+| `InsufficientFunding()` | After crediting, the balance wouldn't cover `claimReserve + boostClaimReserve(USDSC)` | Transfer the rest of the credited total and retry |
 | `BoostBatchCapExceeded(credited, max)` | The batch is over the cap | Split it. If the amounts look wrong, stop: this cap exists to catch engine bugs. |
 | `EmptyBatch()` / `LengthMismatch()` | Malformed input | Fix the engine |
 | `NotBoostKeeper()` | Wrong sender | Use the configured keeper |
 | `EnforcedPause()` | The vault is paused | Wait |
 
-**Security budget:** a compromised keeper key can credit at most the keeper wallet's balance plus the vault's accumulated surplus. Fund the keeper per batch, just in time; don't let it hold several cycles' worth.
+**Key handling:** a credit can only use USDSC above both reserves (`surplusUSDSC()`). Fund each batch just in time, keep the keeper key dedicated to this, and rotate it with `setBoostKeeper` if needed.
 
 ---
 
@@ -114,9 +124,10 @@ A batch that runs out of gas reverts whole; split it and resubmit with the same 
 
 - Call `compoundMany(users)` **daily**, for depositors with `pendingYield(user) > 0`. More frequent calls add nothing: yield only moves when `onYield` runs.
 - It's permissionless, never moves tokens, and emits `Compounded(user, amount)` for each address with something to fold in.
-- **Batch sizing**, with 2 active boost tokens:
-  - about 98k gas per address on a first, cold touch, so about 245 addresses per 24M-gas transaction;
-  - about 10k gas per address once warm.
+- **Batch sizing** (`--isolate`, USDSC boost token active):
+  - about 63k gas per address on a first, cold touch, so about 380 addresses per 24M-gas transaction (once per address);
+  - about 28.5k gas per address in steady state, about 830 per transaction.
+- **Right after the V2 upgrade, before the first snapshot:** compound every depositor once, then keep the daily cadence.
 - Skip addresses with zero principal or zero pending yield.
 
 ---
@@ -125,8 +136,9 @@ A batch that runs out of gas reverts whole; split it and resubmit with the same 
 
 - **When it applies:** deposits (`deposit`, `depositWithPermit`) revert with `DepositsLockedForDistribution(unlocksAt)` while the redistributor's latest snapshot can still be distributed, i.e. while `block.timestamp - lastSnapshotTimestamp <= snapshotMaxAge`.
 - **Frontend:** read `depositsLocked()`, which returns `(bool locked, uint256 unlocksAt)`. While it's locked, disable the deposit button and show a countdown to `unlocksAt`.
-- **What stays open:** withdrawals, claims, compounding and boost credit all keep working during the lock.
-- **Timing:** production snapshots every 3 hours, with distribute about 2 blocks later. The window will be `snapshotMaxAge`, planned at 1–2 minutes (300 s today).
+- **Also blocked:** `onBoostCredit` (section 3), with the same error and `unlocksAt`.
+- **What stays open:** withdrawals, claims and compounding keep working during the lock.
+- **Length:** the window lasts up to `snapshotMaxAge` after each snapshot (read it from the redistributor); it is planned at 1–2 minutes.
 
 ---
 
@@ -144,7 +156,7 @@ A batch that runs out of gas reverts whole; split it and resubmit with the same 
 | `BoostRewardClaimed` | `indexed address user, indexed address token, uint256 amount` | `0x5067b8d3d7328cfa98f1d5bcde56df4a932194ace52c93533b6aba32b4e22c97` |
 | `BoostRewardIndexed` | `indexed address token, uint256 amount, uint256 newBoostGlobalIndex, uint256 newBoostClaimReserve` | `0xa6af4a53ae10af55ff356b23cf67c68343989261f6ace83d43b0814ce72f1a34` |
 | `BoostRewardKeeperChanged` | `indexed address actor, indexed address oldKeeper, indexed address newKeeper` | `0xc6f105194d811b08428a21e30997b460c7d01bb5f68a869662bb873430e39de9` |
-| `BoostRewardTokenRemoved` | `indexed address token` | `0xdd18b1b6c924f120e23d57a55960d7afa02f173e92665c132cd294390e8b5093` |
+| `BoostRewardTokenRemoved` (no longer emitted: `removeBoostRewardToken` was removed; historical only) | `indexed address token` | `0xdd18b1b6c924f120e23d57a55960d7afa02f173e92665c132cd294390e8b5093` |
 | `BoostRewardTransferFailed` | `indexed address user, indexed address token, uint256 amount` | `0x9c7ef1c0e986b07dc9bc2a8b866b6a41e6fdcfe33a39d017330aa28d5209c54d` |
 | `BoostRewardTransferredToTreasury` | `indexed address token, uint256 amount` | `0x7c8e680a23779f800f1077d42406dbbabb471014fd800563135ea769426a4e32` |
 | `Compounded` | `indexed address user, uint256 amount` | `0xc16de066392da7e40ceccb739c331fc48a2e76bf147449613c48023d960eec32` |
@@ -195,6 +207,7 @@ A batch that runs out of gas reverts whole; split it and resubmit with the same 
 | `AddressBlacklisted()` | `0x1f7b776b` |
 | `ArithmeticOverflow()` | `0xe47ec074` |
 | `BoostBatchCapExceeded(uint256,uint256)` | `0xce421015` |
+| `BoostTokenNotUSDSC()` | `0x8a75f013` |
 | `CanNotBeZeroAddress()` | `0x45281e4c` |
 | `ContractNotPaused()` | `0xdcdde9dd` |
 | `CycleIdTooFarAhead(uint256,uint256)` | `0xc9592673` |
@@ -239,7 +252,9 @@ A batch that runs out of gas reverts whole; split it and resubmit with the same 
 | `pendingYield(user)` | Yield not yet compounded (it folds into principal on the user's next interaction or a `compound`) |
 | `totalValue(user)` | Principal + pending yield + legacy accrued |
 | `getUserInfo(user)` | `(userPrincipal, userClaimable, userTotal, userLastIndex)` |
-| `getAllClaimables(user)` | `(usdscClaimable, boostTokens[], boostAmounts[])` |
+| `getAllClaimables(user)` | `(usdscClaimable, boostTokens[], boostAmounts[])`: exactly what `claim()` pays now. `usdscClaimable` is legacy accrued only; pending yield is in `pendingYield(user)` |
+| `surplusUSDSC()` | USDSC above `claimReserve + boostClaimReserve(USDSC)`, floored at 0: what a sweep would send, and the most a boost credit can use without new funding |
+| `boostClaimReserve(token)` | Boost rewards owed and not yet claimed, for `token` |
 | `getVaultStats()` | `(vaultTotalPrincipal, vaultClaimReserve, vaultGlobalIndex, vaultBalance, vaultCarryRay)` |
 | `latestCycleId()`, `lastCreditedCycle(user)`, `maxBoostPerBatch()`, `boostKeeper()` | Boost-credit state |
 | `depositsLocked()` | `(locked, unlocksAt)` |
