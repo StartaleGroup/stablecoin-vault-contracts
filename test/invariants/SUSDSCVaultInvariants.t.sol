@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.30;
 
-import {USDSC} from '../../src/coin/mock/USDSC.sol';
+import {UsdscToken} from '../../src/coin/UsdscToken.sol';
 import {SUSDSCVault} from '../../src/vaults/4626/SUSDSCVault.sol';
 import {ProxyAdmin} from '@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol';
 import {TransparentUpgradeableProxy} from '@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol';
@@ -13,7 +13,7 @@ import {MockM} from 'm-extensions-test/utils/Mocks.sol';
 
 contract SUSDSCVaultHandler is Test {
   SUSDSCVault public vault;
-  USDSC public usdsc;
+  UsdscToken public usdsc;
 
   address[] public users;
   uint256 public constant MAX_USERS = 20;
@@ -22,7 +22,7 @@ contract SUSDSCVaultHandler is Test {
   mapping(address => uint256) public userShares;
   uint256 public totalUserShares;
 
-  constructor(SUSDSCVault _vault, USDSC _usdsc) {
+  constructor(SUSDSCVault _vault, UsdscToken _usdsc) {
     vault = _vault;
     usdsc = _usdsc;
 
@@ -127,7 +127,7 @@ contract SUSDSCVaultHandler is Test {
 
 contract SUSDSCVaultInvariants is StdInvariant, Test {
   SUSDSCVault internal vault;
-  USDSC internal usdsc;
+  UsdscToken internal usdsc;
   MockM internal mToken;
   MockSwapFacility internal swapFacility;
   SUSDSCVaultHandler internal handler;
@@ -146,13 +146,15 @@ contract SUSDSCVaultInvariants is StdInvariant, Test {
     swapFacility = new MockSwapFacility();
     ProxyAdmin proxyAdmin = new ProxyAdmin(admin);
 
-    USDSC implementation = new USDSC(address(mToken), address(swapFacility));
+    UsdscToken implementation = new UsdscToken(address(mToken), address(swapFacility));
     TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(
       address(implementation),
       address(proxyAdmin),
-      abi.encodeWithSelector(USDSC.initialize.selector, 'USDSC', 'USDSC', admin, yieldRecipient)
+      abi.encodeWithSelector(
+        UsdscToken.initialize.selector, 'USDSC', 'USDSC', yieldRecipient, admin, admin, admin, admin
+      )
     );
-    usdsc = USDSC(address(proxy));
+    usdsc = UsdscToken(address(proxy));
 
     vault = new SUSDSCVault(IERC20(address(usdsc)), admin, pauser);
   }
