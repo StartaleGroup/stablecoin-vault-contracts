@@ -218,21 +218,25 @@ contract EarnVaultV2UpgradeSoneiumFork is Test {
       if (vault.principal(u) == 0) continue;
       uint256 boost = vault.getClaimableBoostReward(u, address(usdsc));
       uint256 accrued = vault.accrued(u);
-      uint256 principal = vault.principal(u) + vault.pendingYield(u);
+      uint256 principalBefore = vault.principal(u);
+      uint256 pending = vault.pendingYield(u);
       uint256 balBefore = usdsc.balanceOf(u);
 
       vm.prank(u);
       if (boost == 0 && accrued == 0) {
         // Product note: a V1 user who used to claim() yield now gets NothingToClaim, because
-        // yield compounds into principal instead
+        // yield compounds into principal instead. The revert also undoes that call's compounding:
+        // the yield stays pending and folds in on the user's next interaction or a compound
         vm.expectRevert(IEarnVaultEventsAndErrors.NothingToClaim.selector);
         vault.claim();
+        assertEq(vault.principal(u), principalBefore, 'reverted claim changed principal');
+        assertEq(vault.pendingYield(u), pending, 'pending yield still owed');
       } else {
         vault.claim();
         assertEq(usdsc.balanceOf(u) - balBefore, boost + accrued, 'claim payout');
+        // pending yield went into principal, not out to the user
+        assertEq(vault.principal(u), principalBefore + pending, 'yield compounded on claim');
       }
-      // pending yield went into principal, not out to the user
-      assertEq(vault.principal(u), principal, 'yield compounded on claim');
       checked++;
     }
     assertGt(checked, 0);
