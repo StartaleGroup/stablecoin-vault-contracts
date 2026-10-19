@@ -179,26 +179,27 @@ contract EarnVaultV2Handler is Test {
     assertEq(vault.totalValue(user), 0, 'withdrawAll left a position behind');
   }
 
+  /// @notice claim() pays exactly what getAllClaimables() reported (USDSC is the only boost token),
+  ///         and reverts NothingToClaim exactly when that is zero - even with pending yield
   function claim(uint256 userIndex) external {
     userIndex = bound(userIndex, 0, users.length - 1);
     address user = users[userIndex];
     settleOps++;
 
-    // claim() reverts with NothingToClaim() if there's nothing to pay out - avoid wasting a
-    // fuzz run on a known-guaranteed revert by checking first.
-    if (vault.claimable(user) > 0) {
+    (uint256 quoted,, uint256[] memory boostAmounts) = vault.getAllClaimables(user);
+    for (uint256 i = 0; i < boostAmounts.length; i++) {
+      quoted += boostAmounts[i];
+    }
+    if (quoted == 0) {
+      vm.expectRevert(IEarnVaultEventsAndErrors.NothingToClaim.selector);
       vm.prank(user);
       vault.claim();
       return;
     }
-    (,, uint256[] memory boostAmounts) = vault.getAllClaimables(user);
-    for (uint256 i = 0; i < boostAmounts.length; i++) {
-      if (boostAmounts[i] > 0) {
-        vm.prank(user);
-        vault.claim();
-        return;
-      }
-    }
+    uint256 before = usdsc.balanceOf(user);
+    vm.prank(user);
+    vault.claim();
+    assertEq(usdsc.balanceOf(user) - before, quoted, 'claim paid other than getAllClaimables reported');
   }
 
   function compound(uint256 userIndex) external {

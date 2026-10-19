@@ -585,8 +585,11 @@ contract EarnVaultUpgradeable is
   }
 
   /// @notice Get all claimable rewards for a user (USDSC yield + all boost rewards)
+  /// @dev Reports what claim() would pay right now: usdscClaimable is claimable(user), so under
+  ///      EarnVaultV2 it is legacy accrued only (pending yield compounds into principal instead;
+  ///      see pendingYield())
   /// @param user User address to check
-  /// @return usdscClaimable Claimable USDSC yield
+  /// @return usdscClaimable Claimable USDSC yield, as claim() would pay it
   /// @return boostTokens Array of boost token addresses
   /// @return boostAmounts Array of claimable amounts for each boost token
   function getAllClaimables(address user)

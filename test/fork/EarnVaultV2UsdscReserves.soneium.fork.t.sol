@@ -300,6 +300,29 @@ contract EarnVaultV2UsdscReservesSoneiumFork is Test {
     _assertSolvent();
   }
 
+  /// @dev getAllClaimables reports what claim() pays on the live vault: legacy accrued plus USDSC
+  ///      boost, not pending yield, which compounds into principal during the claim
+  function test_GetAllClaimablesMatchesClaimPayout() public {
+    _realRounds(1);
+    uint256 pending = VAULT.pendingYield(WHALE);
+    assertGt(pending, 0, 'no yield pending');
+    (uint256 usdscClaimable,, uint256[] memory boostAmounts) = VAULT.getAllClaimables(WHALE);
+    assertEq(usdscClaimable, VAULT.claimable(WHALE));
+    uint256 quoted = usdscClaimable;
+    for (uint256 i = 0; i < boostAmounts.length; i++) {
+      quoted += boostAmounts[i];
+    }
+    uint256 principalBefore = VAULT.principal(WHALE);
+    uint256 before = usdsc.balanceOf(WHALE);
+
+    assertGt(quoted, 0, 'live whale has accrued and boost to claim');
+    vm.prank(WHALE);
+    VAULT.claim();
+    assertEq(usdsc.balanceOf(WHALE) - before, quoted, 'claim paid other than reported');
+    assertEq(VAULT.principal(WHALE), principalBefore + pending, 'pending yield compounded');
+    _assertSolvent();
+  }
+
   // ---------------------------------------------------------------------------------------------
   // Surplus: sweep and recover take only USDSC above both reserves
   // ---------------------------------------------------------------------------------------------

@@ -465,33 +465,55 @@ contract EarnVaultAutoCompoundTest is Test {
     assertEq(t3, p3, 'after settling, total should equal principal exactly (nothing pending)');
   }
 
-  function test_GetAllClaimables_UsdscLegIncludesPendingYieldNotJustLegacyAccrued() public {
-    // Regression test: V1's getAllClaimables() (inherited unchanged would be a bug under V2)
-    // computed usdscClaimable via claimable(), which under V2 only returns legacy accrued -
-    // a normal post-upgrade user with real pending yield would silently show 0 here without
-    // V2's override.
+  /// @dev getAllClaimables() reports what claim() pays: pending yield is not claimable (it compounds
+  ///      into principal), so a user with only pending yield sees 0 and claim() reverts
+  function test_GetAllClaimables_PendingYieldOnlyShowsZero_ClaimReverts() public {
     _deposit(alice, 1000e6);
     _distributeYield(300e6);
-
     uint256 pending = vault.pendingYield(alice);
     assertGt(pending, 0);
 
     (uint256 usdscClaimable, address[] memory boostTokens, uint256[] memory boostAmounts) =
       vault.getAllClaimables(alice);
-
-    assertEq(
-      usdscClaimable,
-      vault.accrued(alice) + pending,
-      'usdscClaimable should include pending yield, not just legacy accrued'
-    );
-    assertEq(usdscClaimable, pending, 'no legacy accrued exists here, so this should equal pending exactly');
+    assertEq(usdscClaimable, 0, 'pending yield is not claimable');
+    assertEq(usdscClaimable, vault.claimable(alice));
     assertEq(boostTokens.length, 0);
     assertEq(boostAmounts.length, 0);
+    assertEq(vault.pendingYield(alice), pending, 'pending yield still exposed separately');
 
-    // After settling, it should equal accrued alone (0) again - pending is now principal.
-    vault.compound(alice);
-    (uint256 usdscClaimableAfter,,) = vault.getAllClaimables(alice);
-    assertEq(usdscClaimableAfter, 0);
+    vm.prank(alice);
+    vm.expectRevert(IEarnVaultEventsAndErrors.NothingToClaim.selector);
+    vault.claim();
+  }
+
+  /// @dev A legacy user with accrued plus a USDSC boost: claim() pays exactly the reported total,
+  ///      while pending yield compounds into principal instead of being paid
+  function test_GetAllClaimables_MatchesClaimPayoutForLegacyUserWithBoost() public {
+    usdsc.mint(address(vault), 50e6);
+    vm.prank(operator);
+    vault.onBoostReward(address(usdsc), 50e6);
+    _distributeYield(100e6);
+
+    (uint256 usdscClaimable, address[] memory boostTokens, uint256[] memory boostAmounts) =
+      vault.getAllClaimables(legacyUser);
+    assertEq(usdscClaimable, vault.accrued(legacyUser));
+    assertGt(usdscClaimable, 0);
+    assertEq(boostTokens.length, 1);
+    assertEq(boostTokens[0], address(usdsc));
+    assertGt(boostAmounts[0], 0);
+    uint256 pending = vault.pendingYield(legacyUser);
+    assertGt(pending, 0);
+    uint256 principalBefore = vault.principal(legacyUser);
+
+    uint256 before = usdsc.balanceOf(legacyUser);
+    vm.prank(legacyUser);
+    vault.claim();
+    assertEq(usdsc.balanceOf(legacyUser) - before, usdscClaimable + boostAmounts[0], 'paid what was reported');
+    assertEq(vault.principal(legacyUser), principalBefore + pending, 'pending yield compounded, not paid');
+
+    (uint256 afterUsdsc,, uint256[] memory afterBoost) = vault.getAllClaimables(legacyUser);
+    assertEq(afterUsdsc, 0);
+    assertEq(afterBoost[0], 0);
   }
 
   function test_DepositWithPermit_TriggersV2SettleAndCompoundsExistingPendingYield() public {

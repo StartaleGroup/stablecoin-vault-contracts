@@ -465,7 +465,7 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
   /// @dev Returns exactly what claim() would pay out in USDSC right now: only legacy `accrued`
   ///      balances that predate auto-compounding. Does NOT include pending yield - that folds
   ///      into principal on next settlement, not into a claim() payout. Use pendingYield() or
-  ///      totalValue() to see unsettled yield.
+  ///      totalValue() to see unsettled yield. getAllClaimables() reports the same USDSC amount.
   function claimable(address user) external view virtual override returns (uint256) {
     EarnVaultStorage storage $ = _getStorage();
     return $.accrued[user];
@@ -504,11 +504,12 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
   }
 
   /// @notice Get all claimable rewards for a user (USDSC yield + all boost rewards)
-  /// @dev Overridden purely to swap in pendingYield() for the USDSC leg - V1's version calls
-  ///      this.claimable(user), which under V2 returns only legacy accrued and would silently
-  ///      under-report a normal post-upgrade user's real (pending) USDSC yield here otherwise
+  /// @dev Reports exactly what claim() would pay: usdscClaimable is legacy accrued only, the same
+  ///      as claimable(). Pending yield is not claimable - claim() compounds it into principal -
+  ///      so it is left out here and exposed by pendingYield() and totalValue() instead.
+  ///      (Overridden to read accrued directly rather than through V1's this.claimable() call.)
   /// @param user User address to check
-  /// @return usdscClaimable Legacy accrued USDSC plus unsettled pending yield
+  /// @return usdscClaimable Legacy accrued USDSC, as claim() would pay it
   /// @return boostTokens Array of boost token addresses
   /// @return boostAmounts Array of claimable amounts for each boost token
   function getAllClaimables(address user)
@@ -521,7 +522,7 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
     EarnVaultStorage storage $ = _getStorage();
     _checkNotBlacklisted(user);
 
-    usdscClaimable = $.accrued[user] + _pendingYield(user);
+    usdscClaimable = $.accrued[user];
 
     boostTokens = new address[]($.activeBoostTokens.length);
     boostAmounts = new uint256[]($.activeBoostTokens.length);
