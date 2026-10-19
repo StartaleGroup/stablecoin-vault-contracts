@@ -1052,17 +1052,61 @@ contract EarnVaultV2BoostCreditTest is Test {
     vault.onBoostCredit(1, users, amounts);
   }
 
-  /// @dev The funding check stays conservative: it requires the FULL submitted total, including
-  ///      entries that end up skipped.
-  function test_OnBoostCredit_FundingCheckStillCoversSkippedAmounts() public {
+  /// @dev Funding is checked against the amount actually credited: a skipped entry needs no funding.
+  function test_OnBoostCredit_FundingCoversOnlyCreditedAmounts() public {
+    address userA = makeAddr('userA');
+    address userB = makeAddr('userB');
     vm.prank(owner);
-    vault.setBlacklisted(makeAddr('userB'), true);
+    vault.setBlacklisted(userB, true);
 
-    usdsc.mint(address(vault), 50e6); // only enough for the eligible entry
-    (address[] memory users, uint256[] memory amounts) = _batch2(makeAddr('userA'), 50e6, makeAddr('userB'), 75e6);
+    usdsc.mint(address(vault), 50e6); // exactly the eligible entry
+    (address[] memory users, uint256[] memory amounts) = _batch2(userA, 50e6, userB, 75e6);
+    vm.expectEmit(true, true, true, true);
+    emit EarnVaultV2.BoostCycleCredited(1, 2, 125e6, 1, 75e6);
+    vm.prank(boostKeeper);
+    vault.onBoostCredit(1, users, amounts);
+
+    assertEq(vault.principal(userA), 50e6);
+    assertEq(vault.principal(userB), 0);
+    assertEq(vault.claimReserve(), 50e6);
+    assertEq(usdsc.balanceOf(address(vault)), vault.claimReserve(), 'no surplus left behind');
+    assertEq(vault.latestCycleId(), 1);
+  }
+
+  /// @dev One unit short of the credited amount reverts the whole batch: nothing credited, cycle
+  ///      not advanced, replay guard untouched.
+  function test_OnBoostCredit_FundingOneShortOfCreditedReverts_NothingChanges() public {
+    address userA = makeAddr('userA');
+    address userB = makeAddr('userB');
+    vm.prank(owner);
+    vault.setBlacklisted(userB, true);
+
+    usdsc.mint(address(vault), 50e6 - 1);
+    (address[] memory users, uint256[] memory amounts) = _batch2(userA, 50e6, userB, 75e6);
     vm.prank(boostKeeper);
     vm.expectRevert(IEarnVaultEventsAndErrors.InsufficientFunding.selector);
     vault.onBoostCredit(1, users, amounts);
+
+    assertEq(vault.principal(userA), 0);
+    assertEq(vault.totalPrincipal(), 0);
+    assertEq(vault.claimReserve(), 0);
+    assertEq(vault.latestCycleId(), 0);
+    assertEq(vault.lastCreditedCycle(userA), 0);
+  }
+
+  /// @dev An all-skipped batch credits nothing, so it needs no funding at all.
+  function test_OnBoostCredit_AllSkippedBatchNeedsNoFunding() public {
+    address userB = makeAddr('userB');
+    vm.prank(owner);
+    vault.setBlacklisted(userB, true);
+
+    (address[] memory users, uint256[] memory amounts) = _batch2(userB, 75e6, address(vault), 10e6);
+    vm.expectEmit(true, true, true, true);
+    emit EarnVaultV2.BoostCycleCredited(1, 2, 85e6, 2, 85e6);
+    vm.prank(boostKeeper);
+    vault.onBoostCredit(1, users, amounts);
+    assertEq(vault.claimReserve(), 0);
+    assertEq(vault.latestCycleId(), 0, 'all-skipped batch does not open the cycle');
   }
 
   /// @dev A duplicate of an INELIGIBLE address is skipped twice (no StaleCycle, since a skip

@@ -208,6 +208,32 @@ contract EarnVaultV2UsdscReservesSoneiumFork is Test {
     _assertSolvent();
   }
 
+  /// @dev Funding covers only what is credited: a skipped entry (the vault's own address) larger
+  ///      than the whole free USDSC needs none. The credited amount uses up the existing free USDSC
+  ///      plus 25 USDSC sent in, so one unit less reverts and the exact amount succeeds.
+  function test_BoostCreditFundingCoversOnlyCreditedAmount() public {
+    uint256 credit = _free() + 25e6;
+    address[] memory users = new address[](2);
+    uint256[] memory amounts = new uint256[](2);
+    (users[0], amounts[0]) = (WHALE, credit);
+    (users[1], amounts[1]) = (address(VAULT), credit + 1000e6);
+    uint256 before = VAULT.principal(WHALE) + VAULT.pendingYield(WHALE);
+
+    deal(address(usdsc), boostKeeper, 25e6);
+    vm.startPrank(boostKeeper);
+    usdsc.transfer(address(VAULT), 25e6 - 1);
+    vm.expectRevert(IEarnVaultEventsAndErrors.InsufficientFunding.selector);
+    VAULT.onBoostCredit(1, users, amounts);
+
+    usdsc.transfer(address(VAULT), 1);
+    VAULT.onBoostCredit(1, users, amounts);
+    vm.stopPrank();
+
+    assertEq(VAULT.principal(WHALE), before + credit);
+    assertEq(_free(), 0, 'credited exactly up to the free USDSC');
+    _assertSolvent();
+  }
+
   // ---------------------------------------------------------------------------------------------
   // onYield, through the real RewardRedistributor
   // ---------------------------------------------------------------------------------------------

@@ -235,8 +235,9 @@ contract EarnVaultV2Handler is Test {
       if (batch[i] != address(vault) && batch[i] != blacklistedAddr) credited += amounts[i];
     }
 
-    // Fund first, exactly like the real keeper flow (transfer USDSC in, then call).
-    usdsc.mint(address(vault), total);
+    // Fund first, exactly like the real keeper flow (transfer USDSC in, then call). Only the
+    // credited amount: skipped entries need no funding.
+    usdsc.mint(address(vault), credited);
     // Always open the next cycle, using latestCycleId + 1 read from chain (an all-skipped batch
     // doesn't advance it, so the next call just retries that cycle).
     boostCycleId = vault.latestCycleId() + 1;

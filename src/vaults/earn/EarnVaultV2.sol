@@ -28,8 +28,8 @@ import {Math} from 'lib/openzeppelin-contracts/contracts/utils/math/Math.sol';
 ///        against the engine's own expected totals.
 ///      - Against a COMPROMISED keeper: the funding check (a credit can only draw on USDSC held above
 ///        claimReserve) plus operational discipline - the keeper holds and sends only each batch's
-///        funding just-in-time, the owner sweeps surplus regularly (skipped amounts and donations
-///        accumulate as surplus), and setBoostKeeper() replaces a compromised keeper. The security
+///        funding just-in-time, the owner sweeps surplus regularly (funding sent for skipped entries
+///        and donations accumulate as surplus), and setBoostKeeper() replaces a compromised keeper. The security
 ///        budget is therefore: the keeper wallet's balance + the vault's accumulated surplus.
 ///        The contract deliberately does not try to bound this further in state.
 /// @dev Boost is AA-wallet-only for v1: the backend created those wallets and holds the
@@ -136,7 +136,7 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
   ///         off-chain reward engine confirm "did all of cycle N's batches land?" with a single
   ///         indexed query instead of aggregating every BoostCredited event
   /// @param entryCount Entries submitted in the batch
-  /// @param total Sum of all submitted amounts (the amount the funding check required)
+  /// @param total Sum of all submitted amounts, skipped ones included
   /// @param skippedCount Entries skipped (see BoostCreditSkipped); entryCount - skippedCount were credited
   /// @param skippedTotal Sum of skipped amounts - left in the vault as unreserved surplus
   event BoostCycleCredited(
@@ -276,9 +276,10 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
   }
 
   /// @notice Credit VIP boost directly as principal to each address in the batch
-  /// @dev MUST be called AFTER transferring the batch's total USDSC to this contract - mirrors
-  ///      onYield()'s discipline: verify balance covers claimReserve + boostClaimReserve[USDSC] + total
-  ///      BEFORE crediting anything, so a failed batch credits nothing. Gated whenNotPaused, like the other
+  /// @dev MUST be called AFTER transferring the batch's credited total in USDSC to this contract. After
+  ///      the entries are processed, the balance must cover claimReserve (now including every credited
+  ///      amount) + boostClaimReserve[USDSC], or the whole batch reverts and nothing is credited. Skipped
+  ///      entries need no funding. Gated whenNotPaused, like the other
   ///      principal-changing entry points (deposit()/withdraw()/claim()/compound()/compoundMany()).
   /// @dev All-or-nothing (the whole batch reverts) for funding, replay, cycle bounds, the cap and
   ///      malformed input: insufficient balance; an empty batch; cycleId 0 (ZeroCycleId); a cycleId
@@ -296,10 +297,10 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
   ///      vault's own address, a blacklisted address, or a zero amount - so one ineligible entry
   ///      cannot fail everyone else's credit (mirrors compoundMany()'s skip-blacklisted). A skipped
   ///      entry can still be credited under the same cycleId, but only while that cycle is current;
-  ///      once the next cycle opens the engine must roll the amount forward into a later cycle. The
-  ///      funding check still covers skipped amounts; they stay as unreserved surplus,
-  ///      recoverable via sweepSurplusToTreasury() or reusable by a later credit. Skips do not count
-  ///      toward maxBoostPerBatch.
+  ///      once the next cycle opens the engine must roll the amount forward into a later cycle.
+  ///      Skipped amounts are not required by the funding check and do not count toward
+  ///      maxBoostPerBatch; USDSC sent for them stays as unreserved surplus, recoverable via
+  ///      sweepSurplusToTreasury() or reusable by a later credit.
   /// @dev Reverts DepositsLockedForDistribution(unlocksAt) while the yield redistributor's latest TVL
   ///      snapshot is still usable by its distribute() - the same window that locks deposits. The
   ///      keeper checks depositsLocked() before sending, and retries from `unlocksAt` if it hits it.
@@ -325,11 +326,6 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
       total += amounts[i];
     }
 
-    EarnVaultStorage storage $ = _getStorage();
-    uint256 bal = $.USDSC.balanceOf(address(this));
-    // Must stay covered: claimReserve AND USDSC owed as V1 boost rewards (USDSC is also a boost token)
-    if (bal < _requiredUSDSC() + total) revert IEarnVaultEventsAndErrors.InsufficientFunding();
-
     uint256 skippedCount = 0;
     uint256 skippedTotal = 0;
     for (uint256 i = 0; i < users.length; i++) {
@@ -342,6 +338,12 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
     uint256 credited = total - skippedTotal;
     uint256 maxBatch = _getBoostCreditStorage().maxBoostPerBatch;
     if (credited > maxBatch) revert BoostBatchCapExceeded(credited, maxBatch);
+    // Funding is checked against what was actually credited: claimReserve has grown by `credited`
+    // only. It must stay covered together with USDSC owed as V1 boost rewards (USDSC is also a boost
+    // token). Nothing left the vault during the loop, so a revert here undoes every credit.
+    if (_getStorage().USDSC.balanceOf(address(this)) < _requiredUSDSC()) {
+      revert IEarnVaultEventsAndErrors.InsufficientFunding();
+    }
     if (credited > 0) _advanceCycle(cycleId);
     emit BoostCycleCredited(cycleId, users.length, total, skippedCount, skippedTotal);
   }

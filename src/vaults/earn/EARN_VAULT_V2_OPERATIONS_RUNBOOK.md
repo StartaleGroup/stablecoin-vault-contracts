@@ -71,7 +71,7 @@ Before each batch:
 1. Call `depositsLocked()`. If `locked`, wait until `unlocksAt`. A batch that still lands in a window (a snapshot mined just before it) reverts `DepositsLockedForDistribution(unlocksAt)` with no side effects. Resend it unchanged from `unlocksAt`.
 2. Read `latestCycleId` from chain. Use it for more batches of the current cycle, or `latestCycleId + 1` to open the next one. Do not derive cycle IDs from dates; record the engine's own date → cycleId mapping when submitting.
 3. Keep each batch's credited total at or below `maxBoostPerBatch`, and the batch within the gas budget (sizing table in `base-tier-auto-compounding.md`; size the first cycle by the cold-storage row).
-4. Transfer the batch total in USDSC to the vault **immediately before** the batch. The call reverts `InsufficientFunding` unless the vault's USDSC covers `claimReserve + boostClaimReserve(USDSC) + batch total`.
+4. Transfer the batch's credited total in USDSC to the vault **immediately before** the batch. Entries that will be skipped (the vault's own address, a blacklisted address, a zero amount; check `isBlacklisted` first) need no funding. After crediting, the vault's USDSC must cover `claimReserve + boostClaimReserve(USDSC)`, or the whole batch reverts `InsufficientFunding`. Funding sent for an entry that ends up skipped stays in the vault as surplus.
 
 After each batch:
 
@@ -142,7 +142,7 @@ The single solvency number is the **free USDSC**: `USDSC.balanceOf(vault) - clai
 | Deposits stay locked (snapshots more often than scheduled) | RewardRedistributor admin revokes `OPERATOR_ROLE` or pauses the RewardRedistributor. Deposits unlock once the last snapshot passes `unlocksAt` |
 | `distribute()` reverts `SnapshotTooOld` | Operator re-snapshots and distributes within `snapshotMaxAge` |
 | `onBoostCredit` reverts `DepositsLockedForDistribution` | Expected if a snapshot landed first. Resend the same batch from `unlocksAt` |
-| `onBoostCredit` reverts `InsufficientFunding` | Funding transfer missing or short. Send the batch total, then resend |
+| `onBoostCredit` reverts `InsufficientFunding` | Funding transfer missing or short. Send the rest of the credited total, then resend |
 | `onBoostCredit` reverts `BoostBatchCapExceeded` | Split the batch. Raise the cap only through a planned owner change |
 | `onBoostCredit` reverts `CycleIdTooOld` / `StaleCycle` | The cycle already moved on. Re-read `latestCycleId` and move the remaining entries to the current or next cycle |
 | Unexpected role or config change | Treat it as unauthorized until confirmed. Owner (or RewardRedistributor admin) reverts it, and rotates the affected key |
