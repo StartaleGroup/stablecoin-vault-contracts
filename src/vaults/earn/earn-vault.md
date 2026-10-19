@@ -520,7 +520,7 @@ uint256 boostRewards = vault.getClaimableBoostReward(user, address(usdsc));
 - `ExceedsSurplus()`: Amount exceeds available surplus
 - `EthNotAccepted()`: Contract doesn't accept ETH
 - `SweepFailed()`: ETH sweep operation failed
-- `PermitFailed()`: Permit operation failed (token may not support it)
+- `PermitFailed()`: Permit operation failed and the existing allowance doesn't cover the amount (if the permit was already used, e.g. submitted by someone else first, the deposit still goes ahead on the allowance it granted)
 
 ## Events
 

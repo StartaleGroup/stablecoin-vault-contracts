@@ -214,6 +214,10 @@ contract EarnVaultUpgradeable is
   /// @dev Allows token owner to deposit via permit signature, with optional relayer execution
   /// @dev Token owner signs permit, relayer (msg.sender) pays gas and executes
   /// @dev Safely handles tokens that may not implement IERC20Permit
+  /// @dev If permit() fails but tokenOwner's allowance to this vault already covers `amount` (e.g.
+  ///      someone submitted the same permit first, using its nonce), the deposit still goes ahead.
+  ///      This also means anyone can trigger a deposit of an amount tokenOwner has already approved;
+  ///      it is always credited to tokenOwner's own position, which they can withdraw.
   /// @param tokenOwner Address of token owner (who signs permit and receives deposit credit)
   /// @param amount Amount of USDSC tokens to deposit
   /// @param deadline Permit deadline timestamp
@@ -238,7 +242,9 @@ contract EarnVaultUpgradeable is
     // Permit succeeded, continue with deposit
     }
     catch {
-      revert IEarnVaultEventsAndErrors.PermitFailed();
+      // The permit may already have been used (its nonce consumed by someone submitting it first).
+      // Continue if the allowance it grants is in place; otherwise the permit genuinely failed.
+      if ($.USDSC.allowance(tokenOwner, address(this)) < amount) revert IEarnVaultEventsAndErrors.PermitFailed();
     }
 
     _deposit(tokenOwner, amount);
