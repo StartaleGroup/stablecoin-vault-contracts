@@ -2,7 +2,7 @@
 
 ## Overview
 
-Standard operating procedures for every role that keeps `EarnVaultV2` running: the RewardRedistributor operator, the boost credit keeper, the boost reward keeper, the compound keeper, and the Safes that hold the admin roles. It covers the daily schedule, what each keeper checks before it sends a transaction, what to monitor, and how to respond when something looks wrong.
+Standard operating procedures for every role that keeps `EarnVaultV2` running: the RewardRedistributor operator, the boost credit keeper, the boost reward keeper, the compound keeper, and the Safes that hold the admin roles. It covers how the jobs are ordered, what each keeper checks before it sends a transaction, what to monitor, and how to respond when something looks wrong. Deployment-specific details (schedule, alert thresholds, key holders, contacts) are kept in internal operations notes, not here.
 
 Design background lives elsewhere and is linked rather than repeated:
 
@@ -37,14 +37,14 @@ Every `snapshotVaultTVLs()` opens a window that lasts until `lastSnapshotTimesta
 
 `depositsLocked()` returns `(locked, unlocksAt)`; `unlocksAt` is the first second at which the calls above succeed again. Every keeper and the frontend read it before sending.
 
-**Keep the window short.** It is both the deposit pause and the operator's deadline to call `distribute()`. Set `snapshotMaxAge` to 1–2 minutes (RewardRedistributor admin, `setSnapshotMaxAge`). At 300 s and a snapshot every 3 hours, deposits are paused for about 40 minutes a day; at 60 s, about 8 minutes.
+**Keep the window short.** It is both the deposit pause and the operator's deadline to call `distribute()`. Set `snapshotMaxAge` to 1–2 minutes (RewardRedistributor admin, `setSnapshotMaxAge`). Deposits are paused for up to `snapshotMaxAge` after each snapshot, so the daily pause is the number of snapshots times `snapshotMaxAge`.
 
-## Daily schedule
+## Job ordering
 
 Run the jobs so they never overlap the snapshot window:
 
 ```
-snapshot → distribute        (operator, every 3 h, inside snapshotMaxAge)
+snapshot → distribute        (operator, on schedule, inside snapshotMaxAge)
           ↓ window closes (unlocksAt)
 compoundMany batches          (compound keeper, daily)
 fund + onBoostCredit batches  (boost credit keeper, daily cycle)
@@ -60,7 +60,7 @@ If a job is still running when the next snapshot is due, the operator delays the
 1. `snapshotVaultTVLs()`.
 2. `distribute()` in a later block, as soon as possible and within `snapshotMaxAge`.
 3. On `SnapshotTooOld`, take a fresh snapshot and distribute again. Never leave a snapshot without a distribute, and never snapshot more often than the schedule: each snapshot restarts the deposit lock.
-4. If TVL moves materially between snapshot and distribute (large withdrawals), take a fresh snapshot before distributing.
+4. If TVL moves materially between snapshot and distribute (large withdrawals), or USDSC's total supply does, take a fresh snapshot before distributing: the split between the vaults and the treasury is sized from the snapshot and the supply at distribution.
 
 Full procedure and error table: `../../distributor/OPERATOR_RUNBOOK.md`.
 
@@ -79,7 +79,7 @@ After each batch:
 6. A skipped entry (vault address, blacklisted, zero amount) can be credited again under the same `cycleId` only while that cycle is still current. Once the next cycle opens, roll the amount forward into a later cycle.
 7. After downtime, catch up one cycle per missed day rather than rolling several days into one cycle, so batch totals stay under the cap.
 
-**Key handling.** The cap is per batch, not per cycle or per day, so the contract alone does not bound how much a misused keeper key can credit across many batches. What bounds it is the USDSC available above both reserves. Keep it small:
+**Key handling.** A credit can only use USDSC held above both reserves (`surplusUSDSC()`), never what the vault owes. Keep that amount small and the key easy to replace:
 
 - the keeper key holds only the next batch's funding, topped up per cycle, never several cycles' worth;
 - funding is sent just before the batch that uses it, so it does not sit in the vault as surplus;
@@ -119,15 +119,14 @@ Compounding during the window is allowed by design: it only folds a user's own o
 
 The single solvency number is the **free USDSC**: `USDSC.balanceOf(vault) - claimReserve - boostClaimReserve(USDSC)`. It must never go below zero. `surplusUSDSC()` returns it directly, floored at zero; since a floored value cannot show a shortfall, the solvency alert compares the balance with `claimReserve + boostClaimReserve(USDSC)` itself.
 
-| Watch | Source | Alert when |
+| Watch | Source | Look for |
 | --- | --- | --- |
 | Free USDSC | `surplusUSDSC()`; for the shortfall check, vault balance vs `claimReserve + boostClaimReserve(USDSC)` | Balance below the two reserves, or a drop not explained by a sweep or a credit |
 | Snapshot cadence | RewardRedistributor `VaultTVLsSnapshotCaptured` | More snapshots than scheduled, or a snapshot with no `Distributed` after it |
 | Deposit lock | `depositsLocked()` | Locked for longer than `snapshotMaxAge` plus one block |
 | Distribution | `Distributed`, vault `YieldIndexed` | Missed slot, or a large TVL change between snapshot and distribute |
-| Boost credit cycles | `BoostCredited`, `BoostCreditSkipped`, `BoostCycleCredited` | Totals differ from the engine's expected totals; credits to unexpected addresses; skips not retried within the cycle; more batches per cycle than planned |
-| Boost credit keeper balance | USDSC balance of the keeper key | More than the next cycle's funding |
-| Daily boost reward | `BoostRewardIndexed` | Missing for a day, or an amount different from plan |
+| Boost credit cycles | `BoostCredited`, `BoostCreditSkipped`, `BoostCycleCredited` | Totals differ from the engine's expected totals; credits to unexpected addresses; skips not retried within the cycle |
+| Daily boost reward | `BoostRewardIndexed` | A missed round, or an amount different from plan |
 | Boost payout failures | `BoostRewardTransferFailed` | Any occurrence |
 | Deposits around boosts | `Deposit`, `Withdraw` near `BoostRewardIndexed` | Large deposit just before and withdrawal just after a boost |
 | Role and config changes | `OwnershipTransferred`, `BoostKeeperChanged`, `MaxBoostPerBatchChanged`, `BoostRewardKeeperChanged`, `PauserChanged`, `YieldRedistributorChanged`, `TreasuryChanged`, `Paused` / `Unpaused`; RewardRedistributor `RoleGranted` / `RoleRevoked`, `SnapshotMaxAgeUpdated` | Any change that was not approved in advance |
