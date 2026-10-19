@@ -291,6 +291,62 @@ contract EarnVaultUsdscBoostReserveTest is Test {
   }
 
   // ---------------------------------------------------------------------------------------------
+  // surplusUSDSC(): USDSC above both reserves
+  // ---------------------------------------------------------------------------------------------
+
+  function test_SurplusUSDSC_IsBalanceAboveBothReserves() public {
+    assertEq(vault.surplusUSDSC(), 0, 'funded exactly: no surplus');
+    usdsc.mint(address(vault), 7e6);
+    assertEq(vault.surplusUSDSC(), 7e6);
+    assertEq(vault.surplusUSDSC(), usdsc.balanceOf(address(vault)) - _required());
+  }
+
+  /// @dev USDSC owed as boost rewards is not surplus, even though claimReserve alone would say so
+  function test_SurplusUSDSC_ExcludesOwedUsdscBoost() public {
+    uint256 owedBoost = vault.boostClaimReserve(address(usdsc));
+    assertGt(owedBoost, 0);
+    usdsc.mint(address(vault), 7e6);
+    assertEq(usdsc.balanceOf(address(vault)) - vault.claimReserve(), 7e6 + owedBoost);
+    assertEq(vault.surplusUSDSC(), 7e6);
+  }
+
+  function test_SurplusUSDSC_IsWhatSweepSends() public {
+    usdsc.mint(address(vault), 7e6);
+    uint256 surplus = vault.surplusUSDSC();
+    vm.prank(owner);
+    vault.sweepSurplusToTreasury();
+    assertEq(usdsc.balanceOf(treasury), surplus);
+    assertEq(vault.surplusUSDSC(), 0);
+    _assertSolvent();
+  }
+
+  /// @dev The most onBoostCredit() can credit without new funding: one unit more reverts
+  function test_SurplusUSDSC_IsMostABoostCreditCanUse() public {
+    usdsc.mint(address(vault), 7e6);
+    uint256 surplus = vault.surplusUSDSC();
+    address[] memory users = new address[](1);
+    uint256[] memory amounts = new uint256[](1);
+    (users[0], amounts[0]) = (alice, surplus + 1);
+    vm.prank(boostKeeper);
+    vm.expectRevert(IEarnVaultEventsAndErrors.InsufficientFunding.selector);
+    vault.onBoostCredit(1, users, amounts);
+
+    amounts[0] = surplus;
+    vm.prank(boostKeeper);
+    vault.onBoostCredit(1, users, amounts);
+    assertEq(vault.surplusUSDSC(), 0);
+    _assertSolvent();
+  }
+
+  /// @dev Under-reserved (balance below what is owed) reads 0 instead of reverting
+  function test_SurplusUSDSC_FlooredAtZero() public {
+    bytes32 slot = bytes32(uint256(EARN_VAULT_STORAGE) + CLAIM_RESERVE_FIELD);
+    vm.store(address(vault), slot, bytes32(uint256(vm.load(address(vault), slot)) + 1));
+    assertLt(usdsc.balanceOf(address(vault)), _required());
+    assertEq(vault.surplusUSDSC(), 0);
+  }
+
+  // ---------------------------------------------------------------------------------------------
   // Non-upgradeable twin
   // ---------------------------------------------------------------------------------------------
 
@@ -314,10 +370,13 @@ contract EarnVaultUsdscBoostReserveTest is Test {
     vm.expectRevert(IEarnVaultEventsAndErrors.InsufficientFunding.selector);
     twin.onYield(1);
 
+    assertEq(twin.surplusUSDSC(), 0);
     usdsc.mint(address(twin), 3e6);
+    assertEq(twin.surplusUSDSC(), 3e6, 'twin: surplus excludes the owed boost');
     vm.prank(owner);
     twin.sweepSurplusToTreasury();
     assertEq(usdsc.balanceOf(treasury), 3e6);
+    assertEq(twin.surplusUSDSC(), 0);
 
     usdsc.mint(address(twin), 2e6);
     vm.prank(pauser);

@@ -77,6 +77,13 @@ contract EarnVaultV2UsdscReservesSoneiumFork is Test {
   // Boost rewards are USDSC-only, and boost tokens can't be removed
   // ---------------------------------------------------------------------------------------------
 
+  /// @dev surplusUSDSC() on the live state equals the balance above both reserves (about 4.13 USDSC
+  ///      at the time of writing, against ~1,600 USDSC of boost owed that claimReserve alone omits)
+  function test_SurplusViewMatchesLiveFreeUsdsc() public view {
+    assertEq(VAULT.surplusUSDSC(), _free());
+    assertGt(VAULT.boostClaimReserve(address(usdsc)), VAULT.surplusUSDSC(), 'owed boost not counted as surplus');
+  }
+
   function test_LiveVaultHasOnlyUsdscAsBoostToken() public view {
     (, address[] memory tokens,) = VAULT.getAllClaimables(WHALE);
     assertEq(tokens.length, 1);

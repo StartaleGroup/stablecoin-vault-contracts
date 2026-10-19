@@ -458,6 +458,15 @@ contract EarnVaultUpgradeable is
     return $.globalIndex;
   }
 
+  /// @notice USDSC held above everything the vault owes in USDSC (claimReserve plus USDSC boost
+  ///         rewards owed), floored at zero: the amount sweepSurplusToTreasury() would send and, in
+  ///         EarnVaultV2, the most onBoostCredit() can credit without new funding. For monitoring.
+  function surplusUSDSC() external view returns (uint256) {
+    uint256 bal = _getStorage().USDSC.balanceOf(address(this));
+    uint256 required = _requiredUSDSC();
+    return bal > required ? bal - required : 0;
+  }
+
   /// @notice Amount of `token` reserved for boost rewards users have earned but not yet claimed
   function boostClaimReserve(address token) external view returns (uint256) {
     EarnVaultStorage storage $ = _getStorage();

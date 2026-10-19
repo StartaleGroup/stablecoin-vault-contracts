@@ -348,6 +348,7 @@ contract EarnVaultV2Handler is Test {
   /// @notice The owner sweeps surplus: it may only ever take the free USDSC
   function sweep() external {
     uint256 free = freeUsdsc();
+    assertEq(vault.surplusUSDSC(), free, 'surplusUSDSC differs from the free USDSC');
     uint256 before = usdsc.balanceOf(treasury);
     vm.prank(owner);
     vault.sweepSurplusToTreasury();
@@ -621,6 +622,11 @@ contract EarnVaultV2Invariants is StdInvariant, Test {
   ///         ever adds a non-negative delta; nothing in this contract can decrease it).
   function invariant_GlobalIndexNeverBelowInitialRay() external view {
     assertGe(vault.globalIndex(), RAY);
+  }
+
+  /// @notice surplusUSDSC() is exactly the USDSC above both reserves
+  function invariant_SurplusViewMatchesFreeUsdsc() external view {
+    assertEq(vault.surplusUSDSC(), handler.freeUsdsc());
   }
 
   /// @notice The read-only accounting views must never revert for any tracked user, regardless

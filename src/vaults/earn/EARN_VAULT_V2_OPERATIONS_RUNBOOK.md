@@ -117,11 +117,11 @@ Compounding during the window is allowed by design: it only folds a user's own o
 
 ## Monitoring
 
-The single solvency number is the **free USDSC**: `USDSC.balanceOf(vault) - claimReserve - boostClaimReserve(USDSC)`. It must never go below zero.
+The single solvency number is the **free USDSC**: `USDSC.balanceOf(vault) - claimReserve - boostClaimReserve(USDSC)`. It must never go below zero. `surplusUSDSC()` returns it directly, floored at zero; since a floored value cannot show a shortfall, the solvency alert compares the balance with `claimReserve + boostClaimReserve(USDSC)` itself.
 
 | Watch | Source | Alert when |
 | --- | --- | --- |
-| Free USDSC | vault balance, `claimReserve`, `boostClaimReserve(USDSC)` | Below 0, or a drop not explained by a sweep or a credit |
+| Free USDSC | `surplusUSDSC()`; for the shortfall check, vault balance vs `claimReserve + boostClaimReserve(USDSC)` | Balance below the two reserves, or a drop not explained by a sweep or a credit |
 | Snapshot cadence | RewardRedistributor `VaultTVLsSnapshotCaptured` | More snapshots than scheduled, or a snapshot with no `Distributed` after it |
 | Deposit lock | `depositsLocked()` | Locked for longer than `snapshotMaxAge` plus one block |
 | Distribution | `Distributed`, vault `YieldIndexed` | Missed slot, or a large TVL change between snapshot and distribute |
