@@ -232,10 +232,11 @@ Because the lock is keyed to the snapshot's own age rather than to whether `onYi
 - **`yieldRedistributor` has no code (an EOA): never locked.** No snapshot exists to respect. This is for tests and local setups; the live vault's redistributor is a contract.
 - **`yieldRedistributor` has code: it must answer both getters, or the deposit reverts.** The getters are ordinary high-level calls, not try/catch. Treating a failed call as "unlocked" would let anyone who can make that call fail (for example by starving it of gas) bypass the lock. The cost is that a contract redistributor without the getters makes every deposit revert, which is loud rather than silent. The upgrade and verify scripts refuse to proceed unless the redistributor is a contract that answers both getters (`EarnVaultV2UpgradeChecks._requireRedistributorSnapshotGetters`).
 
+**Also blocked during the window: `onBoostCredit()`.** It adds principal the same way a deposit does, so a credit landing after the snapshot would share a distribution sized without it. It reverts `DepositsLockedForDistribution(unlocksAt)` in the window; the boost keeper checks `depositsLocked()` before sending and retries from `unlocksAt`.
+
 **Deliberately not blocked during the window.**
 
 - **`withdraw()` and `claim()`** only reduce principal or pay out balances that are already reserved. A depositor who withdraws during the window gives up that cycle's yield to those who stay.
-- **`onBoostCredit()`** is callable only by the trusted boost keeper. Schedule boost-credit batches outside the window. A batch that does land inside it dilutes others by roughly `credited / P` for that one distribution; it cannot cause insolvency, because `onYield` divides by live principal.
 - **`compound()` / `compoundMany()`** are permissionless but only fold a user's own already-owed yield into their own principal; no new funds enter. The resulting dilution of one distribution is at most `(yield folded during the window) / P`, about one day's yield with daily compounding (~0.01–0.02%). No solvency effect, for the same reason.
 - **`onYield()`** is the redistributor's own call and has to work inside the window.
 
@@ -245,7 +246,7 @@ Because the lock is keyed to the snapshot's own age rather than to whether `onYi
 2. **`onBoostReward()`** distributes USDSC boost rewards over live `totalPrincipal` with no snapshot. A deposit just before it dilutes other depositors' boost rewards. Same class of issue, separate keeper; not covered by this lock.
 3. **sUSDSC recipient set** (the other half of Phase 2 in the Quantstamp thread) is unchanged; sUSDSC TVL is currently 0.
 
-**Operations.** Keep `snapshotMaxAge` short and call `distribute()` promptly after `snapshotVaultTVLs()`. Run boost-credit batches outside the window. Avoid a fixed, public snapshot schedule. Have the frontend read `depositsLocked()` and show the unlock time. Perform the V1 → V2 upgrade outside a snapshot window: V1 does not lock, so a deposit that lands in a window before the upgrade can still dilute that one distribution.
+**Operations.** Keep `snapshotMaxAge` short and call `distribute()` promptly after `snapshotVaultTVLs()`. Schedule boost-credit batches outside the window (a batch inside it reverts and has to be retried). Avoid a fixed, public snapshot schedule. Have the frontend read `depositsLocked()` and show the unlock time. Perform the V1 → V2 upgrade outside a snapshot window: V1 does not lock, so a deposit that lands in a window before the upgrade can still dilute that one distribution.
 
 **Contract size.** The lock pushed `EarnVaultV2` to 24,784 bytes at the repo's `optimizer_runs = 999999`, over the EIP-170 limit (24,576). `foundry.toml` therefore compiles `src/vaults/earn/EarnVaultV2.sol` alone with `optimizer_runs = 10000` (`compilation_restrictions`): 22,285 bytes, ~2.3k headroom; every other contract's bytecode is unchanged. Cost: `deposit` +0.1%, `onBoostCredit` +0.2% (cold) to +1.4% (warm). Explorer verification of the implementation must use runs = 10000. Foundry's test EVM does not enforce EIP-170, so `test_Upgrade_HappyPath_FreshImplementation_InitializesV2AndPreservesV1State` asserts the deployed implementation is within the limit.
 

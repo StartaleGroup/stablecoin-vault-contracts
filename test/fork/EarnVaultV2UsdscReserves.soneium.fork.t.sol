@@ -163,6 +163,39 @@ contract EarnVaultV2UsdscReservesSoneiumFork is Test {
     VAULT.onBoostCredit(1, users, amounts);
   }
 
+  /// @dev A credit inside the real redistributor's snapshot window reverts; the same batch goes
+  ///      through once the window has passed
+  function test_BoostCreditLockedDuringSnapshotWindow() public {
+    (address[] memory users, uint256[] memory amounts) = _oneEntry(WHALE, 25e6);
+    deal(address(usdsc), boostKeeper, 25e6);
+    vm.prank(boostKeeper);
+    usdsc.transfer(address(VAULT), 25e6);
+
+    vm.warp(block.timestamp + 1 hours); // let any live snapshot window lapse first
+    vm.roll(block.number + 1800);
+    vm.prank(RR_OPERATOR);
+    RR.snapshotVaultTVLs();
+    (bool locked, uint256 unlocksAt) = VAULT.depositsLocked();
+    assertTrue(locked);
+
+    vm.prank(boostKeeper);
+    vm.expectRevert(abi.encodeWithSelector(EarnVaultV2.DepositsLockedForDistribution.selector, unlocksAt));
+    VAULT.onBoostCredit(1, users, amounts);
+
+    // the operator distributes inside the window as usual
+    vm.roll(block.number + 2);
+    vm.warp(block.timestamp + 4);
+    vm.prank(RR_OPERATOR);
+    RR.distribute();
+
+    vm.warp(unlocksAt);
+    uint256 before = VAULT.principal(WHALE) + VAULT.pendingYield(WHALE);
+    vm.prank(boostKeeper);
+    VAULT.onBoostCredit(1, users, amounts);
+    assertEq(VAULT.principal(WHALE), before + 25e6);
+    _assertSolvent();
+  }
+
   function test_FundedBoostCreditWorks() public {
     (address[] memory users, uint256[] memory amounts) = _oneEntry(WHALE, 25e6);
     uint256 before = VAULT.principal(WHALE) + VAULT.pendingYield(WHALE);

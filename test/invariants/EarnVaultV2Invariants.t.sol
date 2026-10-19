@@ -36,6 +36,9 @@ contract EarnVaultV2Handler is Test {
   /// @notice deposit() calls the handler issued while vault.depositsLocked() was true - each one
   ///         asserted DepositsLockedForDistribution and changed nothing (see deposit() below).
   uint256 public lockedDepositAttempts;
+  /// @notice onBoostCredit() calls the handler issued while locked - each asserted
+  ///         DepositsLockedForDistribution and changed nothing (see onBoostCredit() below).
+  uint256 public lockedCreditAttempts;
 
   /// @notice Upper bound on per-user settlements performed so far (each floors <= 1 wei of
   ///         yield in the vault's favour). Over-counting only loosens the dust bound below.
@@ -237,6 +240,20 @@ contract EarnVaultV2Handler is Test {
     // Always open the next cycle, using latestCycleId + 1 read from chain (an all-skipped batch
     // doesn't advance it, so the next call just retries that cycle).
     boostCycleId = vault.latestCycleId() + 1;
+
+    // Locked in the same window as deposits (checked first): asserted, and nothing changes
+    (bool locked, uint256 unlocksAt) = expectedLock();
+    if (locked) {
+      uint256 latestBefore = vault.latestCycleId();
+      uint256 principalBefore = vault.totalPrincipal();
+      lockedCreditAttempts++;
+      vm.expectRevert(abi.encodeWithSelector(EarnVaultV2.DepositsLockedForDistribution.selector, unlocksAt));
+      vm.prank(boostKeeper);
+      vault.onBoostCredit(boostCycleId, batch, amounts);
+      assertEq(vault.latestCycleId(), latestBefore, 'locked credit advanced latestCycleId');
+      assertEq(vault.totalPrincipal(), principalBefore, 'locked credit changed totalPrincipal');
+      return;
+    }
 
     if (credited > BOOST_CAP) {
       uint256 latestBefore = vault.latestCycleId();
@@ -453,6 +470,14 @@ contract EarnVaultV2Invariants is StdInvariant, Test {
       handler.deposit(seed, seed + 1);
     }
     assertGt(handler.lockedDepositAttempts(), 0, 'no fuzzed deposit hit the locked path');
+  }
+
+  /// @notice Guards the fuzz setup: a boost credit inside the snapshot window is really exercised
+  function test_HandlerLockedCreditPathIsReachable() external {
+    handler.deposit(0, 1000e6);
+    handler.snapshot(1 minutes);
+    handler.onBoostCredit(0, 1, 1);
+    assertGt(handler.lockedCreditAttempts(), 0, 'no fuzzed credit hit the locked path');
   }
 
   /// @notice The vault's depositsLocked() view always equals the redistributor-window formula,

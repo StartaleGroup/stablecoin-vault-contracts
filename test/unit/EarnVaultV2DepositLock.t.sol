@@ -268,7 +268,7 @@ contract EarnVaultV2DepositLockTest is Test {
   // What stays allowed while locked
   // ---------------------------------------------------------------------
 
-  function test_WhileLocked_WithdrawClaimCompoundCompoundManyOnBoostCreditOnYieldAllSucceed() public {
+  function test_WhileLocked_WithdrawClaimCompoundCompoundManyOnYieldAllSucceed() public {
     address alice = makeAddr('alice');
     address bob = makeAddr('bob');
     _mintApprove(alice, 10_000e18);
@@ -308,20 +308,95 @@ contract EarnVaultV2DepositLockTest is Test {
     batch[1] = bob;
     vault.compoundMany(batch);
 
-    usdsc.mint(address(vault), 10e18);
-    address[] memory creditUsers = new address[](1);
-    creditUsers[0] = alice;
-    uint256[] memory creditAmounts = new uint256[](1);
-    creditAmounts[0] = 10e18;
-    vm.prank(boostKeeper);
-    vault.onBoostCredit(1, creditUsers, creditAmounts);
-
     usdsc.mint(address(vault), 50e18);
     vm.prank(address(redistributor));
     vault.onYield(50e18);
 
     (bool stillLocked,) = vault.depositsLocked();
     assertTrue(stillLocked, 'none of the above are gated by the deposit lock');
+  }
+
+  // ---------------------------------------------------------------------
+  // onBoostCredit is locked in the same window as deposits
+  // ---------------------------------------------------------------------
+
+  function _creditOne(address user, uint256 amount) internal returns (address[] memory u, uint256[] memory a) {
+    u = new address[](1);
+    a = new uint256[](1);
+    (u[0], a[0]) = (user, amount);
+    usdsc.mint(address(vault), amount);
+  }
+
+  function test_OnBoostCreditRevertsWhileLocked_NothingChanges() public {
+    address alice = makeAddr('alice');
+    _mintApprove(alice, 1000e18);
+    vm.prank(alice);
+    vault.deposit(1000e18);
+    (address[] memory u, uint256[] memory a) = _creditOne(alice, 10e18);
+
+    redistributor.setSnapshot(block.timestamp, DEFAULT_MAX_AGE);
+    uint256 unlocksAt = block.timestamp + DEFAULT_MAX_AGE + 1;
+    uint256 principalBefore = vault.principal(alice);
+    uint256 reserveBefore = vault.claimReserve();
+
+    vm.prank(boostKeeper);
+    vm.expectRevert(abi.encodeWithSelector(EarnVaultV2.DepositsLockedForDistribution.selector, unlocksAt));
+    vault.onBoostCredit(1, u, a);
+
+    assertEq(vault.principal(alice), principalBefore);
+    assertEq(vault.claimReserve(), reserveBefore);
+    assertEq(vault.latestCycleId(), 0, 'cycle not opened');
+    assertEq(vault.lastCreditedCycle(alice), 0);
+  }
+
+  function test_OnBoostCreditLockedUntilExactlyUnlocksAt_ThenSucceeds() public {
+    address alice = makeAddr('alice');
+    _mintApprove(alice, 1000e18);
+    vm.prank(alice);
+    vault.deposit(1000e18);
+    (address[] memory u, uint256[] memory a) = _creditOne(alice, 10e18);
+
+    redistributor.setSnapshot(block.timestamp, DEFAULT_MAX_AGE);
+    uint256 unlocksAt = block.timestamp + DEFAULT_MAX_AGE + 1;
+
+    // last locked second
+    vm.warp(unlocksAt - 1);
+    vm.prank(boostKeeper);
+    vm.expectRevert(abi.encodeWithSelector(EarnVaultV2.DepositsLockedForDistribution.selector, unlocksAt));
+    vault.onBoostCredit(1, u, a);
+
+    // first unlocked second: the same batch goes through
+    vm.warp(unlocksAt);
+    uint256 before = vault.principal(alice) + vault.pendingYield(alice);
+    vm.prank(boostKeeper);
+    vault.onBoostCredit(1, u, a);
+    assertEq(vault.principal(alice), before + 10e18);
+    assertEq(vault.latestCycleId(), 1);
+  }
+
+  function test_OnBoostCreditNotLockedWithoutSnapshot() public {
+    address alice = makeAddr('alice');
+    _mintApprove(alice, 1000e18);
+    vm.prank(alice);
+    vault.deposit(1000e18);
+    (address[] memory u, uint256[] memory a) = _creditOne(alice, 10e18);
+    (bool locked,) = vault.depositsLocked();
+    assertFalse(locked);
+    vm.prank(boostKeeper);
+    vault.onBoostCredit(1, u, a);
+    assertEq(vault.principal(alice), 1010e18);
+  }
+
+  /// @dev The lock is checked before batch validation, so a keeper sees the lock error first
+  function test_OnBoostCreditLockCheckedBeforeBatchValidation() public {
+    redistributor.setSnapshot(block.timestamp, DEFAULT_MAX_AGE);
+    address[] memory empty = new address[](0);
+    uint256[] memory none = new uint256[](0);
+    vm.prank(boostKeeper);
+    vm.expectRevert(
+      abi.encodeWithSelector(EarnVaultV2.DepositsLockedForDistribution.selector, block.timestamp + DEFAULT_MAX_AGE + 1)
+    );
+    vault.onBoostCredit(1, empty, none);
   }
 
   function test_SecondOnYieldWithinSameSnapshotWindow_DepositsStillLocked() public {

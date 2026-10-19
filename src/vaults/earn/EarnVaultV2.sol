@@ -70,8 +70,9 @@ import {Math} from 'lib/openzeppelin-contracts/contracts/utils/math/Math.sol';
 ///      landing in between would take toEarn * d / (P + d) from the existing depositors. Dividing
 ///      onYield() by the snapshot principal instead does NOT work in this index-based vault: the
 ///      late deposit would still accrue on its own principal, so total owed would exceed toEarn
-///      (insolvency). The lock does not cover a deposit made before the snapshot, nor onBoostReward()
-///      (boost tokens over live principal, no snapshot). See base-tier-auto-compounding.md, "JIT
+///      (insolvency). The same lock also covers onBoostCredit(), which adds principal the same way. It
+///      does not cover a deposit made before the snapshot, nor onBoostReward() (USDSC boost over live
+///      principal, no snapshot). See base-tier-auto-compounding.md, "JIT
 ///      deposit lock (Phase 2)", for the full rationale, what stays open in the window and why, and
 ///      the operational requirements.
 contract EarnVaultV2 is EarnVaultUpgradeable {
@@ -299,6 +300,9 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
   ///      funding check still covers skipped amounts; they stay as unreserved surplus,
   ///      recoverable via sweepSurplusToTreasury() or reusable by a later credit. Skips do not count
   ///      toward maxBoostPerBatch.
+  /// @dev Reverts DepositsLockedForDistribution(unlocksAt) while the yield redistributor's latest TVL
+  ///      snapshot is still usable by its distribute() - the same window that locks deposits. The
+  ///      keeper checks depositsLocked() before sending, and retries from `unlocksAt` if it hits it.
   /// @param cycleId latestCycleId (current) or latestCycleId + 1 (next); the engine should read
   ///        latestCycleId from chain rather than derive cycle IDs from dates
   /// @param users Addresses to credit (AA wallets for v1 - the backend resolves user -> address)
@@ -308,6 +312,10 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
     address[] calldata users,
     uint256[] calldata amounts
   ) external whenNotPaused onlyBoostKeeper nonReentrant {
+    // Same window as deposits: principal credited after a TVL snapshot would share a yield
+    // distribution that was sized without it
+    (bool locked, uint256 unlocksAt) = _depositLockState();
+    if (locked) revert DepositsLockedForDistribution(unlocksAt);
     if (users.length != amounts.length) revert LengthMismatch();
     if (users.length == 0) revert EmptyBatch();
     _checkCycle(cycleId);
