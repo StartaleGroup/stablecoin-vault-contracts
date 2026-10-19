@@ -11,6 +11,12 @@ import {ITransparentUpgradeableProxy} from '@openzeppelin/contracts/proxy/transp
 import {IERC20} from '@openzeppelin/contracts/token/ERC20/IERC20.sol';
 import {Test, console2} from 'forge-std/Test.sol';
 
+/// @dev The live M token's index and its portal-only update (a bridge index message)
+interface IMTokenIndex {
+  function currentIndex() external view returns (uint128);
+  function updateIndex(uint128 index) external;
+}
+
 /**
  * @title EarnVaultV2UpgradeSoneiumFork
  * @notice Rehearses the live EarnVault V1 -> V2 upgrade on a Soneium mainnet fork, sent the way
@@ -29,6 +35,8 @@ contract EarnVaultV2UpgradeSoneiumFork is Test {
   address constant REDISTRIBUTOR = 0xda798684ffD5eb509c2Ab7b8352EC55B31F18201;
   address constant RR_OPERATOR = 0x86bE13a26d548FA5407Ee3E5a8321B4E1019333C;
   address constant LIVE_BOOST_LIB = 0x674894C99714bf7E6Acdd9a73d46c6f9EACe66CE;
+  address constant M_TOKEN = 0x866A2BF4E572CbcF37D5071A7a58503Bfb36be1b;
+  address constant M_PORTAL = 0xD925C84b55E4e44a53749fF5F2a5A13F63D128fd;
 
   uint256 constant CAP = 10_000e6;
 
@@ -239,6 +247,12 @@ contract EarnVaultV2UpgradeSoneiumFork is Test {
     address depositor = users[0];
     _unlockDeposits();
 
+    // The M portal pushes a slightly higher index, as a bridge index update would, so the cycle has
+    // yield to claim however recently the live redistributor last claimed
+    uint128 index = IMTokenIndex(M_TOKEN).currentIndex();
+    vm.prank(M_PORTAL);
+    IMTokenIndex(M_TOKEN).updateIndex(index + index / 100_000);
+
     // 1) Snapshot: deposits lock for exactly snapshotMaxAge seconds
     vm.prank(RR_OPERATOR);
     rr.snapshotVaultTVLs();
@@ -346,33 +360,33 @@ contract EarnVaultV2UpgradeSoneiumFork is Test {
     vault.onBoostCredit(2, one, big);
   }
 
-  /// @dev FINDING: onBoostCredit's funding check is `balance >= claimReserve + total`, but on the
-  ///      live vault USDSC is also a V1 boost token whose owed rewards sit in
-  ///      boostClaimReserve[USDSC], outside claimReserve. A batch can therefore be "funded" by
-  ///      USDSC that users are already owed. This test passes while the bug exists; once the check
-  ///      also counts boostClaimReserve[USDSC], the credit below should revert InsufficientFunding.
-  function test_Finding_BoostCreditCanSpendOwedUsdscBoostRewards() public {
+  /// @dev On the live vault USDSC is also a V1 boost token, so USDSC owed as boost rewards sits in
+  ///      boostClaimReserve[USDSC], outside claimReserve. A credit may use only what is above both:
+  ///      `balance - claimReserve` (which includes the owed boost) reverts, surplusUSDSC() succeeds
+  function test_BoostCreditCannotUseOwedUsdscBoostRewards() public {
     uint256 boostReserve = _usdscBoostReserve();
-    uint256 looksFree = usdsc.balanceOf(VAULT) - vault.claimReserve();
-    console2.log('balance - claimReserve (what onBoostCredit treats as free):', looksFree);
-    console2.log('boostClaimReserve[USDSC] (owed to V1 boost holders):     ', boostReserve);
+    uint256 aboveClaimReserve = usdsc.balanceOf(VAULT) - vault.claimReserve();
+    uint256 surplus = vault.surplusUSDSC();
     assertGt(boostReserve, 0);
-    assertGt(looksFree, boostReserve);
+    assertEq(aboveClaimReserve, surplus + boostReserve, 'owed boost is not surplus');
 
     address[] memory one = new address[](1);
     uint256[] memory amt = new uint256[](1);
     one[0] = users[1];
-    amt[0] = looksFree; // no new USDSC sent in
+    amt[0] = aboveClaimReserve; // no new USDSC sent in
     vm.prank(boostKeeper);
+    vm.expectRevert(IEarnVaultEventsAndErrors.InsufficientFunding.selector);
     vault.onBoostCredit(1, one, amt);
 
-    // Every USDSC in the vault is now claimed by principal, so the boost holders are unbacked
-    assertEq(usdsc.balanceOf(VAULT), vault.claimReserve());
-    assertLt(usdsc.balanceOf(VAULT), vault.claimReserve() + _usdscBoostReserve(), 'expected under-reserve');
+    amt[0] = surplus;
+    vm.prank(boostKeeper);
+    vault.onBoostCredit(1, one, amt);
+    assertEq(usdsc.balanceOf(VAULT), vault.claimReserve() + _usdscBoostReserve(), 'still covers both reserves');
+    assertEq(vault.surplusUSDSC(), 0);
   }
 
   function test_BoostCreditRefusesUnfundedBatch() public {
-    uint256 surplus = usdsc.balanceOf(VAULT) - vault.claimReserve();
+    uint256 surplus = vault.surplusUSDSC();
 
     address[] memory one = new address[](1);
     uint256[] memory amt = new uint256[](1);
