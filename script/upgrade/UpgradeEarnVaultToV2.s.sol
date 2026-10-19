@@ -21,7 +21,8 @@ import {console} from 'forge-std/Script.sol';
  *      owns that ProxyAdmin, the proxy is still V1 at initialized version 1, and the current
  *      yieldRedistributor is a contract that answers EarnVaultV2's JIT deposit lock getters
  *      (lastSnapshotTimestamp/snapshotMaxAge) - an EOA or a getter-less contract there would make
- *      V2's lock permanently fail-open or permanently fail-closed, respectively.
+ *      V2's lock permanently fail-open or permanently fail-closed, respectively - and no boost token
+ *      other than USDSC is registered (boost is USDSC-only and tokens can no longer be removed).
  * @dev IMPORTANT: forge script runs this locally (simulation) before broadcasting, so the
  *      post-flight here validates the SIMULATED state. After the broadcast lands, run
  *      VerifyEarnVaultV2Upgrade against the live chain.
@@ -85,6 +86,7 @@ contract UpgradeEarnVaultToV2 is EarnVaultV2UpgradeChecks {
     require(keccak256(bytes(v.getVersion())) == keccak256('EarnVaultV1'), 'proxy is not on EarnVaultV1');
     require(_initializedVersion(p.proxy) == 1, 'unexpected initialized version (expected 1)');
     _requireRedistributorSnapshotGetters(p.proxy);
+    _requireUsdscOnlyBoostTokens(p.proxy);
 
     snap = V1Snapshot({
       roles: _readRoles(p.proxy),

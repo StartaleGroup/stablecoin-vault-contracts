@@ -28,8 +28,8 @@ import {Math} from 'lib/openzeppelin-contracts/contracts/utils/math/Math.sol';
 ///        against the engine's own expected totals.
 ///      - Against a COMPROMISED keeper: the funding check (a credit can only draw on USDSC held above
 ///        claimReserve) plus operational discipline - the keeper holds and sends only each batch's
-///        funding just-in-time, the owner sweeps surplus regularly (skipped amounts and donations
-///        accumulate as surplus), and setBoostKeeper() replaces a compromised keeper. The security
+///        funding just-in-time, the owner sweeps surplus regularly (funding sent for skipped entries
+///        and donations accumulate as surplus), and setBoostKeeper() replaces a compromised keeper. The security
 ///        budget is therefore: the keeper wallet's balance + the vault's accumulated surplus.
 ///        The contract deliberately does not try to bound this further in state.
 /// @dev Boost is AA-wallet-only for v1: the backend created those wallets and holds the
@@ -49,15 +49,16 @@ import {Math} from 'lib/openzeppelin-contracts/contracts/utils/math/Math.sol';
 ///      uniqueness constraint the reward engine (scenario A) or the registry (scenario B) must
 ///      enforce, or a user can split a balance across addresses to capture top boost bands.
 ///      V1 stays the
-///      frozen, currently-live reference - its only changes were `virtual` modifiers and NatSpec
-///      so this contract can override it, with no behaviour change; do not add feature logic there
-///      going forward - extend it here, or in a further V3/V4/... subclass of this contract.
+///      frozen, currently-live reference - its changes are `virtual` modifiers and NatSpec (so this
+///      contract can override it) plus audit-remediation fixes that ship with this upgrade: every
+///      USDSC check counts both USDSC reserves, and boost rewards are USDSC-only. Do not add feature
+///      logic there going forward - extend it here, or in a further V3/V4/... subclass.
 /// @dev Known, accepted inefficiency: withdraw()/claim() (inherited unchanged from V1) call
 ///      _settle() - which already settles every active boost token here - and then call the
 ///      inherited _claimBoostRewards(), whose BoostRewardsLib.claimBoostReward() internally
 ///      re-runs settleBoost() per token before paying out. That re-run computes a zero delta
 ///      (the index is already caught up) but still costs a bounded number of extra SLOADs
-///      (at most MAX_BOOST_TOKENS = 10). Not fixed here: claimBoostReward() combines
+///      (one boost token: USDSC is the only boost reward token). Not fixed here: claimBoostReward() combines
 ///      settle-then-pay in one library call used by both V1 and V2, so avoiding this would
 ///      mean either modifying the shared library (widening blast radius onto V1's own
 ///      behavior) or duplicating its payout logic here - not worth it for a bounded,
@@ -69,8 +70,9 @@ import {Math} from 'lib/openzeppelin-contracts/contracts/utils/math/Math.sol';
 ///      landing in between would take toEarn * d / (P + d) from the existing depositors. Dividing
 ///      onYield() by the snapshot principal instead does NOT work in this index-based vault: the
 ///      late deposit would still accrue on its own principal, so total owed would exceed toEarn
-///      (insolvency). The lock does not cover a deposit made before the snapshot, nor onBoostReward()
-///      (boost tokens over live principal, no snapshot). See base-tier-auto-compounding.md, "JIT
+///      (insolvency). The same lock also covers onBoostCredit(), which adds principal the same way. It
+///      does not cover a deposit made before the snapshot, nor onBoostReward() (USDSC boost over live
+///      principal, no snapshot). See base-tier-auto-compounding.md, "JIT
 ///      deposit lock (Phase 2)", for the full rationale, what stays open in the window and why, and
 ///      the operational requirements.
 contract EarnVaultV2 is EarnVaultUpgradeable {
@@ -134,7 +136,7 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
   ///         off-chain reward engine confirm "did all of cycle N's batches land?" with a single
   ///         indexed query instead of aggregating every BoostCredited event
   /// @param entryCount Entries submitted in the batch
-  /// @param total Sum of all submitted amounts (the amount the funding check required)
+  /// @param total Sum of all submitted amounts, skipped ones included
   /// @param skippedCount Entries skipped (see BoostCreditSkipped); entryCount - skippedCount were credited
   /// @param skippedTotal Sum of skipped amounts - left in the vault as unreserved surplus
   event BoostCycleCredited(
@@ -175,9 +177,10 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
   ///      atomically with the upgrade, and cannot be front-run.
   /// @dev What the gate prevents: without it, after an upgrade with empty calldata anyone could call
   ///      this first and install themselves as boostKeeper. The funding check in onBoostCredit()
-  ///      bounds what they could credit to USDSC held above claimReserve (e.g. donations, or funding
-  ///      transferred ahead of a separate credit call), and the owner could replace them via
-  ///      setBoostKeeper() - but it is still an attacker-controlled role and must not be possible.
+  ///      bounds what they could credit to USDSC held above claimReserve + boostClaimReserve[USDSC]
+  ///      (e.g. donations, or funding transferred ahead of a separate credit call), and the owner
+  ///      could replace them via setBoostKeeper() - but it would still be a keeper nobody appointed,
+  ///      so it must not be possible.
   /// @dev If an upgrade lands without this call, boostKeeper is address(0), so onlyBoostKeeper
   ///      rejects every caller (the rest of the vault works) - and reinitializer(2) is still
   ///      UNCONSUMED (initialized version stays 1). Proper fix: repeat upgradeAndCall to the same
@@ -273,9 +276,10 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
   }
 
   /// @notice Credit VIP boost directly as principal to each address in the batch
-  /// @dev MUST be called AFTER transferring the batch's total USDSC to this contract - mirrors
-  ///      onYield()'s discipline: verify balance covers claimReserve + total BEFORE crediting
-  ///      anything, so a failed batch credits nothing. Gated whenNotPaused, like the other
+  /// @dev MUST be called AFTER transferring the batch's credited total in USDSC to this contract. After
+  ///      the entries are processed, the balance must cover claimReserve (now including every credited
+  ///      amount) + boostClaimReserve[USDSC], or the whole batch reverts and nothing is credited. Skipped
+  ///      entries need no funding. Gated whenNotPaused, like the other
   ///      principal-changing entry points (deposit()/withdraw()/claim()/compound()/compoundMany()).
   /// @dev All-or-nothing (the whole batch reverts) for funding, replay, cycle bounds, the cap and
   ///      malformed input: insufficient balance; an empty batch; cycleId 0 (ZeroCycleId); a cycleId
@@ -293,10 +297,13 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
   ///      vault's own address, a blacklisted address, or a zero amount - so one ineligible entry
   ///      cannot fail everyone else's credit (mirrors compoundMany()'s skip-blacklisted). A skipped
   ///      entry can still be credited under the same cycleId, but only while that cycle is current;
-  ///      once the next cycle opens the engine must roll the amount forward into a later cycle. The
-  ///      funding check still covers skipped amounts; they stay as unreserved surplus,
-  ///      recoverable via sweepSurplusToTreasury() or reusable by a later credit. Skips do not count
-  ///      toward maxBoostPerBatch.
+  ///      once the next cycle opens the engine must roll the amount forward into a later cycle.
+  ///      Skipped amounts are not required by the funding check and do not count toward
+  ///      maxBoostPerBatch; USDSC sent for them stays as unreserved surplus, recoverable via
+  ///      sweepSurplusToTreasury() or reusable by a later credit.
+  /// @dev Reverts DepositsLockedForDistribution(unlocksAt) while the yield redistributor's latest TVL
+  ///      snapshot is still usable by its distribute() - the same window that locks deposits. The
+  ///      keeper checks depositsLocked() before sending, and retries from `unlocksAt` if it hits it.
   /// @param cycleId latestCycleId (current) or latestCycleId + 1 (next); the engine should read
   ///        latestCycleId from chain rather than derive cycle IDs from dates
   /// @param users Addresses to credit (AA wallets for v1 - the backend resolves user -> address)
@@ -306,6 +313,10 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
     address[] calldata users,
     uint256[] calldata amounts
   ) external whenNotPaused onlyBoostKeeper nonReentrant {
+    // Same window as deposits: principal credited after a TVL snapshot would share a yield
+    // distribution that was sized without it
+    (bool locked, uint256 unlocksAt) = _depositLockState();
+    if (locked) revert DepositsLockedForDistribution(unlocksAt);
     if (users.length != amounts.length) revert LengthMismatch();
     if (users.length == 0) revert EmptyBatch();
     _checkCycle(cycleId);
@@ -314,10 +325,6 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
     for (uint256 i = 0; i < amounts.length; i++) {
       total += amounts[i];
     }
-
-    EarnVaultStorage storage $ = _getStorage();
-    uint256 bal = $.USDSC.balanceOf(address(this));
-    if (bal < $.claimReserve + total) revert IEarnVaultEventsAndErrors.InsufficientFunding();
 
     uint256 skippedCount = 0;
     uint256 skippedTotal = 0;
@@ -331,6 +338,12 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
     uint256 credited = total - skippedTotal;
     uint256 maxBatch = _getBoostCreditStorage().maxBoostPerBatch;
     if (credited > maxBatch) revert BoostBatchCapExceeded(credited, maxBatch);
+    // Funding is checked against what was actually credited: claimReserve has grown by `credited`
+    // only. It must stay covered together with USDSC owed as V1 boost rewards (USDSC is also a boost
+    // token). Nothing left the vault during the loop, so a revert here undoes every credit.
+    if (_getStorage().USDSC.balanceOf(address(this)) < _requiredUSDSC()) {
+      revert IEarnVaultEventsAndErrors.InsufficientFunding();
+    }
     if (credited > 0) _advanceCycle(cycleId);
     emit BoostCycleCredited(cycleId, users.length, total, skippedCount, skippedTotal);
   }
@@ -387,6 +400,17 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
     return true;
   }
 
+  /// @notice Withdraw the caller's entire principal, including yield folded into it by this call's
+  ///         own settlement, plus any legacy `accrued` USDSC and all boost rewards - a full exit
+  /// @dev withdraw(amount) settles first, which folds pending yield into principal, and then
+  ///      withdraws only `amount`; so withdraw(principal(user)) quoted before the call (or before
+  ///      another yield distribution) leaves that yield behind as principal. withdrawAll() withdraws
+  ///      the principal as it stands after settling, closing the position in one transaction.
+  ///      Reverts ZeroAmount when there is no principal (claim() pays rewards alone).
+  function withdrawAll() external whenNotPaused nonReentrant {
+    _withdraw(0, true);
+  }
+
   /// @notice Settle `user`'s pending USDSC yield, folding it into their own principal
   /// @dev Deliberately permissionless: this can only ever increase `user`'s own recorded
   ///      principal, and never transfers or moves any token anywhere - there is nothing for
@@ -441,7 +465,7 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
   /// @dev Returns exactly what claim() would pay out in USDSC right now: only legacy `accrued`
   ///      balances that predate auto-compounding. Does NOT include pending yield - that folds
   ///      into principal on next settlement, not into a claim() payout. Use pendingYield() or
-  ///      totalValue() to see unsettled yield.
+  ///      totalValue() to see unsettled yield. getAllClaimables() reports the same USDSC amount.
   function claimable(address user) external view virtual override returns (uint256) {
     EarnVaultStorage storage $ = _getStorage();
     return $.accrued[user];
@@ -480,11 +504,12 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
   }
 
   /// @notice Get all claimable rewards for a user (USDSC yield + all boost rewards)
-  /// @dev Overridden purely to swap in pendingYield() for the USDSC leg - V1's version calls
-  ///      this.claimable(user), which under V2 returns only legacy accrued and would silently
-  ///      under-report a normal post-upgrade user's real (pending) USDSC yield here otherwise
+  /// @dev Reports exactly what claim() would pay: usdscClaimable is legacy accrued only, the same
+  ///      as claimable(). Pending yield is not claimable - claim() compounds it into principal -
+  ///      so it is left out here and exposed by pendingYield() and totalValue() instead.
+  ///      (Overridden to read accrued directly rather than through V1's this.claimable() call.)
   /// @param user User address to check
-  /// @return usdscClaimable Legacy accrued USDSC plus unsettled pending yield
+  /// @return usdscClaimable Legacy accrued USDSC, as claim() would pay it
   /// @return boostTokens Array of boost token addresses
   /// @return boostAmounts Array of claimable amounts for each boost token
   function getAllClaimables(address user)
@@ -497,7 +522,7 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
     EarnVaultStorage storage $ = _getStorage();
     _checkNotBlacklisted(user);
 
-    usdscClaimable = $.accrued[user] + _pendingYield(user);
+    usdscClaimable = $.accrued[user];
 
     boostTokens = new address[]($.activeBoostTokens.length);
     boostAmounts = new uint256[]($.activeBoostTokens.length);

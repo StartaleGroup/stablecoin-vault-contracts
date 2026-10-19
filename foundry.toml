@@ -32,6 +32,8 @@ quote_style = 'single'
 number_underscore = 'thousands'
 multiline_func_header = 'params_first_multi'
 sort_imports = true
+# Verbatim copy of the live USDSC implementation; kept unformatted to stay diffable against it
+ignore = ["src/coin/UsdscToken.sol"]
 
 [profile.optimized]
 via_ir = true

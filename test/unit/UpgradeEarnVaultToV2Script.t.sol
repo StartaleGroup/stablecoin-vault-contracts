@@ -261,4 +261,77 @@ contract UpgradeEarnVaultToV2ScriptTest is Test {
     vm.expectRevert(bytes('yieldRedistributor missing snapshot getters'));
     verifier.verify(proxy, pa, impl, keeper, CAP, roles);
   }
+
+  // ---------------------------------------------------------------------------------------------
+  // Boost tokens: the vault accepts USDSC only, so the upgrade refuses any other registered token
+  // ---------------------------------------------------------------------------------------------
+
+  /// @dev ERC-7201 base of EarnVault's storage; activeBoostTokens is struct field 18 (length slot).
+  bytes32 internal constant EARN_VAULT_STORAGE = 0x4acfb950108afb92cc59b268b946808304d34de46619a1e803aeac06ad89cb00;
+
+  /// @dev The V1 source rejects non-USDSC boost tokens, so write activeBoostTokens directly.
+  function _setActiveBoostTokens(address target, address[] memory tokens) internal {
+    bytes32 lengthSlot = bytes32(uint256(EARN_VAULT_STORAGE) + 18);
+    vm.store(target, lengthSlot, bytes32(tokens.length));
+    bytes32 first = keccak256(abi.encode(lengthSlot));
+    for (uint256 i = 0; i < tokens.length; i++) {
+      vm.store(target, bytes32(uint256(first) + i), bytes32(uint256(uint160(tokens[i]))));
+    }
+  }
+
+  function test_Preflight_PassesWithNoBoostTokens() public view {
+    script.preflight(_params(address(0)), address(script));
+  }
+
+  /// @dev A real, funded USDSC boost on the V1 proxy registers exactly [USDSC]; preflight accepts it.
+  function test_Preflight_PassesWithExactlyUsdscRegistered() public {
+    usdsc.mint(proxy, 100e6);
+    vm.prank(operator);
+    EarnVaultUpgradeable(payable(proxy)).onBoostReward(address(usdsc), 100e6);
+
+    script.preflight(_params(address(0)), address(script));
+    // and the full upgrade + live verify still succeed with the USDSC boost in place
+    address impl = script.upgrade(_params(address(0)), address(script));
+    verifier.verify(proxy, pa, impl, keeper, CAP, _roles());
+  }
+
+  function test_Preflight_RevertsWhenNonUsdscBoostTokenRegistered() public {
+    address[] memory tokens = new address[](1);
+    tokens[0] = makeAddr('someOtherToken');
+    _setActiveBoostTokens(proxy, tokens);
+
+    vm.expectRevert(bytes('a boost token other than USDSC is registered'));
+    script.preflight(_params(address(0)), address(script));
+  }
+
+  function test_Preflight_RevertsWhenMoreThanOneBoostTokenRegistered() public {
+    address[] memory tokens = new address[](2);
+    tokens[0] = address(usdsc);
+    tokens[1] = makeAddr('someOtherToken');
+    _setActiveBoostTokens(proxy, tokens);
+
+    vm.expectRevert(bytes('more than one boost token registered'));
+    script.preflight(_params(address(0)), address(script));
+  }
+
+  function test_Verify_RejectsNonUsdscBoostToken() public {
+    address impl = script.upgrade(_params(address(0)), address(script));
+    address[] memory tokens = new address[](1);
+    tokens[0] = makeAddr('someOtherToken');
+    _setActiveBoostTokens(proxy, tokens);
+
+    vm.expectRevert(bytes('a boost token other than USDSC is registered'));
+    verifier.verify(proxy, pa, impl, keeper, CAP, _roles());
+  }
+
+  function test_Verify_RejectsMoreThanOneBoostToken() public {
+    address impl = script.upgrade(_params(address(0)), address(script));
+    address[] memory tokens = new address[](2);
+    tokens[0] = address(usdsc);
+    tokens[1] = makeAddr('someOtherToken');
+    _setActiveBoostTokens(proxy, tokens);
+
+    vm.expectRevert(bytes('more than one boost token registered'));
+    verifier.verify(proxy, pa, impl, keeper, CAP, _roles());
+  }
 }

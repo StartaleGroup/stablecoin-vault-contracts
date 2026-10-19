@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.30;
 
-import {USDSC} from '../../src/coin/mock/USDSC.sol';
+import {UsdscToken} from '../../src/coin/UsdscToken.sol';
 import {ISUSDSCVaultEventsAndErrors} from '../../src/interfaces/vaults/4626/ISUSDSCVaultEventsAndErrors.sol';
 import {SUSDSCVaultUpgradable} from '../../src/vaults/4626/SUSDSCVaultUpgradable.sol';
 import {MockSUSDSCVaultV2} from '../mocks/MockSUSDSCVaultV2.sol';
@@ -20,7 +20,7 @@ import {MockM} from 'm-extensions-test/utils/Mocks.sol';
  */
 contract SUSDSCVaultUpgradeTest is Test {
   SUSDSCVaultUpgradable internal vault;
-  USDSC internal usdsc;
+  UsdscToken internal usdsc;
   MockM internal mToken;
   MockSwapFacility internal swapFacility;
   ProxyAdmin internal proxyAdmin;
@@ -52,14 +52,16 @@ contract SUSDSCVaultUpgradeTest is Test {
     swapFacility = new MockSwapFacility();
 
     // Deploy USDSC with proxy
-    USDSC usdscImplementation = new USDSC(address(mToken), address(swapFacility));
+    UsdscToken usdscImplementation = new UsdscToken(address(mToken), address(swapFacility));
     TransparentUpgradeableProxy usdscProxy = new TransparentUpgradeableProxy(
       address(usdscImplementation),
       admin, // OpenZeppelin v5 creates ProxyAdmin automatically with this as owner
       // See: https://docs.openzeppelin.com/contracts/5.x/api/proxy#TransparentUpgradeableProxy
-      abi.encodeWithSelector(USDSC.initialize.selector, 'USDSC', 'USDSC', vaultAdmin, yieldRecipient)
+      abi.encodeWithSelector(
+        UsdscToken.initialize.selector, 'USDSC', 'USDSC', yieldRecipient, vaultAdmin, vaultAdmin, vaultAdmin, vaultAdmin
+      )
     );
-    usdsc = USDSC(address(usdscProxy));
+    usdsc = UsdscToken(address(usdscProxy));
 
     // Deploy SUSDSCVaultUpgradable with proxy
     SUSDSCVaultUpgradable vaultImplementation = new SUSDSCVaultUpgradable();

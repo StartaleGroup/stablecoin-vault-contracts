@@ -26,7 +26,8 @@ import {Math} from 'lib/openzeppelin-contracts/contracts/utils/math/Math.sol';
 ///   - User state: principal, userIndex, accrued.
 ///   - When yield arrives and totalPrincipal>0: globalIndex += amount*RAY/totalPrincipal.
 ///   - If totalPrincipal==0 at yield time: amount is transferred directly to treasury.
-/// Invariant (funding): USDSC balance >= claimReserve.
+/// Invariant (funding): USDSC balance >= claimReserve + boostClaimReserve[USDSC]
+/// (USDSC can also be a boost token, so USDSC owed as boost rewards must stay covered too).
 contract EarnVaultUpgradeable is
   Initializable,
   Ownable2StepUpgradeable,
@@ -213,6 +214,10 @@ contract EarnVaultUpgradeable is
   /// @dev Allows token owner to deposit via permit signature, with optional relayer execution
   /// @dev Token owner signs permit, relayer (msg.sender) pays gas and executes
   /// @dev Safely handles tokens that may not implement IERC20Permit
+  /// @dev If permit() fails but tokenOwner's allowance to this vault already covers `amount` (e.g.
+  ///      someone submitted the same permit first, using its nonce), the deposit still goes ahead.
+  ///      This also means anyone can trigger a deposit of an amount tokenOwner has already approved;
+  ///      it is always credited to tokenOwner's own position, which they can withdraw.
   /// @param tokenOwner Address of token owner (who signs permit and receives deposit credit)
   /// @param amount Amount of USDSC tokens to deposit
   /// @param deadline Permit deadline timestamp
@@ -237,7 +242,9 @@ contract EarnVaultUpgradeable is
     // Permit succeeded, continue with deposit
     }
     catch {
-      revert IEarnVaultEventsAndErrors.PermitFailed();
+      // The permit may already have been used (its nonce consumed by someone submitting it first).
+      // Continue if the allowance it grants is in place; otherwise the permit genuinely failed.
+      if ($.USDSC.allowance(tokenOwner, address(this)) < amount) revert IEarnVaultEventsAndErrors.PermitFailed();
     }
 
     _deposit(tokenOwner, amount);
@@ -253,13 +260,24 @@ contract EarnVaultUpgradeable is
   /// @dev User can only withdraw their principal, but gets everything left in `accrued` (if
   ///      any) plus all boost rewards automatically
   function withdraw(uint256 amount) external virtual whenNotPaused nonReentrant {
+    _withdraw(amount, false);
+  }
+
+  /// @dev Shared body of withdraw() and EarnVaultV2.withdrawAll(). With `all`, `amount` is ignored
+  ///      and the caller's whole principal as it stands after settling is withdrawn (reverts
+  ///      ZeroAmount if that is 0).
+  function _withdraw(uint256 amount, bool all) internal {
     EarnVaultStorage storage $ = _getStorage();
     _checkNotBlacklisted(msg.sender);
-    if (amount == 0) revert IEarnVaultEventsAndErrors.ZeroAmount();
+    if (!all && amount == 0) revert IEarnVaultEventsAndErrors.ZeroAmount();
 
     _settle(msg.sender);
 
     uint256 p = $.principal[msg.sender];
+    if (all) {
+      if (p == 0) revert IEarnVaultEventsAndErrors.ZeroAmount();
+      amount = p;
+    }
     if (amount > p) revert IEarnVaultEventsAndErrors.InsufficientPrincipal();
 
     // Settle and claim ALL boost rewards
@@ -308,7 +326,7 @@ contract EarnVaultUpgradeable is
 
   /// @notice Distribute yield to vault users (callable only by yield redistributor)
   /// @dev MUST be called AFTER transferring `amount` USDSC to this contract
-  /// @dev Enforces funding invariant: USDSC.balance >= claimReserve + amount
+  /// @dev Enforces funding invariant: USDSC.balance >= claimReserve + boostClaimReserve[USDSC] + amount
   /// @param amount Amount of USDSC yield to distribute
   function onYield(uint256 amount) external virtual onlyYieldRedistributor nonReentrant {
     EarnVaultStorage storage $ = _getStorage();
@@ -318,15 +336,15 @@ contract EarnVaultUpgradeable is
     uint256 bal = $.USDSC.balanceOf(address(this));
 
     if ($.totalPrincipal == 0) {
-      // No deposits: just need enough for treasury transfer
-      if (bal < amount) revert IEarnVaultEventsAndErrors.InsufficientFunding();
+      // No deposits: the transfer must not dip into USDSC still owed (legacy accrued, boost rewards)
+      if (bal < _requiredUSDSC() + amount) revert IEarnVaultEventsAndErrors.InsufficientFunding();
       $.USDSC.safeTransfer($.treasury, amount);
       emit YieldTransferredToTreasury(amount);
       return;
     }
 
-    // Deposits exist: need enough for claimReserve + new yield
-    if (bal < $.claimReserve + amount) revert IEarnVaultEventsAndErrors.InsufficientFunding();
+    // Deposits exist: need enough for everything already owed in USDSC + new yield
+    if (bal < _requiredUSDSC() + amount) revert IEarnVaultEventsAndErrors.InsufficientFunding();
 
     // Exact, immediate index update with Ray remainder carry
     // delta = floor( (amount*RAY + _carryRay) / totalPrincipal )
@@ -342,14 +360,16 @@ contract EarnVaultUpgradeable is
     emit YieldIndexed(amount, $.globalIndex, $.claimReserve);
   }
 
-  /// @notice Distribute boost rewards (ASTR, DOT, etc.) to vault users
-  /// @dev MUST be called AFTER transferring `amount` of `token` to this contract
+  /// @notice Distribute USDSC boost rewards to vault users
+  /// @dev MUST be called AFTER transferring `amount` USDSC to this contract
   /// @dev Uses same logic as USDSC yield - distributed proportionally based on principal
-  /// @dev USDT is NOT supported as a boost reward token - it does not return a value on transfer()/transferFrom()
-  /// @param token Token address to distribute as boost rewards (must be ERC20-compliant, not USDT)
-  /// @param amount Amount of boost tokens to distribute
+  /// @dev USDSC is the only boost reward token: any other token reverts BoostTokenNotUSDSC
+  /// @param token Boost reward token; must be USDSC
+  /// @param amount Amount of USDSC to distribute
   function onBoostReward(address token, uint256 amount) external whenNotPaused onlyBoostRewardKeeper nonReentrant {
     EarnVaultStorage storage $ = _getStorage();
+    if (token != address($.USDSC)) revert IEarnVaultEventsAndErrors.BoostTokenNotUSDSC();
+    _requireUSDSCBoostFunded(amount);
     BoostRewardsLib.distributeBoostReward(
       token,
       amount,
@@ -375,7 +395,7 @@ contract EarnVaultUpgradeable is
       if (!paused()) revert IEarnVaultEventsAndErrors.ContractNotPaused();
       // allow sweeping only true surplus
       uint256 bal = $.USDSC.balanceOf(address(this));
-      uint256 minRequired = $.claimReserve;
+      uint256 minRequired = _requiredUSDSC();
       if (bal <= minRequired) revert IEarnVaultEventsAndErrors.InsufficientFunding();
       uint256 maxSweep = bal - minRequired;
       if (amount > maxSweep) revert IEarnVaultEventsAndErrors.ExceedsSurplus();
@@ -399,7 +419,7 @@ contract EarnVaultUpgradeable is
   function sweepSurplusToTreasury() external onlyOwner nonReentrant {
     EarnVaultStorage storage $ = _getStorage();
     uint256 bal = $.USDSC.balanceOf(address(this));
-    uint256 minRequired = $.claimReserve;
+    uint256 minRequired = _requiredUSDSC();
 
     if (bal <= minRequired) return; // No surplus to sweep
 
@@ -421,34 +441,6 @@ contract EarnVaultUpgradeable is
     emit NativeSwept(to, amount);
   }
 
-  /// @notice Remove a boost reward token from activeBoostTokens array (only owner)
-  /// @dev Can be used to clean up tokens that are frozen or no longer used
-  /// @dev Only allows removal if boostClaimReserve[token] == 0 (no pending claims)
-  /// @param token Token address to remove from activeBoostTokens array
-  function removeBoostRewardToken(address token) external onlyOwner nonReentrant {
-    EarnVaultStorage storage $ = _getStorage();
-    if (token == address(0)) revert IEarnVaultEventsAndErrors.CanNotBeZeroAddress();
-
-    uint256 index = $.boostTokenIndex[token];
-    if (index == 0) return;
-
-    if ($.boostClaimReserve[token] > 0) {
-      revert IEarnVaultEventsAndErrors.InsufficientBoostClaimReserve();
-    }
-
-    uint256 lastIndex = $.activeBoostTokens.length - 1;
-    if (index != lastIndex + 1) {
-      address lastToken = $.activeBoostTokens[lastIndex];
-      $.activeBoostTokens[index - 1] = lastToken;
-      $.boostTokenIndex[lastToken] = index;
-    }
-
-    $.activeBoostTokens.pop();
-    delete $.boostTokenIndex[token];
-
-    emit IEarnVaultEventsAndErrors.BoostRewardTokenRemoved(token);
-  }
-
   // -------- External Functions (View) --------
 
   function asset() external view returns (address) {
@@ -464,6 +456,21 @@ contract EarnVaultUpgradeable is
   function globalIndex() external view returns (uint256) {
     EarnVaultStorage storage $ = _getStorage();
     return $.globalIndex;
+  }
+
+  /// @notice USDSC held above everything the vault owes in USDSC (claimReserve plus USDSC boost
+  ///         rewards owed), floored at zero: the amount sweepSurplusToTreasury() would send and, in
+  ///         EarnVaultV2, the most onBoostCredit() can credit without new funding. For monitoring.
+  function surplusUSDSC() external view returns (uint256) {
+    uint256 bal = _getStorage().USDSC.balanceOf(address(this));
+    uint256 required = _requiredUSDSC();
+    return bal > required ? bal - required : 0;
+  }
+
+  /// @notice Amount of `token` reserved for boost rewards users have earned but not yet claimed
+  function boostClaimReserve(address token) external view returns (uint256) {
+    EarnVaultStorage storage $ = _getStorage();
+    return $.boostClaimReserve[token];
   }
 
   function claimReserve() external view returns (uint256) {
@@ -587,8 +594,11 @@ contract EarnVaultUpgradeable is
   }
 
   /// @notice Get all claimable rewards for a user (USDSC yield + all boost rewards)
+  /// @dev Reports what claim() would pay right now: usdscClaimable is claimable(user), so under
+  ///      EarnVaultV2 it is legacy accrued only (pending yield compounds into principal instead;
+  ///      see pendingYield())
   /// @param user User address to check
-  /// @return usdscClaimable Claimable USDSC yield
+  /// @return usdscClaimable Claimable USDSC yield, as claim() would pay it
   /// @return boostTokens Array of boost token addresses
   /// @return boostAmounts Array of claimable amounts for each boost token
   function getAllClaimables(address user)
@@ -703,6 +713,27 @@ contract EarnVaultUpgradeable is
   }
 
   // -------- Internal Functions (View) --------
+
+  /// @dev USDSC the vault must always hold: depositor principal and yield (claimReserve) plus USDSC
+  ///      owed as boost rewards. USDSC can be both the vault asset and a boost token, so the two
+  ///      reserves cover the same balance and every USDSC check must count both.
+  function _requiredUSDSC() internal view returns (uint256) {
+    EarnVaultStorage storage $ = _getStorage();
+    return $.claimReserve + $.boostClaimReserve[address($.USDSC)];
+  }
+
+  /// @dev A USDSC boost must be funded on top of everything the vault already owes in USDSC.
+  ///      Checked here, before BoostRewardsLib, because the library's own checks don't count
+  ///      claimReserve, which covers the same USDSC balance as the boost reserve.
+  function _requireUSDSCBoostFunded(uint256 amount) internal view {
+    EarnVaultStorage storage $ = _getStorage();
+    if (amount == 0) return; // the library returns early
+    if ($.USDSC.balanceOf(address(this)) < _requiredUSDSC() + amount) {
+      // same errors BoostRewardsLib uses for its no-depositor and normal branches
+      if ($.totalPrincipal == 0) revert IEarnVaultEventsAndErrors.InsufficientBoostTokenBalance();
+      revert IEarnVaultEventsAndErrors.InsufficientBoostClaimReserve();
+    }
+  }
 
   function _onlyYieldRedistributor() internal view {
     EarnVaultStorage storage $ = _getStorage();

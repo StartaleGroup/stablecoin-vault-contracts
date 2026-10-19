@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
+import {IEarnVaultEventsAndErrors} from '../../src/interfaces/vaults/earn/IEarnVaultEventsAndErrors.sol';
 import {EarnVaultUpgradeable} from '../../src/vaults/earn/EarnVaultUpgradeable.sol';
 import {EarnVaultV2} from '../../src/vaults/earn/EarnVaultV2.sol';
 import {MockSnapshotRedistributor} from '../mocks/MockSnapshotRedistributor.sol';
@@ -24,7 +25,8 @@ uint256 constant BOOST_CAP = 500_000e6;
 contract EarnVaultV2Handler is Test {
   EarnVaultV2 public vault;
   MockUSDSC public usdsc;
-  MockUSDSC public boostToken;
+  /// @notice A second token used only to prove non-USDSC boosts are always rejected
+  MockUSDSC public nonUsdscToken = new MockUSDSC();
   MockSnapshotRedistributor public snapshotRedistributor;
   address public redistributor;
   address public operator;
@@ -34,10 +36,14 @@ contract EarnVaultV2Handler is Test {
   /// @notice deposit() calls the handler issued while vault.depositsLocked() was true - each one
   ///         asserted DepositsLockedForDistribution and changed nothing (see deposit() below).
   uint256 public lockedDepositAttempts;
+  /// @notice onBoostCredit() calls the handler issued while locked - each asserted
+  ///         DepositsLockedForDistribution and changed nothing (see onBoostCredit() below).
+  uint256 public lockedCreditAttempts;
 
   /// @notice Upper bound on per-user settlements performed so far (each floors <= 1 wei of
   ///         yield in the vault's favour). Over-counting only loosens the dust bound below.
   uint256 public settleOps;
+  uint256 public withdrawAllOps;
   /// @notice Two INELIGIBLE entries mixed into credit batches: the vault itself and an
   ///         always-blacklisted address. onBoostCredit() must skip both.
   address public blacklistedAddr;
@@ -50,18 +56,28 @@ contract EarnVaultV2Handler is Test {
   uint256 public constant MAX_AMOUNT = 1_000_000e6;
   /// @notice onBoostCredit() batches the cap rejected (each must have changed nothing)
   uint256 public capRejectedBatches;
+  /// @notice Unfunded USDSC boost / onYield attempts made (each asserted to revert)
+  uint256 public unfundedAttempts;
+  /// @notice Vault owner, pauser and treasury, for the sweep/recover actions
+  address public owner;
+  address public pauser;
+  address public treasury;
+
+  function setAdmins(address owner_, address pauser_, address treasury_) external {
+    owner = owner_;
+    pauser = pauser_;
+    treasury = treasury_;
+  }
 
   constructor(
     EarnVaultV2 _vault,
     MockUSDSC _usdsc,
-    MockUSDSC _boostToken,
     MockSnapshotRedistributor _redistributor,
     address _operator,
     address _boostKeeper
   ) {
     vault = _vault;
     usdsc = _usdsc;
-    boostToken = _boostToken;
     snapshotRedistributor = _redistributor;
     redistributor = address(_redistributor);
     operator = _operator;
@@ -142,26 +158,48 @@ contract EarnVaultV2Handler is Test {
     vault.withdraw(amount);
   }
 
+  /// @notice withdrawAll(): pays exactly the whole position and leaves nothing behind
+  function withdrawAll(uint256 userIndex) external {
+    userIndex = bound(userIndex, 0, users.length - 1);
+    address user = users[userIndex];
+    if (vault.principal(user) + vault.pendingYield(user) == 0) {
+      vm.expectRevert(IEarnVaultEventsAndErrors.ZeroAmount.selector);
+      vm.prank(user);
+      vault.withdrawAll();
+      return;
+    }
+    uint256 expected = vault.totalValue(user) + vault.getClaimableBoostReward(user, address(usdsc));
+    uint256 before = usdsc.balanceOf(user);
+
+    settleOps++;
+    withdrawAllOps++;
+    vm.prank(user);
+    vault.withdrawAll();
+    assertEq(usdsc.balanceOf(user) - before, expected, 'withdrawAll paid other than the whole position');
+    assertEq(vault.totalValue(user), 0, 'withdrawAll left a position behind');
+  }
+
+  /// @notice claim() pays exactly what getAllClaimables() reported (USDSC is the only boost token),
+  ///         and reverts NothingToClaim exactly when that is zero - even with pending yield
   function claim(uint256 userIndex) external {
     userIndex = bound(userIndex, 0, users.length - 1);
     address user = users[userIndex];
     settleOps++;
 
-    // claim() reverts with NothingToClaim() if there's nothing to pay out - avoid wasting a
-    // fuzz run on a known-guaranteed revert by checking first.
-    if (vault.claimable(user) > 0) {
+    (uint256 quoted,, uint256[] memory boostAmounts) = vault.getAllClaimables(user);
+    for (uint256 i = 0; i < boostAmounts.length; i++) {
+      quoted += boostAmounts[i];
+    }
+    if (quoted == 0) {
+      vm.expectRevert(IEarnVaultEventsAndErrors.NothingToClaim.selector);
       vm.prank(user);
       vault.claim();
       return;
     }
-    (,, uint256[] memory boostAmounts) = vault.getAllClaimables(user);
-    for (uint256 i = 0; i < boostAmounts.length; i++) {
-      if (boostAmounts[i] > 0) {
-        vm.prank(user);
-        vault.claim();
-        return;
-      }
-    }
+    uint256 before = usdsc.balanceOf(user);
+    vm.prank(user);
+    vault.claim();
+    assertEq(usdsc.balanceOf(user) - before, quoted, 'claim paid other than getAllClaimables reported');
   }
 
   function compound(uint256 userIndex) external {
@@ -220,11 +258,26 @@ contract EarnVaultV2Handler is Test {
       if (batch[i] != address(vault) && batch[i] != blacklistedAddr) credited += amounts[i];
     }
 
-    // Fund first, exactly like the real keeper flow (transfer USDSC in, then call).
-    usdsc.mint(address(vault), total);
+    // Fund first, exactly like the real keeper flow (transfer USDSC in, then call). Only the
+    // credited amount: skipped entries need no funding.
+    usdsc.mint(address(vault), credited);
     // Always open the next cycle, using latestCycleId + 1 read from chain (an all-skipped batch
     // doesn't advance it, so the next call just retries that cycle).
     boostCycleId = vault.latestCycleId() + 1;
+
+    // Locked in the same window as deposits (checked first): asserted, and nothing changes
+    (bool locked, uint256 unlocksAt) = expectedLock();
+    if (locked) {
+      uint256 latestBefore = vault.latestCycleId();
+      uint256 principalBefore = vault.totalPrincipal();
+      lockedCreditAttempts++;
+      vm.expectRevert(abi.encodeWithSelector(EarnVaultV2.DepositsLockedForDistribution.selector, unlocksAt));
+      vm.prank(boostKeeper);
+      vault.onBoostCredit(boostCycleId, batch, amounts);
+      assertEq(vault.latestCycleId(), latestBefore, 'locked credit advanced latestCycleId');
+      assertEq(vault.totalPrincipal(), principalBefore, 'locked credit changed totalPrincipal');
+      return;
+    }
 
     if (credited > BOOST_CAP) {
       uint256 latestBefore = vault.latestCycleId();
@@ -247,13 +300,91 @@ contract EarnVaultV2Handler is Test {
     vault.onBoostCredit(boostCycleId, batch, amounts);
   }
 
-  function onBoostReward(uint256 amount) external {
+  /// @notice Boost rewards are USDSC-only: a fully funded boost in any other token must always be refused
+  function nonUsdscBoostRejected(uint256 amount) external {
+    amount = bound(amount, 1, MAX_AMOUNT / 10);
+
+    nonUsdscToken.mint(address(vault), amount);
+    vm.expectRevert(IEarnVaultEventsAndErrors.BoostTokenNotUSDSC.selector);
+    vm.prank(operator);
+    vault.onBoostReward(address(nonUsdscToken), amount);
+  }
+
+  /// @notice USDSC is the only boost token: a funded USDSC boost, as the keeper sends it
+  function onBoostRewardUsdsc(uint256 amount) external {
     if (vault.totalPrincipal() == 0) return;
     amount = bound(amount, 1, MAX_AMOUNT / 10);
 
-    boostToken.mint(address(vault), amount);
+    usdsc.mint(address(vault), amount);
     vm.prank(operator);
-    vault.onBoostReward(address(boostToken), amount);
+    vault.onBoostReward(address(usdsc), amount);
+  }
+
+  /// @notice Free USDSC: what the vault holds above everything it owes in USDSC
+  function freeUsdsc() public view returns (uint256) {
+    uint256 owed = vault.claimReserve() + vault.boostClaimReserve(address(usdsc));
+    uint256 bal = usdsc.balanceOf(address(vault));
+    return bal > owed ? bal - owed : 0;
+  }
+
+  /// @notice A USDSC boost larger than the free USDSC, with nothing sent in, must always be refused
+  function unfundedUsdscBoost(uint256 extra) external {
+    uint256 amount = freeUsdsc() + bound(extra, 1, MAX_AMOUNT);
+    unfundedAttempts++;
+    vm.expectRevert(
+      vault.totalPrincipal() == 0
+        ? IEarnVaultEventsAndErrors.InsufficientBoostTokenBalance.selector
+        : IEarnVaultEventsAndErrors.InsufficientBoostClaimReserve.selector
+    );
+    vm.prank(operator);
+    vault.onBoostReward(address(usdsc), amount);
+  }
+
+  /// @notice A donation: USDSC arrives without any accounting
+  function donate(uint256 amount) external {
+    usdsc.mint(address(vault), bound(amount, 1, MAX_AMOUNT / 10));
+  }
+
+  /// @notice The owner sweeps surplus: it may only ever take the free USDSC
+  function sweep() external {
+    uint256 free = freeUsdsc();
+    assertEq(vault.surplusUSDSC(), free, 'surplusUSDSC differs from the free USDSC');
+    uint256 before = usdsc.balanceOf(treasury);
+    vm.prank(owner);
+    vault.sweepSurplusToTreasury();
+    assertEq(usdsc.balanceOf(treasury) - before, free, 'sweep took more than the free USDSC');
+  }
+
+  /// @notice The owner recovers USDSC while paused: up to the free USDSC succeeds, one more reverts
+  function recoverSurplus(uint256 amount) external {
+    uint256 free = freeUsdsc();
+    vm.prank(pauser);
+    vault.pause();
+    if (free > 0) {
+      amount = bound(amount, 1, free);
+      vm.prank(owner);
+      vault.recoverERC20(address(usdsc), treasury, amount);
+    }
+    uint256 freeNow = freeUsdsc(); // computed first: it makes external calls
+    uint256 overLimit = freeNow + 1;
+    vm.expectRevert(
+      freeNow == 0
+        ? IEarnVaultEventsAndErrors.InsufficientFunding.selector  // nothing is free at all
+        : IEarnVaultEventsAndErrors.ExceedsSurplus.selector
+    );
+    vm.prank(owner);
+    vault.recoverERC20(address(usdsc), treasury, overLimit);
+    vm.prank(pauser);
+    vault.unpause();
+  }
+
+  /// @notice Likewise an onYield() larger than the free USDSC, with nothing sent in
+  function unfundedOnYield(uint256 extra) external {
+    uint256 amount = freeUsdsc() + bound(extra, 1, MAX_AMOUNT);
+    unfundedAttempts++;
+    vm.expectRevert(IEarnVaultEventsAndErrors.InsufficientFunding.selector);
+    vm.prank(redistributor);
+    vault.onYield(amount);
   }
 }
 
@@ -266,7 +397,6 @@ contract EarnVaultV2Handler is Test {
 contract EarnVaultV2Invariants is StdInvariant, Test {
   EarnVaultV2 internal vault;
   MockUSDSC internal usdsc;
-  MockUSDSC internal boostToken;
   EarnVaultV2Handler internal handler;
 
   uint256 internal constant RAY = 1e27;
@@ -283,7 +413,6 @@ contract EarnVaultV2Invariants is StdInvariant, Test {
 
   function setUp() external {
     usdsc = new MockUSDSC();
-    boostToken = new MockUSDSC();
     redistributor = new MockSnapshotRedistributor(5 minutes);
 
     EarnVaultUpgradeable v1Implementation = new EarnVaultUpgradeable();
@@ -317,25 +446,41 @@ contract EarnVaultV2Invariants is StdInvariant, Test {
 
     vault = EarnVaultV2(payable(address(proxy)));
 
-    handler = new EarnVaultV2Handler(vault, usdsc, boostToken, redistributor, operator, boostKeeper);
+    handler = new EarnVaultV2Handler(vault, usdsc, redistributor, operator, boostKeeper);
+    handler.setAdmins(owner, pauser, treasury);
     address blacklisted = handler.blacklistedAddr(); // read BEFORE the prank - an external call would consume it
     vm.prank(owner);
     vault.setBlacklisted(blacklisted, true);
 
-    bytes4[] memory selectors = new bytes4[](10);
+    bytes4[] memory selectors = new bytes4[](17);
     selectors[0] = EarnVaultV2Handler.deposit.selector;
     selectors[1] = EarnVaultV2Handler.withdraw.selector;
     selectors[2] = EarnVaultV2Handler.claim.selector;
     selectors[3] = EarnVaultV2Handler.compound.selector;
     selectors[4] = EarnVaultV2Handler.compoundMany.selector;
     selectors[5] = EarnVaultV2Handler.onYield.selector;
-    selectors[6] = EarnVaultV2Handler.onBoostReward.selector;
+    selectors[6] = EarnVaultV2Handler.nonUsdscBoostRejected.selector;
     selectors[7] = EarnVaultV2Handler.onBoostCredit.selector;
     selectors[8] = EarnVaultV2Handler.snapshot.selector;
     selectors[9] = EarnVaultV2Handler.warp.selector;
+    selectors[10] = EarnVaultV2Handler.onBoostRewardUsdsc.selector;
+    selectors[11] = EarnVaultV2Handler.unfundedUsdscBoost.selector;
+    selectors[12] = EarnVaultV2Handler.unfundedOnYield.selector;
+    selectors[13] = EarnVaultV2Handler.donate.selector;
+    selectors[14] = EarnVaultV2Handler.sweep.selector;
+    selectors[15] = EarnVaultV2Handler.recoverSurplus.selector;
+    selectors[16] = EarnVaultV2Handler.withdrawAll.selector;
 
     targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
     targetContract(address(handler));
+  }
+
+  /// @notice Guards the fuzz setup: withdrawAll() really reaches a full exit, not only the
+  ///         no-principal revert
+  function test_HandlerWithdrawAllPathIsReachable() external {
+    handler.deposit(0, 1000e6);
+    handler.withdrawAll(0);
+    assertGt(handler.withdrawAllOps(), 0, 'withdrawAll never exited a position');
   }
 
   /// @notice Guards the fuzz setup itself: with the handler's bounds, full batches do exceed
@@ -359,6 +504,14 @@ contract EarnVaultV2Invariants is StdInvariant, Test {
       handler.deposit(seed, seed + 1);
     }
     assertGt(handler.lockedDepositAttempts(), 0, 'no fuzzed deposit hit the locked path');
+  }
+
+  /// @notice Guards the fuzz setup: a boost credit inside the snapshot window is really exercised
+  function test_HandlerLockedCreditPathIsReachable() external {
+    handler.deposit(0, 1000e6);
+    handler.snapshot(1 minutes);
+    handler.onBoostCredit(0, 1, 1);
+    assertGt(handler.lockedCreditAttempts(), 0, 'no fuzzed credit hit the locked path');
   }
 
   /// @notice The vault's depositsLocked() view always equals the redistributor-window formula,
@@ -440,21 +593,40 @@ contract EarnVaultV2Invariants is StdInvariant, Test {
     assertGe(usdsc.balanceOf(address(vault)), vault.claimReserve());
   }
 
+  /// @notice USDSC is both the vault asset and a boost token, so the USDSC balance must cover BOTH
+  ///         reserves at once, exactly (no tolerance)
+  function invariant_UsdscBalanceCoversClaimAndBoostReserves() external view {
+    assertGe(usdsc.balanceOf(address(vault)), vault.claimReserve() + vault.boostClaimReserve(address(usdsc)));
+  }
+
+  /// @notice USDSC is the only boost token that can ever be registered: slot 0 is USDSC (or empty),
+  ///         there is never a slot 1, and no other token ever has a boost reserve
+  function invariant_OnlyUsdscIsEverABoostToken() external view {
+    (bool ok0, bytes memory ret0) = address(vault).staticcall(abi.encodeWithSignature('activeBoostTokens(uint256)', 0));
+    if (ok0) assertEq(abi.decode(ret0, (address)), address(usdsc));
+    (bool ok1,) = address(vault).staticcall(abi.encodeWithSignature('activeBoostTokens(uint256)', 1));
+    assertFalse(ok1);
+    assertEq(vault.boostClaimReserve(address(handler.nonUsdscToken())), 0);
+  }
+
+  /// @notice The USDSC boost reserve covers what every tracked user could claim of it
+  function invariant_UsdscBoostReserveCoversClaimable() external view {
+    uint256 sumClaimable = 0;
+    for (uint256 i = 0; i < handler.MAX_USERS(); i++) {
+      sumClaimable += vault.getClaimableBoostReward(handler.users(i), address(usdsc));
+    }
+    assertGe(vault.boostClaimReserve(address(usdsc)), sumClaimable);
+  }
+
   /// @notice globalIndex only ever increases from its RAY-scaled starting point (onYield only
   ///         ever adds a non-negative delta; nothing in this contract can decrease it).
   function invariant_GlobalIndexNeverBelowInitialRay() external view {
     assertGe(vault.globalIndex(), RAY);
   }
 
-  /// @notice The vault must always hold enough of a boost token to cover what every tracked
-  ///         user could currently claim of it - the boost-side funding invariant, unaffected
-  ///         by USDSC auto-compounding since the two are independent index systems.
-  function invariant_BoostTokenBalanceCoversClaimableAcrossUsers() external view {
-    uint256 sumClaimable = 0;
-    for (uint256 i = 0; i < handler.MAX_USERS(); i++) {
-      sumClaimable += vault.getClaimableBoostReward(handler.users(i), address(boostToken));
-    }
-    assertGe(boostToken.balanceOf(address(vault)), sumClaimable);
+  /// @notice surplusUSDSC() is exactly the USDSC above both reserves
+  function invariant_SurplusViewMatchesFreeUsdsc() external view {
+    assertEq(vault.surplusUSDSC(), handler.freeUsdsc());
   }
 
   /// @notice The read-only accounting views must never revert for any tracked user, regardless

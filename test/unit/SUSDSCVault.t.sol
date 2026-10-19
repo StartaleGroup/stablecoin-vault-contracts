@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.30;
 
-import {USDSC} from '../../src/coin/mock/USDSC.sol';
+import {UsdscToken} from '../../src/coin/UsdscToken.sol';
 import {ISUSDSCVaultEventsAndErrors} from '../../src/interfaces/vaults/4626/ISUSDSCVaultEventsAndErrors.sol';
 import {SUSDSCVault} from '../../src/vaults/4626/SUSDSCVault.sol';
 import {MockERC20} from '../mocks/MockERC20.sol';
@@ -14,7 +14,7 @@ import {MockM} from 'm-extensions-test/utils/Mocks.sol';
 
 contract UnitSUSDSCVault is Test {
   SUSDSCVault internal vault;
-  USDSC internal usdsc;
+  UsdscToken internal usdsc;
   MockM internal mToken;
   MockSwapFacility internal swapFacility;
   ProxyAdmin internal proxyAdmin;
@@ -46,13 +46,15 @@ contract UnitSUSDSCVault is Test {
     swapFacility = new MockSwapFacility();
     proxyAdmin = new ProxyAdmin(admin);
 
-    USDSC implementation = new USDSC(address(mToken), address(swapFacility));
+    UsdscToken implementation = new UsdscToken(address(mToken), address(swapFacility));
     TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(
       address(implementation),
       address(proxyAdmin),
-      abi.encodeWithSelector(USDSC.initialize.selector, 'USDSC', 'USDSC', admin, yieldRecipient)
+      abi.encodeWithSelector(
+        UsdscToken.initialize.selector, 'USDSC', 'USDSC', yieldRecipient, admin, admin, admin, admin
+      )
     );
-    usdsc = USDSC(address(proxy));
+    usdsc = UsdscToken(address(proxy));
 
     vault = new SUSDSCVault(IERC20(address(usdsc)), admin, pauser);
   }
