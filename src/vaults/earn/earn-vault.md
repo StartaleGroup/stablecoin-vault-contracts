@@ -29,6 +29,7 @@ Users deposit USDSC tokens and earn claimable yield over time, plus additional b
 deposit(uint256 amount)                    // Deposit USDSC
 depositWithPermit(...)                     // Deposit with permit (gasless approval)
 withdraw(uint256 amount)                   // Withdraw any amount up to principal (auto-claims all rewards)
+withdrawAll()                              // EarnVaultV2 only: full exit - the whole principal after this call compounds pending yield into it, plus all rewards
 claim()                                    // Claim all accrued interest + all boost rewards
 
 // Read functions

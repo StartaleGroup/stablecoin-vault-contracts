@@ -400,6 +400,17 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
     return true;
   }
 
+  /// @notice Withdraw the caller's entire principal, including yield folded into it by this call's
+  ///         own settlement, plus any legacy `accrued` USDSC and all boost rewards - a full exit
+  /// @dev withdraw(amount) settles first, which folds pending yield into principal, and then
+  ///      withdraws only `amount`; so withdraw(principal(user)) quoted before the call (or before
+  ///      another yield distribution) leaves that yield behind as principal. withdrawAll() withdraws
+  ///      the principal as it stands after settling, closing the position in one transaction.
+  ///      Reverts ZeroAmount when there is no principal (claim() pays rewards alone).
+  function withdrawAll() external whenNotPaused nonReentrant {
+    _withdraw(0, true);
+  }
+
   /// @notice Settle `user`'s pending USDSC yield, folding it into their own principal
   /// @dev Deliberately permissionless: this can only ever increase `user`'s own recorded
   ///      principal, and never transfers or moves any token anywhere - there is nothing for

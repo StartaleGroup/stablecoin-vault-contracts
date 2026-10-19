@@ -263,6 +263,44 @@ contract EarnVaultV2UsdscReservesSoneiumFork is Test {
   }
 
   // ---------------------------------------------------------------------------------------------
+  // withdrawAll: a full exit on the live vault after real distributions
+  // ---------------------------------------------------------------------------------------------
+
+  /// @dev A live depositor with V1 backlog plus real V2 distributions: withdrawAll pays principal,
+  ///      every bit of folded yield, legacy accrued and USDSC boost, and leaves nothing behind
+  function test_WithdrawAllExitsInFullAfterRealDistribution() public {
+    _realRounds(2);
+    uint256 owed = VAULT.totalValue(WHALE) + VAULT.getClaimableBoostReward(WHALE, address(usdsc));
+    assertGt(VAULT.pendingYield(WHALE), 0, 'no yield pending');
+    uint256 before = usdsc.balanceOf(WHALE);
+
+    vm.prank(WHALE);
+    VAULT.withdrawAll();
+
+    assertEq(usdsc.balanceOf(WHALE) - before, owed, 'whale not paid in full');
+    assertEq(VAULT.totalValue(WHALE), 0, 'position left open');
+    assertEq(VAULT.getClaimableBoostReward(WHALE, address(usdsc)), 0);
+    _assertSolvent();
+  }
+
+  /// @dev The same live position: withdraw(principal) quoted before the call leaves the folded
+  ///      yield behind, which a follow-up withdrawAll then clears
+  function test_WithdrawQuotedPrincipalLeavesResidual_WithdrawAllClearsIt() public {
+    _realRounds(1);
+    uint256 pending = VAULT.pendingYield(WHALE);
+    assertGt(pending, 0, 'no yield pending');
+    uint256 quoted = VAULT.principal(WHALE);
+    vm.prank(WHALE);
+    VAULT.withdraw(quoted);
+    assertEq(VAULT.principal(WHALE), pending, 'residual = folded yield');
+
+    vm.prank(WHALE);
+    VAULT.withdrawAll();
+    assertEq(VAULT.totalValue(WHALE), 0);
+    _assertSolvent();
+  }
+
+  // ---------------------------------------------------------------------------------------------
   // Surplus: sweep and recover take only USDSC above both reserves
   // ---------------------------------------------------------------------------------------------
 
@@ -291,6 +329,19 @@ contract EarnVaultV2UsdscReservesSoneiumFork is Test {
   }
 
   // ---------------------------------------------------------------------------------------------
+
+  function _realRounds(uint256 n) internal {
+    for (uint256 r = 0; r < n; r++) {
+      vm.warp(block.timestamp + 3 hours);
+      vm.roll(block.number + 5400);
+      vm.prank(RR_OPERATOR);
+      RR.snapshotVaultTVLs();
+      vm.roll(block.number + 2);
+      vm.warp(block.timestamp + 4);
+      vm.prank(RR_OPERATOR);
+      RR.distribute();
+    }
+  }
 
   function _required() internal view returns (uint256) {
     return VAULT.claimReserve() + VAULT.boostClaimReserve(address(usdsc));

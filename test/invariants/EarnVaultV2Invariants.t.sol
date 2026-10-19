@@ -43,6 +43,7 @@ contract EarnVaultV2Handler is Test {
   /// @notice Upper bound on per-user settlements performed so far (each floors <= 1 wei of
   ///         yield in the vault's favour). Over-counting only loosens the dust bound below.
   uint256 public settleOps;
+  uint256 public withdrawAllOps;
   /// @notice Two INELIGIBLE entries mixed into credit batches: the vault itself and an
   ///         always-blacklisted address. onBoostCredit() must skip both.
   address public blacklistedAddr;
@@ -155,6 +156,27 @@ contract EarnVaultV2Handler is Test {
     settleOps++;
     vm.prank(user);
     vault.withdraw(amount);
+  }
+
+  /// @notice withdrawAll(): pays exactly the whole position and leaves nothing behind
+  function withdrawAll(uint256 userIndex) external {
+    userIndex = bound(userIndex, 0, users.length - 1);
+    address user = users[userIndex];
+    if (vault.principal(user) + vault.pendingYield(user) == 0) {
+      vm.expectRevert(IEarnVaultEventsAndErrors.ZeroAmount.selector);
+      vm.prank(user);
+      vault.withdrawAll();
+      return;
+    }
+    uint256 expected = vault.totalValue(user) + vault.getClaimableBoostReward(user, address(usdsc));
+    uint256 before = usdsc.balanceOf(user);
+
+    settleOps++;
+    withdrawAllOps++;
+    vm.prank(user);
+    vault.withdrawAll();
+    assertEq(usdsc.balanceOf(user) - before, expected, 'withdrawAll paid other than the whole position');
+    assertEq(vault.totalValue(user), 0, 'withdrawAll left a position behind');
   }
 
   function claim(uint256 userIndex) external {
@@ -428,7 +450,7 @@ contract EarnVaultV2Invariants is StdInvariant, Test {
     vm.prank(owner);
     vault.setBlacklisted(blacklisted, true);
 
-    bytes4[] memory selectors = new bytes4[](16);
+    bytes4[] memory selectors = new bytes4[](17);
     selectors[0] = EarnVaultV2Handler.deposit.selector;
     selectors[1] = EarnVaultV2Handler.withdraw.selector;
     selectors[2] = EarnVaultV2Handler.claim.selector;
@@ -445,9 +467,18 @@ contract EarnVaultV2Invariants is StdInvariant, Test {
     selectors[13] = EarnVaultV2Handler.donate.selector;
     selectors[14] = EarnVaultV2Handler.sweep.selector;
     selectors[15] = EarnVaultV2Handler.recoverSurplus.selector;
+    selectors[16] = EarnVaultV2Handler.withdrawAll.selector;
 
     targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
     targetContract(address(handler));
+  }
+
+  /// @notice Guards the fuzz setup: withdrawAll() really reaches a full exit, not only the
+  ///         no-principal revert
+  function test_HandlerWithdrawAllPathIsReachable() external {
+    handler.deposit(0, 1000e6);
+    handler.withdrawAll(0);
+    assertGt(handler.withdrawAllOps(), 0, 'withdrawAll never exited a position');
   }
 
   /// @notice Guards the fuzz setup itself: with the handler's bounds, full batches do exceed

@@ -260,13 +260,24 @@ contract EarnVaultUpgradeable is
   /// @dev User can only withdraw their principal, but gets everything left in `accrued` (if
   ///      any) plus all boost rewards automatically
   function withdraw(uint256 amount) external virtual whenNotPaused nonReentrant {
+    _withdraw(amount, false);
+  }
+
+  /// @dev Shared body of withdraw() and EarnVaultV2.withdrawAll(). With `all`, `amount` is ignored
+  ///      and the caller's whole principal as it stands after settling is withdrawn (reverts
+  ///      ZeroAmount if that is 0).
+  function _withdraw(uint256 amount, bool all) internal {
     EarnVaultStorage storage $ = _getStorage();
     _checkNotBlacklisted(msg.sender);
-    if (amount == 0) revert IEarnVaultEventsAndErrors.ZeroAmount();
+    if (!all && amount == 0) revert IEarnVaultEventsAndErrors.ZeroAmount();
 
     _settle(msg.sender);
 
     uint256 p = $.principal[msg.sender];
+    if (all) {
+      if (p == 0) revert IEarnVaultEventsAndErrors.ZeroAmount();
+      amount = p;
+    }
     if (amount > p) revert IEarnVaultEventsAndErrors.InsufficientPrincipal();
 
     // Settle and claim ALL boost rewards

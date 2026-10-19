@@ -70,6 +70,7 @@ RewardRedistributor
 **Key Functions**:
 - `deposit(uint256 amount)`: Deposit USDSC
 - `withdraw(uint256 amount)`: Withdraw principal (auto-claims all rewards)
+- `withdrawAll()` (EarnVaultV2): Withdraw the whole principal, including yield compounded into it by the call itself (auto-claims all rewards). `withdraw(principal(user))` quoted beforehand can leave that yield behind as principal
 - `claim()`: Claim all accrued rewards without withdrawing
 - `onYield(uint256 amount)`: Receive yield distribution (YIELD_REDISTRIBUTOR only)
 - `onBoostReward(address token, uint256 amount)`: Receive boost rewards (BOOST_REWARD_KEEPER only)
