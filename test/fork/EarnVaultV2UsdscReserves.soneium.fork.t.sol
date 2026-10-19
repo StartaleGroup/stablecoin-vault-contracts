@@ -10,6 +10,17 @@ import {ITransparentUpgradeableProxy} from '@openzeppelin/contracts/proxy/transp
 import {IERC20} from '@openzeppelin/contracts/token/ERC20/IERC20.sol';
 import {Test, console2} from 'forge-std/Test.sol';
 
+/// @dev The two M token functions the fork tests use to accrue yield: the live index, and the
+///      portal-only index update a bridge message delivers
+interface IMYieldLike {
+  function yield() external view returns (uint256);
+}
+
+interface IMTokenIndex {
+  function currentIndex() external view returns (uint128);
+  function updateIndex(uint128 index) external;
+}
+
 /// @title USDSC reserve accounting on the live vault after the V2 upgrade
 /// @notice Forks Soneium, upgrades the live EarnVault to EarnVaultV2 through the owner Safe
 ///         (ProxyAdmin.upgradeAndCall), then checks that every USDSC funding and surplus check
@@ -25,6 +36,8 @@ contract EarnVaultV2UsdscReservesSoneiumFork is Test {
   address constant RR_OPERATOR = 0x86bE13a26d548FA5407Ee3E5a8321B4E1019333C;
   address constant WHALE = 0xAfC03035BDe20071BC930eE8112a7B4b683Cff49;
   bytes32 constant EARN_VAULT_STORAGE = 0x4acfb950108afb92cc59b268b946808304d34de46619a1e803aeac06ad89cb00;
+  IMTokenIndex constant M_TOKEN = IMTokenIndex(0x866A2BF4E572CbcF37D5071A7a58503Bfb36be1b);
+  address constant M_PORTAL = 0xD925C84b55E4e44a53749fF5F2a5A13F63D128fd;
 
   IERC20 usdsc;
   address boostRewardKeeper; // read from live storage (no public getter)
@@ -257,6 +270,7 @@ contract EarnVaultV2UsdscReservesSoneiumFork is Test {
     for (uint256 r = 0; r < 3; r++) {
       vm.warp(block.timestamp + 3 hours);
       vm.roll(block.number + 5400);
+      _accrueMYield();
       vm.prank(RR_OPERATOR);
       RR.snapshotVaultTVLs();
       vm.roll(block.number + 2);
@@ -360,10 +374,20 @@ contract EarnVaultV2UsdscReservesSoneiumFork is Test {
 
   // ---------------------------------------------------------------------------------------------
 
+  /// @dev The M portal pushes a slightly higher M index, as a bridge index update would, so USDSC has
+  ///      yield for the round's claimYield() however recently the live redistributor last claimed
+  function _accrueMYield() internal {
+    uint128 index = M_TOKEN.currentIndex();
+    vm.prank(M_PORTAL);
+    M_TOKEN.updateIndex(index + index / 100_000); // +0.001%
+    assertGt(IMYieldLike(address(usdsc)).yield(), 0, 'no USDSC yield to claim');
+  }
+
   function _realRounds(uint256 n) internal {
     for (uint256 r = 0; r < n; r++) {
       vm.warp(block.timestamp + 3 hours);
       vm.roll(block.number + 5400);
+      _accrueMYield();
       vm.prank(RR_OPERATOR);
       RR.snapshotVaultTVLs();
       vm.roll(block.number + 2);

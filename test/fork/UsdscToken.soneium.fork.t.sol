@@ -7,6 +7,12 @@ import {IAccessControl} from '@openzeppelin/contracts/access/IAccessControl.sol'
 import {IERC20} from '@openzeppelin/contracts/token/ERC20/IERC20.sol';
 import {Test} from 'forge-std/Test.sol';
 
+/// @dev The live M token's index and its portal-only update (a bridge index message)
+interface IMTokenIndex {
+  function currentIndex() external view returns (uint128);
+  function updateIndex(uint128 index) external;
+}
+
 /// @title The repo's UsdscToken behaves as the live USDSC implementation
 /// @notice Forks Soneium and runs the same actions twice from the same state: once with the live
 ///         implementation behind the USDSC proxy, once with this repo's UsdscToken (built with the live
@@ -21,6 +27,7 @@ contract UsdscTokenSoneiumFork is Test {
   RewardRedistributor constant RR = RewardRedistributor(0xda798684ffD5eb509c2Ab7b8352EC55B31F18201);
   address constant RR_OPERATOR = 0x86bE13a26d548FA5407Ee3E5a8321B4E1019333C;
   address constant EARN_VAULT = 0xFdeB7e9F59cad080D9158ff850Ce79bCf6cdd5f0;
+  address constant M_PORTAL = 0xD925C84b55E4e44a53749fF5F2a5A13F63D128fd;
 
   UsdscToken constant USDSC = UsdscToken(USDSC_PROXY);
   bytes repoCode;
@@ -110,14 +117,25 @@ contract UsdscTokenSoneiumFork is Test {
   function _distributionRound() internal returns (bytes memory) {
     vm.warp(block.timestamp + 3 hours);
     vm.roll(block.number + 5400);
+    // the M portal pushes a slightly higher index, so the round has real yield to claim
+    uint128 index = IMTokenIndex(M_TOKEN).currentIndex();
+    vm.prank(M_PORTAL);
+    IMTokenIndex(M_TOKEN).updateIndex(index + index / 100_000);
+    uint256 yield_ = USDSC.yield();
+    assertGt(yield_, 0, 'no USDSC yield to claim');
     vm.prank(RR_OPERATOR);
     RR.snapshotVaultTVLs();
     vm.roll(block.number + 2);
     vm.warp(block.timestamp + 4);
     vm.prank(RR_OPERATOR);
     RR.distribute();
+    assertEq(USDSC.yield(), 0, 'round claimed the yield');
     return abi.encode(
-      USDSC.totalSupply(), USDSC.balanceOf(EARN_VAULT), USDSC.balanceOf(address(RR)), USDSC.balanceOf(RR.treasury())
+      yield_,
+      USDSC.totalSupply(),
+      USDSC.balanceOf(EARN_VAULT),
+      USDSC.balanceOf(address(RR)),
+      USDSC.balanceOf(RR.treasury())
     );
   }
 }
