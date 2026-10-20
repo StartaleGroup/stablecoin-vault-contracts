@@ -32,7 +32,7 @@ RewardRedistributor
 - **Proportional Yield Distribution**: Yield is split between vaults based on their TVL with rounding-carry logic for long-run fairness
 - **Dual Vault Strategy**: Two different yield mechanisms (claimable vs. automatic PPS increase)
 - **Upgradeable Vaults**: EarnVault and sUSDSC Vault use transparent proxy pattern for future upgrades
-- **Boost Rewards**: EarnVault supports additional rewards in multiple ERC20 tokens
+- **Boost Rewards**: EarnVault pays additional boost rewards in USDSC (the only boost reward token)
 - **Access Control**: Role-based permissions for all administrative functions
 - **Emergency Controls**: Pause mechanisms and emergency recovery functions
 

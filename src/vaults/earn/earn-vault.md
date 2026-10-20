@@ -291,7 +291,7 @@ address[] public activeBoostTokens;  // List of tokens that have been distribute
 1. **Distribution**: `onBoostReward(token, amount)` distributes boost rewards
 2. **Accrual**: Users automatically accrue boost rewards based on their principal
 3. **Claiming**: Users claim boost rewards via `withdraw()` or `claim()`
-4. **Automatic**: All active boost tokens are claimed together
+4. **Automatic**: The USDSC boost reward is claimed together with yield
 
 ### Role-Based Security
 - **Owner**: Full administrative control, emergency functions, 2-step ownership transfers
@@ -550,7 +550,7 @@ uint256 boostRewards = vault.getClaimableBoostReward(user, address(usdsc));
 - **getUserInfo**: Inlined calculations avoid external calls
 - **Library Architecture**: Boost logic separated for gas optimization
 - **Boost Token Indexing**: O(1) lookup for boost token tracking (eliminates linear search)
-- **Mapping + Array Approach**: Efficient tracking of active boost tokens
+- **Mapping + Array Approach**: Tracking of the active boost token (only USDSC is ever active)
 
 ### Precision & Safety
 - **RAY Precision**: 1e27 prevents rounding errors

@@ -208,7 +208,7 @@ A batch that runs out of gas reverts whole; split it and resubmit with the same 
 - **Reward engine reconciliation:**
   - `BoostCycleCredited(cycleId, entryCount, total, skippedCount, skippedTotal)`. `total` includes skipped amounts, so the amount credited is `total - skippedTotal`;
   - plus one `BoostCredited` or `BoostCreditSkipped` per entry.
-- **Vault-wide yield:** `YieldIndexed(amount, newGlobalIndex, newClaimReserve)` on each distribution, and `BoostRewardIndexed` for boost tokens.
+- **Vault-wide yield:** `YieldIndexed(amount, newGlobalIndex, newClaimReserve)` on each distribution, and `BoostRewardIndexed` for the USDSC boost reward.
 - **Config changes:** `BoostKeeperChanged`, `MaxBoostPerBatchChanged`, `BlacklistStatusChanged`, `Paused` / `Unpaused`, and the `*Changed` role events.
 - **Redistributor events** (on the RewardRedistributor, or on `TestSnapshotRedistributor` in the test stack; signatures and topics are identical, verified):
 
