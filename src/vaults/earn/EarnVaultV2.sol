@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
+import {IUSDSCReceiveWithAuthorization} from '../../interfaces/coin/IUSDSCReceiveWithAuthorization.sol';
 import {IRewardRedistributorSnapshot} from '../../interfaces/distributor/IRewardRedistributorSnapshot.sol';
 import {IEarnVaultEventsAndErrors} from '../../interfaces/vaults/earn/IEarnVaultEventsAndErrors.sol';
 import {BoostRewardsLib} from './BoostRewardsLib.sol';
@@ -153,8 +154,9 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
   error EmptyBatch();
   error BoostBatchCapExceeded(uint256 credited, uint256 maxBoostPerBatch);
   error ZeroMaxBoostPerBatch();
-  /// @notice Thrown by deposit()/depositWithPermit() while the yield redistributor's latest TVL
-  ///         snapshot is still usable by distribute() - see the JIT deposit lock NatSpec above.
+  /// @notice Thrown by deposit()/depositWithPermit()/depositWithAuthorization() while the yield
+  ///         redistributor's latest TVL snapshot is still usable by distribute() - see the JIT
+  ///         deposit lock NatSpec above.
   /// @param unlocksAt First timestamp at which deposits are allowed again
   error DepositsLockedForDistribution(uint256 unlocksAt);
 
@@ -411,6 +413,41 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
     _withdraw(0, true);
   }
 
+  /// @notice Deposit `amount` USDSC from `from` using a USDSC ERC-3009 receive authorization that
+  ///         `from` signed to this vault - a gasless deposit any relayer can submit
+  /// @dev USDSC's receiveWithAuthorization() only executes when msg.sender is the payee, so an
+  ///      authorization made out to this vault can only be used here, and only as signed: the payer,
+  ///      the vault, the exact amount, the validity window and a single-use nonce are all part of the
+  ///      signature. Whoever submits it, the result is the deposit `from` signed, credited to `from`.
+  ///      A second submission reverts in USDSC (the nonce is used). Signatures go through USDSC's
+  ///      bytes overload, so both ECDSA and ERC-1271 smart-wallet signatures work.
+  /// @dev Same checks and order as deposit(): paused, blacklisted payer and zero amount revert, the
+  ///      snapshot deposit lock applies, and the payer is settled before USDSC moves.
+  /// @param from Signer of the authorization; pays and is credited
+  /// @param amount USDSC amount, equal to the authorization's value
+  /// @param validAfter Authorization not valid at or before this timestamp
+  /// @param validBefore Authorization not valid at or after this timestamp
+  /// @param nonce Unique authorization nonce chosen by `from`
+  /// @param signature `from`'s signature over USDSC's ReceiveWithAuthorization message with
+  ///        to = this vault (65-byte ECDSA, or anything the ERC-1271 wallet accepts)
+  function depositWithAuthorization(
+    address from,
+    uint256 amount,
+    uint256 validAfter,
+    uint256 validBefore,
+    bytes32 nonce,
+    bytes calldata signature
+  ) external whenNotPaused nonReentrant {
+    if (from == address(0)) revert IEarnVaultEventsAndErrors.CanNotBeZeroAddress();
+    _checkNotBlacklisted(from);
+    if (amount == 0) revert IEarnVaultEventsAndErrors.ZeroAmount();
+
+    _beforeDeposit(from);
+    IUSDSCReceiveWithAuthorization(address(_getStorage().USDSC))
+      .receiveWithAuthorization(from, address(this), amount, validAfter, validBefore, nonce, signature);
+    _creditDeposit(from, amount);
+  }
+
   /// @notice Settle `user`'s pending USDSC yield, folding it into their own principal
   /// @dev Deliberately permissionless: this can only ever increase `user`'s own recorded
   ///      principal, and never transfers or moves any token anywhere - there is nothing for
@@ -536,8 +573,8 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
     }
   }
 
-  /// @notice Whether deposit()/depositWithPermit() currently revert DepositsLockedForDistribution,
-  ///         and, if so, the first timestamp at which they stop reverting
+  /// @notice Whether deposit()/depositWithPermit()/depositWithAuthorization() currently revert
+  ///         DepositsLockedForDistribution, and, if so, the first timestamp at which they stop reverting
   /// @dev (false, 0) whenever unlocked, including when the redistributor has never snapshotted
   /// @return locked True while the yield redistributor's latest TVL snapshot is still usable by
   ///         its distribute()
@@ -576,7 +613,8 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
     return (true, ok ? sum : type(uint256).max);
   }
 
-  /// @dev Internal helper to handle deposit logic (shared by deposit() and depositWithPermit())
+  /// @dev Internal helper to handle deposit logic (shared by deposit() and depositWithPermit();
+  ///      depositWithAuthorization() runs the same two halves around its own transfer)
   /// @dev Overridden purely to drop V1's own boost-settle loop, which is redundant (though
   ///      harmless - BoostRewardsLib.settleBoost is idempotent on an unchanged index) once
   ///      _settle() itself always settles boost first, using pre-compound principal, before
@@ -587,13 +625,21 @@ contract EarnVaultV2 is EarnVaultUpgradeable {
   /// @param user Address of the user depositing
   /// @param amount Amount of USDSC tokens to deposit
   function _deposit(address user, uint256 amount) internal virtual override {
+    _beforeDeposit(user);
+    _getStorage().USDSC.safeTransferFrom(user, address(this), amount);
+    _creditDeposit(user, amount);
+  }
+
+  /// @dev First half of every deposit path: the JIT deposit lock, then settling `user`
+  function _beforeDeposit(address user) internal {
     (bool locked, uint256 unlocksAt) = _depositLockState();
     if (locked) revert DepositsLockedForDistribution(unlocksAt);
-
-    EarnVaultStorage storage $ = _getStorage();
     _settle(user); // already settles boost (pre-compound principal) as part of settling USDSC yield
+  }
 
-    $.USDSC.safeTransferFrom(user, address(this), amount);
+  /// @dev Second half, after `amount` USDSC has arrived: credit it as principal, reserved 1:1
+  function _creditDeposit(address user, uint256 amount) internal {
+    EarnVaultStorage storage $ = _getStorage();
     $.principal[user] += amount;
     $.totalPrincipal += amount;
     $.claimReserve += amount; // reserve principal 1:1

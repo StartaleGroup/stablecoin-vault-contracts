@@ -218,6 +218,8 @@ contract EarnVaultUpgradeable is
   ///      someone submitted the same permit first, using its nonce), the deposit still goes ahead.
   ///      This also means anyone can trigger a deposit of an amount tokenOwner has already approved;
   ///      it is always credited to tokenOwner's own position, which they can withdraw.
+  /// @dev Kept for compatibility. On EarnVaultV2, depositWithAuthorization() is the gasless path to
+  ///      use: its USDSC authorization can only be executed by the vault, exactly as signed.
   /// @param tokenOwner Address of token owner (who signs permit and receives deposit credit)
   /// @param amount Amount of USDSC tokens to deposit
   /// @param deadline Permit deadline timestamp

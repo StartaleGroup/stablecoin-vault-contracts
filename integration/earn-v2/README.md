@@ -9,7 +9,8 @@
 > - New `withdrawAll()`: a full exit, including yield compounded by the call itself.
 > - New views `surplusUSDSC()` and `boostClaimReserve(token)`.
 > - `onBoostReward` accepts only USDSC (`BoostTokenNotUSDSC` otherwise); `removeBoostRewardToken` was removed.
-> - `depositWithPermit` still goes ahead when the permit was already used, if the existing allowance covers the amount.
+> - New `depositWithAuthorization()`: gasless deposits through USDSC's ERC-3009 `receiveWithAuthorization`, including ERC-1271 smart wallets (section 2a). Use it instead of `depositWithPermit`.
+> - `depositWithPermit` still goes ahead when the permit was already used, if the existing allowance covers the amount. Kept for compatibility only.
 
 This guide covers what the reward engine, keepers, frontend and indexer need in order to integrate with `EarnVaultV2`. The design rationale is in `src/vaults/earn/base-tier-auto-compounding.md`. The full ABI is in [`EarnVaultV2.abi.json`](EarnVaultV2.abi.json).
 
@@ -54,8 +55,25 @@ All salts are tagged `TEST_…`, so test addresses can never coincide with produ
 | **Boost keeper** (reward engine) | `onBoostCredit(cycleId, users, amounts)` | Only the address set as `boostKeeper`. It must fund the vault first. |
 | **Compound keeper** | `compoundMany(users)` / `compound(user)` | Permissionless; any address can call them. It only grows each user's own principal. Run it daily. |
 | **Redistributor operator** | `RewardRedistributor.snapshotVaultTVLs()`, then `distribute()` | Existing flow. It now opens and closes the deposit lock (section 5). |
-| **Users / frontend** | `deposit`, `depositWithPermit`, `withdraw`, `withdrawAll`, `claim` | `claim()` pays USDSC boost rewards and any legacy V1 `accrued` USDSC. Base yield auto-compounds into principal. For a full exit use `withdrawAll()`: `withdraw(principal(user))` quoted before the call leaves the yield compounded by that call behind as principal. |
+| **Users / frontend** | `deposit`, `depositWithAuthorization` (gasless, via a relayer), `withdraw`, `withdrawAll`, `claim` | `claim()` pays USDSC boost rewards and any legacy V1 `accrued` USDSC. Base yield auto-compounds into principal. For a full exit use `withdrawAll()`: `withdraw(principal(user))` quoted before the call leaves the yield compounded by that call behind as principal. |
 | **Owner (Safe)** | `setBoostKeeper`, `setMaxBoostPerBatch`, `setBlacklisted`, pause / unpause, sweep / recover | Admin only. |
+
+### 2a. Gasless deposits (`depositWithAuthorization`)
+
+The user signs USDSC's ERC-3009 `ReceiveWithAuthorization` message made out to the vault; any relayer submits it:
+
+```
+depositWithAuthorization(address from, uint256 amount, uint256 validAfter, uint256 validBefore, bytes32 nonce, bytes signature)
+```
+
+- **EIP-712 domain** (read `eip712Domain()` on USDSC): name `Startale USD`, version `1`, chainId `1868` (Soneium), verifyingContract = the USDSC address.
+- **Type:** `ReceiveWithAuthorization(address from,address to,uint256 value,uint256 validAfter,uint256 validBefore,bytes32 nonce)` with `to` = the vault and `value` = `amount`. Type hash `0xd099cc98ef71107a616c4f0f941f04c322d8e254fe26b3c6668db87aae413de8`.
+- **Signature:** 65-byte `r‖s‖v` from an EOA, or whatever the user's ERC-1271 smart wallet accepts. No approval is needed.
+- **Validity:** valid strictly after `validAfter` and strictly before `validBefore`. Pick a random 32-byte `nonce` per authorization.
+- **Who can submit:** anyone, but only through the vault (USDSC rejects anyone else as the receiver), and only exactly as signed: the deposit always goes to `from`. If someone else submits it first, the user's deposit has happened and your copy reverts `AuthorizationAlreadyUsed`. Check `authorizationState(from, nonce)` on USDSC and simulate the call before sending.
+- **Same rules as `deposit`:** reverts while paused, for a blacklisted `from`, for a zero amount, and during the deposit-lock window (`DepositsLockedForDistribution(unlocksAt)`; nothing is consumed, so resend the same signature from `unlocksAt`).
+- **Cancel:** the user can cancel an unused authorization on USDSC with `cancelAuthorization`.
+- **USDSC errors you may see:** `AuthorizationAlreadyUsed(address,bytes32)`, `AuthorizationExpired(uint256,uint256)`, `AuthorizationNotYetValid(uint256,uint256)`, `SignerMismatch()` (wrong signer, amount, payee or field), `InvalidSignatureLength()`.
 
 ---
 
