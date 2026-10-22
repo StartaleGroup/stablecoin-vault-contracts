@@ -339,58 +339,56 @@ contract EarnVaultUpgradeableEdgeCasesTest is Test {
     assertEq(otherToken.balanceOf(treasury), treasuryBefore + amount);
   }
 
-  function test_RecoverERC20_BoostTokenWithReserve() public {
-    // Create a boost token
-    MockUSDSC boostToken = new MockUSDSC();
+  /// @notice Non-USDSC tokens can never be boost tokens, so funded onBoostReward reverts
+  function test_Revert_OnBoostReward_NonUsdscToken_EvenWhenFunded() public {
+    MockUSDSC other = new MockUSDSC();
 
-    // Setup: user deposits principal
     usdsc.mint(user, 10_000e6);
     vm.startPrank(user);
     usdsc.approve(address(vault), 10_000e6);
     vault.deposit(10_000e6);
     vm.stopPrank();
 
-    // Distribute boost rewards to create boostClaimReserve
-    uint256 boostAmount = 5000e6;
-    boostToken.mint(address(vault), boostAmount);
-    vm.prank(operator); // operator is boost reward keeper
-    vault.onBoostReward(address(boostToken), boostAmount);
-
-    // Add extra boost tokens beyond reserve
-    uint256 extraBoost = 3000e6;
-    boostToken.mint(address(vault), extraBoost);
-
-    // Total balance: 5000 (reserved) + 3000 (extra) = 8000
-    // Can only recover the extra 3000
-    uint256 treasuryBefore = boostToken.balanceOf(treasury);
-
-    vm.prank(owner);
-    vault.recoverERC20(address(boostToken), treasury, extraBoost);
-
-    assertEq(boostToken.balanceOf(treasury), treasuryBefore + extraBoost);
+    other.mint(address(vault), 5000e6);
+    vm.prank(operator);
+    vm.expectRevert(IEarnVaultEventsAndErrors.BoostTokenNotUSDSC.selector);
+    vault.onBoostReward(address(other), 5000e6);
   }
 
-  function test_Revert_RecoverERC20_BoostTokenExceedsAvailable() public {
-    // Create a boost token
-    MockUSDSC boostToken = new MockUSDSC();
+  /// @notice removeBoostRewardToken no longer exists
+  function test_RemoveBoostRewardToken_NoLongerExists() public {
+    vm.prank(owner);
+    (bool ok,) = address(vault).call(abi.encodeWithSignature('removeBoostRewardToken(address)', address(0xdEaD)));
+    assertFalse(ok);
+  }
 
-    // Setup: user deposits principal
+  /// @notice The USDSC boost reserve is protected from recoverERC20; only the true surplus can be swept
+  function test_RecoverERC20_UsdscBoostReserveProtected() public {
     usdsc.mint(user, 10_000e6);
     vm.startPrank(user);
     usdsc.approve(address(vault), 10_000e6);
     vault.deposit(10_000e6);
     vm.stopPrank();
 
-    // Distribute boost rewards to create boostClaimReserve
     uint256 boostAmount = 5000e6;
-    boostToken.mint(address(vault), boostAmount);
-    vm.prank(operator); // operator is boost reward keeper
-    vault.onBoostReward(address(boostToken), boostAmount);
+    usdsc.mint(address(vault), boostAmount);
+    vm.prank(operator);
+    vault.onBoostReward(address(usdsc), boostAmount);
 
-    // Try to recover more than available (beyond reserve)
-    vm.prank(owner);
+    uint256 extra = 3000e6;
+    usdsc.mint(address(vault), extra);
+
+    vm.prank(pauser);
+    vault.pause();
+
+    vm.startPrank(owner);
     vm.expectRevert(IEarnVaultEventsAndErrors.ExceedsSurplus.selector);
-    vault.recoverERC20(address(boostToken), treasury, boostAmount + 1);
+    vault.recoverERC20(address(usdsc), treasury, extra + 1);
+
+    uint256 treasuryBefore = usdsc.balanceOf(treasury);
+    vault.recoverERC20(address(usdsc), treasury, extra);
+    vm.stopPrank();
+    assertEq(usdsc.balanceOf(treasury), treasuryBefore + extra);
   }
 
   // ========== depositWithPermit Tests ==========
@@ -1012,20 +1010,11 @@ contract EarnVaultUpgradeableEdgeCasesTest is Test {
     vm.prank(redistributor);
     vault.onYield(yieldAmount);
 
-    // Add boost rewards (ASTR and DOT)
-    MockUSDSC astrToken = new MockUSDSC();
-    MockUSDSC dotToken = new MockUSDSC();
-
-    uint256 astrAmount = 500e6;
-    uint256 dotAmount = 750e6;
-
-    astrToken.mint(address(vault), astrAmount);
+    // Add a USDSC boost reward (the only supported boost token), funded exactly on top of reserves
+    uint256 boostAmount = 500e6;
+    usdsc.mint(address(vault), boostAmount);
     vm.prank(operator); // operator is boost reward keeper
-    vault.onBoostReward(address(astrToken), astrAmount);
-
-    dotToken.mint(address(vault), dotAmount);
-    vm.prank(operator); // operator is boost reward keeper
-    vault.onBoostReward(address(dotToken), dotAmount);
+    vault.onBoostReward(address(usdsc), boostAmount);
 
     // Get all claimables
     (uint256 usdscClaimable, address[] memory boostTokens, uint256[] memory boostAmounts) = vault.getAllClaimables(user);
@@ -1033,18 +1022,11 @@ contract EarnVaultUpgradeableEdgeCasesTest is Test {
     // Verify USDSC yield
     assertEq(usdscClaimable, yieldAmount);
 
-    // Verify boost rewards
-    assertEq(boostTokens.length, 2);
-    assertEq(boostAmounts.length, 2);
-
-    // Find which index is ASTR and which is DOT
-    for (uint256 i = 0; i < boostTokens.length; i++) {
-      if (boostTokens[i] == address(astrToken)) {
-        assertEq(boostAmounts[i], astrAmount);
-      } else if (boostTokens[i] == address(dotToken)) {
-        assertEq(boostAmounts[i], dotAmount);
-      }
-    }
+    // Verify the single boost slot is USDSC
+    assertEq(boostTokens.length, 1);
+    assertEq(boostAmounts.length, 1);
+    assertEq(boostTokens[0], address(usdsc));
+    assertEq(boostAmounts[0], boostAmount);
   }
 
   function test_GetAllClaimables_NoPrincipal() public view {

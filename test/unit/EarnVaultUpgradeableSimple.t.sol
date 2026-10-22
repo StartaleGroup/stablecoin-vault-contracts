@@ -768,7 +768,7 @@ contract EarnVaultUpgradeableSimpleTest is Test {
 
   function test_OnBoostRewardStabilityAcrossUpgrades() public {
     // Deploy mock boost token
-    MockERC20 boostToken = new MockERC20('Boost Token', 'BOOST', 18);
+    MockERC20 boostToken = usdsc; // boosts are USDSC-only
     boostToken.mint(operator, 1000e18); // operator is boost reward keeper
 
     // Set up deposits in V1
@@ -879,7 +879,7 @@ contract EarnVaultUpgradeableSimpleTest is Test {
     vault.onYield(200e6);
 
     // Deploy and distribute boost rewards
-    MockERC20 boostToken = new MockERC20('Boost Token', 'BOOST', 18);
+    MockERC20 boostToken = usdsc; // boosts are USDSC-only
     boostToken.mint(operator, 1000e18); // operator is boost reward keeper
 
     vm.startPrank(operator);
@@ -989,7 +989,7 @@ contract EarnVaultUpgradeableSimpleTest is Test {
     vault.onYield(300e6);
 
     // Deploy boost token and distribute rewards
-    MockERC20 boostToken = new MockERC20('Boost Token', 'BOOST', 18);
+    MockERC20 boostToken = usdsc; // boosts are USDSC-only
     boostToken.mint(operator, 1000e18); // operator is boost reward keeper
 
     vm.startPrank(operator);

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
+import {IEarnVaultEventsAndErrors} from '../../src/interfaces/vaults/earn/IEarnVaultEventsAndErrors.sol';
 import {EarnVault} from '../../src/vaults/earn/EarnVault.sol';
 import {MockERC20} from '../mocks/MockERC20.sol';
 import {Test} from 'forge-std/Test.sol';
@@ -276,8 +277,8 @@ contract EarnVaultInvariants is Test {
   /// @dev Verifies boost tokens follow same invariants as USDSC yield
   function test_BoostInvariant() public {
     // === Setup: Create mock boost token ===
-    MockERC20 boostToken = new MockERC20('Boost Token', 'BOOST', 18);
-    boostToken.mint(operator, 1000e18); // operator is boost reward keeper
+    MockERC20 boostToken = usdsc; // boosts are USDSC-only
+    boostToken.mint(operator, 1000e6); // operator is boost reward keeper
 
     // === Setup: Alice deposits ===
     vm.prank(alice);
@@ -285,10 +286,10 @@ contract EarnVaultInvariants is Test {
 
     // === Distribute boost rewards ===
     vm.startPrank(operator); // operator is boost reward keeper
-    boostToken.approve(address(vault), 100e18);
-    bool success = boostToken.transfer(address(vault), 100e18);
+    boostToken.approve(address(vault), 100e6);
+    bool success = boostToken.transfer(address(vault), 100e6);
     require(success, 'Transfer failed');
-    vault.onBoostReward(address(boostToken), 100e18);
+    vault.onBoostReward(address(boostToken), 100e6);
     vm.stopPrank();
 
     // === Verify boost balance >= boost claim reserve ===
@@ -302,10 +303,10 @@ contract EarnVaultInvariants is Test {
     uint256 initialBoostIndex = vault.boostGlobalIndex(address(boostToken));
 
     vm.startPrank(operator); // operator is boost reward keeper
-    boostToken.approve(address(vault), 50e18);
-    bool success2 = boostToken.transfer(address(vault), 50e18);
+    boostToken.approve(address(vault), 50e6);
+    bool success2 = boostToken.transfer(address(vault), 50e6);
     require(success2, 'Transfer failed');
-    vault.onBoostReward(address(boostToken), 50e18);
+    vault.onBoostReward(address(boostToken), 50e6);
     vm.stopPrank();
 
     uint256 finalBoostIndex = vault.boostGlobalIndex(address(boostToken));
@@ -313,7 +314,7 @@ contract EarnVaultInvariants is Test {
 
     // === Verify boost claimable is proportional ===
     uint256 aliceBoostClaimable = vault.getClaimableBoostReward(alice, address(boostToken));
-    assertEq(aliceBoostClaimable, 150e18, "Alice should get all boost rewards (she's the only user)");
+    assertEq(aliceBoostClaimable, 150e6, "Alice should get all boost rewards (she's the only user)");
 
     // === Test boost reset on claim ===
     vm.prank(alice);
@@ -326,8 +327,8 @@ contract EarnVaultInvariants is Test {
   /// @dev Verifies boost carry mechanism works correctly with tiny amounts
   function test_BoostCarryCorrectness() public {
     // === Setup: Create mock boost token ===
-    MockERC20 boostToken = new MockERC20('Boost Token', 'BOOST', 18);
-    boostToken.mint(operator, 1000e18); // operator is boost reward keeper
+    MockERC20 boostToken = usdsc; // boosts are USDSC-only
+    boostToken.mint(operator, 1000e6); // operator is boost reward keeper
 
     // === Setup: Alice deposits 10 USDSC ===
     vm.prank(alice);
@@ -336,7 +337,7 @@ contract EarnVaultInvariants is Test {
     assertEq(vault.totalPrincipal(), 10e6, 'Total principal should be 10 USDSC');
 
     // === Distribute small amount ===
-    uint256 tinyAmount = 1e18; // 1 token (18 decimals)
+    uint256 tinyAmount = 1e6; // 1 token (6 decimals)
     vm.startPrank(operator); // operator is boost reward keeper
     boostToken.approve(address(vault), tinyAmount);
     bool success = boostToken.transfer(address(vault), tinyAmount);
@@ -349,7 +350,7 @@ contract EarnVaultInvariants is Test {
     uint256 boostClaimReserveAfter1 = vault.boostClaimReserve(address(boostToken));
 
     // Index should increase (boost rewards don't use carry mechanism)
-    assertGt(boostGlobalIndexAfter1, RAY, 'Boost global index should increase');
+    assertGt(boostGlobalIndexAfter1, 0, 'Boost global index should increase');
 
     // Claim reserve should increase by the tiny amount
     assertEq(boostClaimReserveAfter1, tinyAmount, 'Boost claim reserve should equal tiny amount');
@@ -385,7 +386,7 @@ contract EarnVaultInvariants is Test {
     uint256 boostGlobalIndexAfter3 = vault.boostGlobalIndex(address(boostToken));
 
     // Index should now increase (amount * RAY >= totalPrincipal)
-    assertGt(boostGlobalIndexAfter3, RAY, 'Boost global index should increase after larger distribution');
+    assertGt(boostGlobalIndexAfter3, 0, 'Boost global index should increase after larger distribution');
 
     // Total claimable should equal sum of all amounts
     uint256 totalClaimable = vault.getClaimableBoostReward(alice, address(boostToken));
@@ -399,8 +400,8 @@ contract EarnVaultInvariants is Test {
   /// @dev Verifies accrued boost rewards are calculated on original principal, not remaining principal
   function test_PartialWithdrawAfterBoost() public {
     // === Setup: Create mock boost token ===
-    MockERC20 boostToken = new MockERC20('Boost Token', 'BOOST', 18);
-    boostToken.mint(operator, 1000e18); // operator is boost reward keeper
+    MockERC20 boostToken = usdsc; // boosts are USDSC-only
+    boostToken.mint(operator, 1000e6); // operator is boost reward keeper
 
     // === Alice deposits 1000 USDSC ===
     vm.prank(alice);
@@ -409,7 +410,7 @@ contract EarnVaultInvariants is Test {
     assertEq(vault.principal(alice), 1000e6, 'Alice should have 1000 USDSC principal');
 
     // === Distribute boost rewards ===
-    uint256 boostAmount = 100e18; // 100 BOOST tokens
+    uint256 boostAmount = 100e6; // 100 BOOST tokens
     vm.startPrank(operator); // operator is boost reward keeper
     boostToken.approve(address(vault), boostAmount);
     bool success = boostToken.transfer(address(vault), boostAmount);
@@ -434,7 +435,7 @@ contract EarnVaultInvariants is Test {
     assertEq(aliceBoostClaimableAfter, 0, "Alice's boost rewards should be claimed during withdrawal");
 
     // === Distribute more boost rewards ===
-    uint256 additionalBoost = 50e18; // 50 more BOOST tokens
+    uint256 additionalBoost = 50e6; // 50 more BOOST tokens
     vm.startPrank(operator); // operator is boost reward keeper
     boostToken.approve(address(vault), additionalBoost);
     bool success2 = boostToken.transfer(address(vault), additionalBoost);
@@ -452,67 +453,46 @@ contract EarnVaultInvariants is Test {
     assertApproxEqAbs(aliceNewBoostClaimable, additionalBoost, 1, 'Alice should get the new boost rewards');
   }
 
-  /// @notice Test multi-token boost rewards
-  /// @dev Verifies multiple boost tokens can be distributed and claimed independently
-  function test_MultiTokenBoostRewards() public {
-    // === Setup: Create multiple boost tokens ===
+  /// @notice Non-USDSC boost tokens are rejected, even when the vault holds them, and the removal entrypoint is gone
+  function test_NonUsdscBoostTokenRejected_AndRemovalGone() public {
     MockERC20 tokenA = new MockERC20('Token A', 'TOKENA', 18);
-    MockERC20 tokenB = new MockERC20('Token B', 'TOKENB', 18);
-    MockERC20 tokenC = new MockERC20('Token C', 'TOKENC', 6);
+    vm.prank(alice);
+    vault.deposit(1000e6);
+    tokenA.mint(address(vault), 100e18);
 
-    // Mint tokens to operator (boost reward keeper)
-    tokenA.mint(operator, 1000e18);
-    tokenB.mint(operator, 1000e18);
-    tokenC.mint(operator, 1000e6);
+    vm.prank(operator);
+    vm.expectRevert(IEarnVaultEventsAndErrors.BoostTokenNotUSDSC.selector);
+    vault.onBoostReward(address(tokenA), 100e18);
 
-    // === Alice deposits ===
+    // as the owner, for a never-registered token: the old function returned success for that call
+    vm.prank(owner);
+    (bool ok,) = address(vault).call(abi.encodeWithSignature('removeBoostRewardToken(address)', address(0xdEaD)));
+    assertFalse(ok, 'removeBoostRewardToken must not exist');
+  }
+
+  /// @notice Repeated funded USDSC boosts use a single boost slot and are fully claimable
+  function test_RepeatedUsdscBoostsUseSingleSlot() public {
     vm.prank(alice);
     vault.deposit(1000e6);
 
-    // === Distribute boost rewards for token A ===
-    uint256 amountA = 100e18;
-    vm.startPrank(operator); // operator is boost reward keeper
-    tokenA.approve(address(vault), amountA);
-    bool success1 = tokenA.transfer(address(vault), amountA);
-    require(success1, 'Transfer failed');
-    vault.onBoostReward(address(tokenA), amountA);
+    uint256 total;
+    for (uint256 i = 1; i <= 3; i++) {
+      uint256 amount = i * 100e6;
+      usdsc.mint(address(vault), amount);
+      vm.prank(operator);
+      vault.onBoostReward(address(usdsc), amount);
+      total += amount;
+    }
 
-    // === Distribute boost rewards for token B ===
-    uint256 amountB = 200e18;
-    tokenB.approve(address(vault), amountB);
-    bool success2 = tokenB.transfer(address(vault), amountB);
-    require(success2, 'Transfer failed');
-    vault.onBoostReward(address(tokenB), amountB);
+    assertEq(vault.activeBoostTokens(0), address(usdsc), 'USDSC is the only boost token');
+    vm.expectRevert();
+    vault.activeBoostTokens(1);
+    assertEq(vault.getClaimableBoostReward(alice, address(usdsc)), total);
 
-    // === Distribute boost rewards for token C (6 decimals) ===
-    uint256 amountC = 300e6;
-    tokenC.approve(address(vault), amountC);
-    bool success3 = tokenC.transfer(address(vault), amountC);
-    require(success3, 'Transfer failed');
-    vault.onBoostReward(address(tokenC), amountC);
-    vm.stopPrank();
-
-    // === Verify Alice can claim all boost rewards independently ===
-    uint256 aliceClaimableA = vault.getClaimableBoostReward(alice, address(tokenA));
-    uint256 aliceClaimableB = vault.getClaimableBoostReward(alice, address(tokenB));
-    uint256 aliceClaimableC = vault.getClaimableBoostReward(alice, address(tokenC));
-
-    assertEq(aliceClaimableA, amountA, 'Alice should get all token A rewards');
-    assertEq(aliceClaimableB, amountB, 'Alice should get all token B rewards');
-    assertEq(aliceClaimableC, amountC, 'Alice should get all token C rewards');
-
-    // === Verify active boost tokens tracking ===
-    assertEq(vault.activeBoostTokens(0), address(tokenA), 'Token A should be first active boost token');
-    assertEq(vault.activeBoostTokens(1), address(tokenB), 'Token B should be second active boost token');
-    assertEq(vault.activeBoostTokens(2), address(tokenC), 'Token C should be third active boost token');
-
-    // === Test claiming all rewards at once ===
+    uint256 before = usdsc.balanceOf(alice);
     vm.prank(alice);
     vault.claim();
-
-    // === Verify claimable amounts are reset to 0 ===
-    assertEq(vault.getClaimableBoostReward(alice, address(tokenA)), 0, 'Token A claimable should be 0 after claim');
-    assertEq(vault.getClaimableBoostReward(alice, address(tokenB)), 0, 'Token B claimable should be 0 after claim');
-    assertEq(vault.getClaimableBoostReward(alice, address(tokenC)), 0, 'Token C claimable should be 0 after claim');
+    assertEq(usdsc.balanceOf(alice) - before, total, 'Alice receives every boost round');
+    assertEq(vault.getClaimableBoostReward(alice, address(usdsc)), 0);
   }
 }

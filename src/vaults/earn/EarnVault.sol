@@ -21,7 +21,8 @@ import {Math} from 'lib/openzeppelin-contracts/contracts/utils/math/Math.sol';
 ///   - User state: principal, userIndex, accrued.
 ///   - When yield arrives and totalPrincipal>0: globalIndex += amount*RAY/totalPrincipal.
 ///   - If totalPrincipal==0 at yield time: amount is transferred directly to treasury.
-/// Invariant (funding): USDSC balance >= claimReserve.
+/// Invariant (funding): USDSC balance >= claimReserve + boostClaimReserve[USDSC]
+/// (USDSC can also be a boost token, so USDSC owed as boost rewards must stay covered too).
 contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausable, ReentrancyGuardTransient {
   using SafeERC20 for IERC20;
 
@@ -244,6 +245,10 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
   /// @dev Allows token owner to deposit via permit signature, with optional relayer execution
   /// @dev Token owner signs permit, relayer (msg.sender) pays gas and executes
   /// @dev Safely handles tokens that may not implement IERC20Permit
+  /// @dev If permit() fails but tokenOwner's allowance to this vault already covers `amount` (e.g.
+  ///      someone submitted the same permit first, using its nonce), the deposit still goes ahead.
+  ///      This also means anyone can trigger a deposit of an amount tokenOwner has already approved;
+  ///      it is always credited to tokenOwner's own position, which they can withdraw.
   /// @param tokenOwner Address of token owner (who signs permit and receives deposit credit)
   /// @param amount Amount of USDSC tokens to deposit
   /// @param deadline Permit deadline timestamp
@@ -267,7 +272,9 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     // Permit succeeded, continue with deposit
     }
     catch {
-      revert IEarnVaultEventsAndErrors.PermitFailed();
+      // The permit may already have been used (its nonce consumed by someone submitting it first).
+      // Continue if the allowance it grants is in place; otherwise the permit genuinely failed.
+      if (USDSC.allowance(tokenOwner, address(this)) < amount) revert IEarnVaultEventsAndErrors.PermitFailed();
     }
 
     _deposit(tokenOwner, amount);
@@ -327,7 +334,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
 
   /// @notice Distribute yield to vault users (callable only by yield redistributor)
   /// @dev MUST be called AFTER transferring `amount` USDSC to this contract
-  /// @dev Enforces funding invariant: USDSC.balance >= claimReserve + amount
+  /// @dev Enforces funding invariant: USDSC.balance >= claimReserve + boostClaimReserve[USDSC] + amount
   /// @param amount Amount of USDSC yield to distribute
   function onYield(uint256 amount) external onlyYieldRedistributor nonReentrant {
     if (amount == 0) return;
@@ -336,15 +343,15 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     uint256 bal = USDSC.balanceOf(address(this));
 
     if (totalPrincipal == 0) {
-      // No deposits: just need enough for treasury transfer
-      if (bal < amount) revert IEarnVaultEventsAndErrors.InsufficientFunding();
+      // No deposits: the transfer must not dip into USDSC still owed (legacy accrued, boost rewards)
+      if (bal < _requiredUSDSC() + amount) revert IEarnVaultEventsAndErrors.InsufficientFunding();
       USDSC.safeTransfer(treasury, amount);
       emit YieldTransferredToTreasury(amount);
       return;
     }
 
-    // Deposits exist: need enough for claimReserve + new yield
-    if (bal < claimReserve + amount) revert IEarnVaultEventsAndErrors.InsufficientFunding();
+    // Deposits exist: need enough for everything already owed in USDSC + new yield
+    if (bal < _requiredUSDSC() + amount) revert IEarnVaultEventsAndErrors.InsufficientFunding();
 
     // Exact, immediate index update with Ray remainder carry
     // delta = floor( (amount*RAY + _carryRay) / totalPrincipal )
@@ -360,13 +367,16 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     emit YieldIndexed(amount, globalIndex, claimReserve);
   }
 
-  /// @notice Distribute boost rewards (ASTR, DOT, etc.) to vault users
-  /// @dev MUST be called AFTER transferring `amount` of `token` to this contract
+  /// @notice Distribute USDSC boost rewards to vault users
+  /// @dev MUST be called AFTER transferring `amount` USDSC to this contract
   /// @dev Uses same logic as USDSC yield - distributed proportionally based on principal
-  /// @dev Can be called by boost reward keeper (keeper/operator address)
-  /// @param token Token address to distribute as boost rewards
-  /// @param amount Amount of boost tokens to distribute
+  /// @dev Can be called by boost reward keeper (keeper/operator address). USDSC is the only boost
+  ///      reward token: any other token reverts BoostTokenNotUSDSC
+  /// @param token Boost reward token; must be USDSC
+  /// @param amount Amount of USDSC to distribute
   function onBoostReward(address token, uint256 amount) external onlyBoostRewardKeeper whenNotPaused nonReentrant {
+    if (token != address(USDSC)) revert IEarnVaultEventsAndErrors.BoostTokenNotUSDSC();
+    _requireUSDSCBoostFunded(amount);
     BoostRewardsLib.distributeBoostReward(
       token, amount, totalPrincipal, treasury, boostGlobalIndex, boostClaimReserve, activeBoostTokens, boostTokenIndex
     );
@@ -384,7 +394,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
       if (!paused()) revert IEarnVaultEventsAndErrors.ContractNotPaused();
       // allow sweeping only true surplus
       uint256 bal = USDSC.balanceOf(address(this));
-      uint256 minRequired = claimReserve;
+      uint256 minRequired = _requiredUSDSC();
       if (bal <= minRequired) revert IEarnVaultEventsAndErrors.InsufficientFunding();
       uint256 maxSweep = bal - minRequired;
       if (amount > maxSweep) revert IEarnVaultEventsAndErrors.ExceedsSurplus();
@@ -407,7 +417,7 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
   /// @dev Sweeps all surplus above minimum required reserves
   function sweepSurplusToTreasury() external onlyOwner nonReentrant {
     uint256 bal = USDSC.balanceOf(address(this));
-    uint256 minRequired = claimReserve;
+    uint256 minRequired = _requiredUSDSC();
 
     if (bal <= minRequired) return; // No surplus to sweep
 
@@ -427,33 +437,6 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     if (!success) revert IEarnVaultEventsAndErrors.SweepFailed();
 
     emit NativeSwept(to, amount);
-  }
-
-  /// @notice Remove a boost reward token from activeBoostTokens array (only owner)
-  /// @dev Can be used to clean up tokens that are frozen or no longer used
-  /// @dev Only allows removal if boostClaimReserve[token] == 0 (no pending claims)
-  /// @param token Token address to remove from activeBoostTokens array
-  function removeBoostRewardToken(address token) external onlyOwner nonReentrant {
-    if (token == address(0)) revert IEarnVaultEventsAndErrors.CanNotBeZeroAddress();
-
-    uint256 index = boostTokenIndex[token];
-    if (index == 0) return;
-
-    if (boostClaimReserve[token] > 0) {
-      revert IEarnVaultEventsAndErrors.InsufficientBoostClaimReserve();
-    }
-
-    uint256 lastIndex = activeBoostTokens.length - 1;
-    if (index != lastIndex + 1) {
-      address lastToken = activeBoostTokens[lastIndex];
-      activeBoostTokens[index - 1] = lastToken;
-      boostTokenIndex[lastToken] = index;
-    }
-
-    activeBoostTokens.pop();
-    delete boostTokenIndex[token];
-
-    emit IEarnVaultEventsAndErrors.BoostRewardTokenRemoved(token);
   }
 
   // ================================================================
@@ -536,6 +519,14 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
     return BoostRewardsLib.getClaimableBoostReward(
       user, token, principal[user], userBoostIndex[user][token], boostGlobalIndex[token], userBoostAccrued
     );
+  }
+
+  /// @notice USDSC held above everything the vault owes in USDSC (claimReserve plus USDSC boost
+  ///         rewards owed), floored at zero: the amount sweepSurplusToTreasury() would send. For monitoring.
+  function surplusUSDSC() external view returns (uint256) {
+    uint256 bal = USDSC.balanceOf(address(this));
+    uint256 required = _requiredUSDSC();
+    return bal > required ? bal - required : 0;
   }
 
   /// @notice Get all claimable rewards for a user (USDSC yield + all boost rewards)
@@ -649,6 +640,22 @@ contract EarnVault is IEarnVault, IEarnVaultEventsAndErrors, Ownable2Step, Pausa
   // ================================================================
   // INTERNAL FUNCTIONS (VIEW)
   // ================================================================
+
+  /// @dev USDSC the vault must always hold: claimReserve plus USDSC owed as boost rewards (USDSC can
+  ///      be both the vault asset and a boost token, so both reserves cover the same balance)
+  function _requiredUSDSC() internal view returns (uint256) {
+    return claimReserve + boostClaimReserve[address(USDSC)];
+  }
+
+  /// @dev A USDSC boost must be funded on top of everything already owed in USDSC (see
+  ///      EarnVaultUpgradeable._requireUSDSCBoostFunded)
+  function _requireUSDSCBoostFunded(uint256 amount) internal view {
+    if (amount == 0) return;
+    if (USDSC.balanceOf(address(this)) < _requiredUSDSC() + amount) {
+      if (totalPrincipal == 0) revert IEarnVaultEventsAndErrors.InsufficientBoostTokenBalance();
+      revert IEarnVaultEventsAndErrors.InsufficientBoostClaimReserve();
+    }
+  }
 
   function _onlyYieldRedistributor() internal view {
     if (msg.sender != yieldRedistributor) revert IEarnVaultEventsAndErrors.NotYieldRedistributor();

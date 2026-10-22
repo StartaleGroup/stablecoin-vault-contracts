@@ -8,7 +8,7 @@ This system consists of three main components:
 
 1. **RewardRedistributor**: A non-upgradeable contract that claims yield from the USDSC token (M0 extension) and distributes it proportionally to two vault types based on their total value locked (TVL).
 
-2. **EarnVault**: An upgradeable vault where users deposit USDSC and earn claimable yield. Users maintain full control over their principal and can withdraw anytime, with all accrued rewards automatically claimed on withdrawal. Supports dual rewards: USDSC yield + boost rewards in other tokens (ASTR, DOT, etc.).
+2. **EarnVault**: An upgradeable vault where users deposit USDSC and earn claimable yield. Users maintain full control over their principal and can withdraw anytime, with all accrued rewards automatically claimed on withdrawal. Supports dual rewards: USDSC yield + USDSC boost rewards (USDSC is the only boost reward token).
 
 3. **sUSDSC Vault**: An ERC-4626 compliant passive yield vault where users deposit USDSC and receive sUSDSC shares. External yield inflows automatically increase the price per share (PPS) for all holders.
 
@@ -32,7 +32,7 @@ RewardRedistributor
 - **Proportional Yield Distribution**: Yield is split between vaults based on their TVL with rounding-carry logic for long-run fairness
 - **Dual Vault Strategy**: Two different yield mechanisms (claimable vs. automatic PPS increase)
 - **Upgradeable Vaults**: EarnVault and sUSDSC Vault use transparent proxy pattern for future upgrades
-- **Boost Rewards**: EarnVault supports additional rewards in multiple ERC20 tokens
+- **Boost Rewards**: EarnVault pays additional boost rewards in USDSC (the only boost reward token)
 - **Access Control**: Role-based permissions for all administrative functions
 - **Emergency Controls**: Pause mechanisms and emergency recovery functions
 
@@ -64,12 +64,13 @@ RewardRedistributor
 **Key Features**:
 - Index-based yield accounting with RAY precision (1e27)
 - Automatic reward claiming on withdrawal
-- Multi-token boost rewards (ASTR, DOT, etc.)
+- USDSC boost rewards (USDSC is the only boost reward token)
 - Principal protection with full withdrawal control
 
 **Key Functions**:
 - `deposit(uint256 amount)`: Deposit USDSC
 - `withdraw(uint256 amount)`: Withdraw principal (auto-claims all rewards)
+- `withdrawAll()` (EarnVaultV2): Withdraw the whole principal, including yield compounded into it by the call itself (auto-claims all rewards). `withdraw(principal(user))` quoted beforehand can leave that yield behind as principal
 - `claim()`: Claim all accrued rewards without withdrawing
 - `onYield(uint256 amount)`: Receive yield distribution (YIELD_REDISTRIBUTOR only)
 - `onBoostReward(address token, uint256 amount)`: Receive boost rewards (BOOST_REWARD_KEEPER only)

@@ -825,15 +825,11 @@ contract RewardRedistributorIntegrationTest is Test {
   // ========== BOOST REWARDS INTEGRATION TESTS ==========
 
   function testIntegration_BoostRewardsDistribution() public {
-    // Create mock boost tokens
-    MockERC20 astr = new MockERC20('Astar', 'ASTR', 18);
-    MockERC20 dot = new MockERC20('Polkadot', 'DOT', 10);
-
-    // Mint boost tokens to operator (boost reward keeper)
+    // Boost rewards are USDSC-only
+    // Mint boost funds to operator (boost reward keeper)
     // Note: Boost rewards are distributed by keeper/operator (person from company),
-    // not by RewardRedistributor contract. Operator just transfers ERC20 tokens to vault.
-    astr.mint(operator, 1000e18);
-    dot.mint(operator, 500e10);
+    // not by RewardRedistributor contract. Operator just transfers USDSC to vault.
+    usdsc.mint(operator, 1000e6);
 
     // First, distribute some USDSC yield to establish baseline
     ext.addPending(10_000e6);
@@ -842,32 +838,24 @@ contract RewardRedistributorIntegrationTest is Test {
     rr.distribute();
 
     // Now distribute boost rewards through EarnVault
-    // This simulates a person from the company (operator/keeper) distributing boost rewards
-    // Boost rewards are just ERC20 transfers to vault, no contracts involved
     vm.startPrank(operator); // operator is boost reward keeper (person from company)
 
-    // Transfer tokens to EarnVault first (simple ERC20 transfer)
-    bool success1 = astr.transfer(address(earnVault), 100e18);
-    bool success2 = dot.transfer(address(earnVault), 50e10);
-    require(success1 && success2, 'Transfer failed');
+    // Transfer USDSC to EarnVault first (simple ERC20 transfer), on top of existing reserves
+    bool success1 = usdsc.transfer(address(earnVault), 100e6);
+    require(success1, 'Transfer failed');
 
     // After transferring, call onBoostReward to distribute proportionally to users
-    earnVault.onBoostReward(address(astr), 100e18);
-    earnVault.onBoostReward(address(dot), 50e10);
+    earnVault.onBoostReward(address(usdsc), 100e6);
 
     vm.stopPrank();
 
     // Scope 1: Verify boost rewards are claimable
     {
-      uint256 aliceAstrClaimable = earnVault.getClaimableBoostReward(alice, address(astr));
-      uint256 aliceDotClaimable = earnVault.getClaimableBoostReward(alice, address(dot));
-      uint256 charlieAstrClaimable = earnVault.getClaimableBoostReward(charlie, address(astr));
-      uint256 charlieDotClaimable = earnVault.getClaimableBoostReward(charlie, address(dot));
+      uint256 aliceBoostClaimable = earnVault.getClaimableBoostReward(alice, address(usdsc));
+      uint256 charlieBoostClaimable = earnVault.getClaimableBoostReward(charlie, address(usdsc));
 
-      assertGt(aliceAstrClaimable, 0, 'Alice has claimable ASTR');
-      assertGt(aliceDotClaimable, 0, 'Alice has claimable DOT');
-      assertGt(charlieAstrClaimable, 0, 'Charlie has claimable ASTR');
-      assertGt(charlieDotClaimable, 0, 'Charlie has claimable DOT');
+      assertGt(aliceBoostClaimable, 0, 'Alice has claimable boost');
+      assertGt(charlieBoostClaimable, 0, 'Charlie has claimable boost');
 
       // Verify proportional distribution based on principal
       uint256 alicePrincipal = earnVault.principal(alice);
@@ -875,27 +863,28 @@ contract RewardRedistributorIntegrationTest is Test {
 
       // Alice should get more rewards due to higher principal
       if (alicePrincipal > charliePrincipal) {
-        assertGt(aliceAstrClaimable, charlieAstrClaimable, 'Alice gets more ASTR due to higher principal');
-        assertGt(aliceDotClaimable, charlieDotClaimable, 'Alice gets more DOT due to higher principal');
+        assertGt(aliceBoostClaimable, charlieBoostClaimable, 'Alice gets more boost due to higher principal');
       }
     }
 
     // Scope 2: Test claiming boost rewards
     {
       vm.startPrank(alice);
-      uint256 aliceAstrClaimable = earnVault.getClaimableBoostReward(alice, address(astr));
-      uint256 aliceDotClaimable = earnVault.getClaimableBoostReward(alice, address(dot));
-      uint256 aliceAstrBalanceBefore = astr.balanceOf(alice);
-      uint256 aliceDotBalanceBefore = dot.balanceOf(alice);
+      uint256 aliceBoostClaimable = earnVault.getClaimableBoostReward(alice, address(usdsc));
+      uint256 aliceYieldClaimable = earnVault.claimable(alice);
+      uint256 aliceBalanceBefore = usdsc.balanceOf(alice);
 
-      earnVault.claim(); // Claims both USDSC yield and all boost rewards
+      earnVault.claim(); // Claims both USDSC yield and the USDSC boost reward
 
-      assertEq(astr.balanceOf(alice) - aliceAstrBalanceBefore, aliceAstrClaimable, 'Alice received expected ASTR');
-      assertEq(dot.balanceOf(alice) - aliceDotBalanceBefore, aliceDotClaimable, 'Alice received expected DOT');
+      // Yield and boost both pay out in USDSC
+      assertEq(
+        usdsc.balanceOf(alice) - aliceBalanceBefore,
+        aliceYieldClaimable + aliceBoostClaimable,
+        'Alice received expected yield + boost'
+      );
 
       // Verify no remaining claimable boost rewards
-      assertEq(earnVault.getClaimableBoostReward(alice, address(astr)), 0, 'No remaining ASTR claimable');
-      assertEq(earnVault.getClaimableBoostReward(alice, address(dot)), 0, 'No remaining DOT claimable');
+      assertEq(earnVault.getClaimableBoostReward(alice, address(usdsc)), 0, 'No remaining boost claimable');
 
       vm.stopPrank();
     }
@@ -904,45 +893,39 @@ contract RewardRedistributorIntegrationTest is Test {
   function testIntegration_BoostRewardsWithWithdrawals() public {
     // Test that boost rewards are auto-claimed on withdrawals
 
-    MockERC20 astr = new MockERC20('Astar', 'ASTR', 18);
-    astr.mint(address(earnVault), 200e18);
-
     // Distribute USDSC yield first
     ext.addPending(5000e6);
     _takeSnapshotAndWait();
     vm.prank(operator);
     rr.distribute();
 
-    // Distribute boost rewards
+    // Distribute USDSC boost rewards, funded exactly on top of existing reserves
+    usdsc.mint(address(earnVault), 200e6);
     vm.prank(operator); // operator is boost reward keeper
-    earnVault.onBoostReward(address(astr), 200e18);
+    earnVault.onBoostReward(address(usdsc), 200e6);
 
     // Alice does partial withdrawal - should auto-claim all rewards
     vm.startPrank(alice);
-    uint256 aliceAstrBalanceBefore = astr.balanceOf(alice);
-    uint256 aliceUsrdBalanceBefore = usdsc.balanceOf(alice);
+    uint256 aliceBalanceBefore = usdsc.balanceOf(alice);
     uint256 aliceClaimableUsrd = earnVault.claimable(alice);
-    uint256 aliceClaimableAstr = earnVault.getClaimableBoostReward(alice, address(astr));
+    uint256 aliceClaimableBoost = earnVault.getClaimableBoostReward(alice, address(usdsc));
 
     uint256 withdrawAmount = earnVault.principal(alice) / 4; // Withdraw 25%
     earnVault.withdraw(withdrawAmount);
 
-    uint256 aliceAstrBalanceAfter = astr.balanceOf(alice);
-    uint256 aliceUsrdBalanceAfter = usdsc.balanceOf(alice);
+    uint256 aliceBalanceAfter = usdsc.balanceOf(alice);
 
-    // Verify Alice received principal + USDSC yield + boost rewards
+    // Verify Alice received principal + USDSC yield + boost rewards (all paid in USDSC)
+    assertGt(aliceClaimableBoost, 0, 'Alice has boost to claim');
     assertEq(
-      aliceUsrdBalanceAfter - aliceUsrdBalanceBefore,
-      withdrawAmount + aliceClaimableUsrd,
-      'Alice received principal + USDSC yield'
-    );
-    assertEq(
-      aliceAstrBalanceAfter - aliceAstrBalanceBefore, aliceClaimableAstr, 'Alice received boost rewards on withdrawal'
+      aliceBalanceAfter - aliceBalanceBefore,
+      withdrawAmount + aliceClaimableUsrd + aliceClaimableBoost,
+      'Alice received principal + USDSC yield + boost rewards on withdrawal'
     );
 
     // Verify no remaining claimable rewards
     assertEq(earnVault.claimable(alice), 0, 'No remaining USDSC claimable');
-    assertEq(earnVault.getClaimableBoostReward(alice, address(astr)), 0, 'No remaining ASTR claimable');
+    assertEq(earnVault.getClaimableBoostReward(alice, address(usdsc)), 0, 'No remaining boost claimable');
 
     vm.stopPrank();
   }
@@ -1311,28 +1294,28 @@ contract RewardRedistributorIntegrationTest is Test {
     // Test that boost rewards access control is properly enforced
     // Boost rewards are distributed by keeper/operator, not by RewardRedistributor contract
 
-    MockERC20 boostToken = new MockERC20('Boost', 'BOOST', 18);
-    boostToken.mint(address(earnVault), 1000e18);
+    MockUSDSC boostToken = usdsc; // boosts are USDSC-only
+    boostToken.mint(address(earnVault), 1000e6);
 
     address unauthorizedUser = makeAddr('unauthorized');
 
     // Test 1: Unauthorized user cannot call onBoostReward
     vm.startPrank(unauthorizedUser);
     vm.expectRevert(IEarnVaultEventsAndErrors.NotBoostRewardKeeper.selector);
-    earnVault.onBoostReward(address(boostToken), 1000e18);
+    earnVault.onBoostReward(address(boostToken), 1000e6);
     vm.stopPrank();
 
     // Test 2: yieldRedistributor (RewardRedistributor contract) cannot call onBoostReward
     // This is important - boost rewards are separate from yield distribution
     vm.startPrank(address(rr)); // RewardRedistributor contract address
     vm.expectRevert(IEarnVaultEventsAndErrors.NotBoostRewardKeeper.selector);
-    earnVault.onBoostReward(address(boostToken), 1000e18);
+    earnVault.onBoostReward(address(boostToken), 1000e6);
     vm.stopPrank();
 
     // Test 3: Only boostRewardKeeper (operator) can call onBoostReward
     // This simulates a person from the company distributing boost rewards via ERC20 transfer
     vm.prank(operator); // operator is the boost reward keeper
-    earnVault.onBoostReward(address(boostToken), 1000e18); // Should succeed
+    earnVault.onBoostReward(address(boostToken), 1000e6); // Should succeed
 
     // Verify boost rewards were distributed
     uint256 aliceClaimable = earnVault.getClaimableBoostReward(alice, address(boostToken));
@@ -1558,28 +1541,40 @@ contract RewardRedistributorIntegrationTest is Test {
   }
 
   function testIntegration_EarnVaultBoostTokenRecovery() public {
-    // Test recovery of boost tokens with reserved amounts
-
-    MockERC20 boostToken = new MockERC20('Boost', 'BOOST', 18);
-
-    // Mint boost tokens and distribute some
-    boostToken.mint(address(earnVault), 2000e18);
+    // Non-USDSC tokens can never be boost tokens: onBoostReward reverts even when funded
+    MockERC20 otherToken = new MockERC20('Other', 'OTH', 18);
+    otherToken.mint(address(earnVault), 2000e18);
 
     vm.prank(operator); // operator is boost reward keeper
-    earnVault.onBoostReward(address(boostToken), 1000e18);
+    vm.expectRevert(IEarnVaultEventsAndErrors.BoostTokenNotUSDSC.selector);
+    earnVault.onBoostReward(address(otherToken), 1000e18);
 
-    // Try to recover more than available (should revert)
+    // A non-boost random token is fully recoverable (unchanged branch)
+    vm.prank(owner);
+    earnVault.recoverERC20(address(otherToken), treasury, 2000e18);
+    assertEq(otherToken.balanceOf(treasury), 2000e18, 'Treasury received the stray token');
+
+    // USDSC boost reserve is protected by the USDSC surplus rule
+    usdsc.mint(address(earnVault), 1000e6);
+    vm.prank(operator);
+    earnVault.onBoostReward(address(usdsc), 1000e6);
+    usdsc.mint(address(earnVault), 500e6); // extra beyond reserves
+
+    vm.prank(pauser);
+    earnVault.pause();
+
+    uint256 surplus =
+      usdsc.balanceOf(address(earnVault)) - earnVault.claimReserve() - earnVault.boostClaimReserve(address(usdsc));
+    assertGe(surplus, 500e6);
+
     vm.startPrank(owner);
     vm.expectRevert(abi.encodeWithSignature('ExceedsSurplus()'));
-    earnVault.recoverERC20(address(boostToken), treasury, 1500e18); // More than available after reserves
+    earnVault.recoverERC20(address(usdsc), treasury, surplus + 1);
+    uint256 treasuryBefore = usdsc.balanceOf(treasury);
+    earnVault.recoverERC20(address(usdsc), treasury, surplus);
     vm.stopPrank();
 
-    // Recover only the available amount
-    uint256 availableAmount = 2000e18 - 1000e18; // Total - reserved
-    vm.prank(owner);
-    earnVault.recoverERC20(address(boostToken), treasury, availableAmount);
-
-    assertEq(boostToken.balanceOf(treasury), availableAmount, 'Treasury received available boost tokens');
+    assertEq(usdsc.balanceOf(treasury) - treasuryBefore, surplus, 'Treasury received only the surplus');
   }
 
   function testIntegration_EarnVaultSurplusSweep() public {
@@ -1764,9 +1759,13 @@ contract RewardRedistributorIntegrationTest is Test {
   function testIntegration_EarnVaultBoostRewardsEdgeCases() public {
     // Test boost rewards edge cases
 
-    MockERC20 boostToken = new MockERC20('Boost', 'BOOST', 18);
+    MockUSDSC boostToken = usdsc; // boosts are USDSC-only
 
-    // Test getClaimableBoostReward for non-existent token
+    // Test getClaimableBoostReward for a token that was never a boost token
+    MockERC20 neverBoosted = new MockERC20('Boost', 'BOOST', 18);
+    assertEq(earnVault.getClaimableBoostReward(alice, address(neverBoosted)), 0, 'No claimable for unknown token');
+
+    // Test getClaimableBoostReward before any distribution
     uint256 claimable = earnVault.getClaimableBoostReward(alice, address(boostToken));
     assertEq(claimable, 0, 'No claimable boost for non-distributed token');
 
@@ -1777,9 +1776,9 @@ contract RewardRedistributorIntegrationTest is Test {
     assertEq(amounts.length, 0, 'No boost amounts initially');
 
     // Distribute boost rewards
-    boostToken.mint(address(earnVault), 1000e18);
+    boostToken.mint(address(earnVault), 1000e6);
     vm.prank(operator); // operator is boost reward keeper
-    earnVault.onBoostReward(address(boostToken), 1000e18);
+    earnVault.onBoostReward(address(boostToken), 1000e6);
 
     // Test getAllClaimables after boost rewards
     (usdscClaimable, tokens, amounts) = earnVault.getAllClaimables(alice);

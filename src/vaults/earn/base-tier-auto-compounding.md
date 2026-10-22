@@ -104,8 +104,8 @@ The first pass at this implementation edited `EarnVaultUpgradeable.sol` (V1) dir
 
 - **Audit baseline.** V1 stays frozen and byte-for-byte the currently-live contract (aside from adding the `virtual` keyword to 3 view functions - a zero-behavior-change touch required so V2 can override them). An auditor gets two clean, independently reviewable contracts instead of a diff against a moving target.
 - **Real upgrade testing.** `test/unit/EarnVaultAutoCompound.t.sol`'s `setUp()` now deploys the actual V1 implementation behind a `TransparentUpgradeableProxy`, builds genuine pre-upgrade state (including a real legacy `accrued` balance and a never-settled backlog carried across the boundary), then upgrades that same proxy to `EarnVaultV2` - exactly the production upgrade path - before any test runs. This wasn't possible when V2's logic just replaced V1's source in place, since there was no old implementation left in the repo to upgrade *from*.
-- **No new storage, so no reinitializer needed.** `EarnVaultV2`'s constructor just calls `_disableInitializers()`; upgrading a live V1 proxy to it needs an empty-calldata `upgradeAndCall`, nothing more.
-- **Naming/versioning:** the VIP boost branch (`feat/earn-v2-loyalty-identity-boost`) already committed its own real `EarnVaultV2` (`depositFor`/`autoReinvestKeeper`). Rather than merge that branch and renumber one of the two V2s, the plan is to treat that branch as a frozen reference and port its features onto *this* branch later as `EarnVaultV3 is EarnVaultV2`, never merging it directly.
+- **Storage/initialization, as originally shipped vs. now.** At the time this was written, `EarnVaultV2`'s constructor just called `_disableInitializers()` and upgrading a live V1 proxy to it needed only an empty-calldata `upgradeAndCall`. That's no longer true: a later change (the `onBoostCredit()` VIP-boost work) added a boostKeeper role directly to this same `EarnVaultV2.sol`, in its own ERC-7201 namespace (boost is credited to addresses; no identity registry is wired). Upgrading a live V1 proxy to the current `EarnVaultV2` now requires calling `initializeV2(initialBoostKeeper, initialMaxBoostPerBatch)` via `reinitializer(2)`, bundled into the same `ProxyAdmin.upgradeAndCall` transaction as the upgrade itself. `initializeV2` enforces this on-chain: it only accepts the proxy's ERC-1967 admin (the ProxyAdmin) as caller, which on a Transparent proxy can only reach it through `upgradeAndCall` - see that function's NatSpec.
+- **Naming/versioning:** the VIP boost branch (`feat/earn-v2-loyalty-identity-boost`) separately committed its own real `EarnVaultV2` (`depositFor`/`autoReinvestKeeper`) - a different, frozen reference implementation, not merged here. The original plan here was to port that branch's features onto *this* branch later as a separate `EarnVaultV3 is EarnVaultV2`, to avoid modifying an already-deployed `EarnVaultV2`. That did not end up happening: checking the actual deployment broadcast logs found `EarnVaultV2` (auto-compound) had never been deployed or upgraded-to on any real network, so there was no live-deployment milestone a separate V3 needed to protect. The boostKeeper/`onBoostCredit()` work was therefore added directly to `EarnVaultV2.sol` instead.
 
 ## Cadence and gas sizing (2026-08-31)
 
@@ -131,13 +131,13 @@ One operational refinement, not a blocker: very small (dust) accounts may cost m
 
 | Scenario | Measured marginal gas/user (`--isolate`) | Safe batch size | Batches for 31,799 wallets |
 |---|---|---|---|
-| No active boost tokens | 16,316 | ~1,438 | 23 |
-| 2 active boost tokens, steady state | 41,380 | ~574 | 56 |
-| 2 active boost tokens, first-ever touch (cold, one-time only) | 109,810 | ~217 | 147 (once) |
+| No active boost token | 15,922 | ~1,473 | 22 |
+| USDSC boost token active, steady state | 28,451 | ~832 | 39 |
+| USDSC boost token active, first-ever touch (cold, one-time only) | 62,681 | ~380 | 84 (once) |
 
-(For reference, non-isolated `forge test` reports optimistic-but-inaccurate figures of ~4,551 / ~10,415 / ~98,043 gas/user for the same three rows respectively — these were what an earlier version of this doc cited before the discrepancy was caught by a CI gas-report run failing an assertion sized to the wrong numbers.)
+Re-measured 2026-10-18 with a single boost token: boost rewards are USDSC-only, so at most one boost token is ever active. (Earlier versions of this table assumed 2 active boost tokens, and before that cited non-isolated `forge test` figures, which are optimistic for the reason above.)
 
-The "cold" row is not a recurring cost — it only applies the *first* time a given (user, token) pair is ever settled after a boost token becomes active (Ethereum's zero→non-zero `SSTORE` penalty on `userBoostIndex`/`userBoostAccrued`, paid once, ever, per pair — this part of the cost genuinely doesn't recur, unlike the EIP-2929 cold-access portion, which does). Every subsequent daily run for that population hits the "steady state" row instead. So the realistic ongoing operational cost is **~56 batched transactions/day** at current population size with boost tokens active (or as few as 23 if no boost tokens are active that cycle) — still comfortably cheap in absolute terms on an L2 with a 2-second block time and low gas prices, just meaningfully more than the originally-cited (optimistic) 15/7. Filtering the batch to only addresses with `pendingYield(user) > 0` before submitting (skip no-ops) shrinks this further in practice, since not all 31,799 wallets are passive.
+The "cold" row is not a recurring cost — it only applies the *first* time a given (user, token) pair is ever settled after a boost token becomes active (Ethereum's zero→non-zero `SSTORE` penalty on `userBoostIndex`/`userBoostAccrued`, paid once, ever, per pair — this part of the cost genuinely doesn't recur, unlike the EIP-2929 cold-access portion, which does). Every subsequent daily run for that population hits the "steady state" row instead. So the realistic ongoing operational cost is **~39 batched transactions/day** at current population size with the USDSC boost token active (or as few as 22 if no boost token is active) — still comfortably cheap in absolute terms on an L2 with a 2-second block time and low gas prices. Filtering the batch to only addresses with `pendingYield(user) > 0` before submitting (skip no-ops) shrinks this further in practice, since not all 31,799 wallets are passive.
 
 Not estimated here, and explicitly out of scope for this note: L1 data-posting cost. OP Stack chains post batch calldata to Ethereum L1 separately from the L2 execution gas counted above, priced independently. Get a live quote from Soneium's fee estimation before finalizing production batch sizes, and consider packing addresses tightly (20 bytes, manually decoded, instead of ABI's 32-byte-padded encoding) to reduce both L2 calldata gas and L1 data-posting cost for a given batch.
 
@@ -165,3 +165,91 @@ function compoundMany(address[] calldata users) external whenNotPaused nonReentr
 ```
 
 **Correct the gas accounting before treating this as a big win.** `_settle()` already partially self-skips today: when `globalIndex == userIndex[user]`, the `if (gi > ui)` branch never runs, so an already-settled user avoids the `principal`/`totalPrincipal` writes regardless of whether there's an explicit early check. Going through the *existing* logic, an already-settled user in a batch costs roughly: blacklist check (~2,100) + `principal` SLOAD (~2,100) + `userIndex` SLOAD (~2,100) + a near-free no-op `userIndex` rewrite (~100) ≈ **~4,500 gas**, not the full per-user cost of an actual fold. An explicit early check (the sketch above) gets an already-settled user down to **~2,100 gas** — just the one `userIndex` read needed to make the skip decision, before touching `principal` or the blacklist mapping at all. Real, but roughly half, not the dramatic saving it might sound like at first — precisely because `_settle`'s existing structure already avoids the expensive part (the actual `principal`/`totalPrincipal` SSTOREs). The bigger lever for cost reduction remains the off-chain filtering above, since that's what actually shrinks the array and the calldata.
+
+## `onBoostCredit` batch sizing (2026-09-25)
+
+Measured by `test_Gas_OnBoostCredit_BatchSizingProjection` (`test/unit/EarnVaultAutoCompound.t.sol`): projected tx gas = 21k + calldata + execution, with the **USDSC boost token active** (`_settle` settles the active boost token per credited address). Measured with `forge test --isolate`, so each batch pays its own cold storage access, as a real transaction does (re-measured 2026-10-18; earlier figures here were non-isolated and assumed 2 boost tokens, and understated real per-entry cost about threefold). Soneium's execution limit is 40M; the keeper should target ≤ 60% (24M) per batch.
+
+| State | 100 entries | 300 | 500 | ≈ per entry |
+|---|---|---|---|---|
+| A. Worst-case cold — first-ever credit to addresses never settled since the boost token was activated | 9.0M | 26.8M | **44.7M (over the block limit)** | ~89k |
+| B. First credit after the daily `compoundMany` already settled those addresses (only `lastCreditedCycle` is a fresh slot) | 4.2M | 12.4M | 20.7M | ~41k |
+| C. Warm steady state (later cycle, already-credited addresses) | 3.9M | 11.4M | 19.0M | ~38k |
+| D. Warm, 20% of entries skipped (blacklisted) | 3.3M | 9.7M | 16.1M | ~32k |
+
+**Keeper guidance:**
+
+- **Size the first cycle(s) by state A**, not the steady state: ≈ **265 entries per batch** at 60% of the block when boost slots are cold. If `compoundMany` runs first and warms every recipient, state B applies (≈ 580 entries per batch). **This relocates gas rather than saving it:** `compoundMany` then pays the cold zero→non-zero boost-slot writes that `onBoostCredit` would otherwise pay, so total daily gas is roughly the same — it only lets `onBoostCredit` batches be larger.
+- **Cycle rules:** a cycle's batches all use the current `latestCycleId` (read it from chain); the next cycle is `latestCycleId + 1`, and it opens only when a batch under it actually credits something (an all-skipped batch does not close the current cycle). Cycles may be opened back-to-back, so after downtime **catch up by opening one cycle per missed day** rather than rolling several days into one cycle.
+- **Steady state** (state C) fits ≈ 630 entries per batch; a 500-entry batch uses ~19.0M.
+- Skipped entries cost roughly a quarter of a credited one, so skips lower the average (state D).
+- Cost includes settling the **active boost token** (USDSC, the only boost reward token).
+- A batch that runs out of gas reverts as a whole (nothing is credited); resubmit it split, with the same `cycleId`.
+- The test asserts a warm 500-entry batch and a worst-case-cold 100-entry batch each fit 60% of the block, so a gas regression fails CI.
+- L1 data-posting cost (OP-Stack) is separate and not included — get a live quote before finalising.
+
+## EarnVaultV2 upgrade and engine handoff (2026-09-26)
+
+1. Upgrade the proxy to `EarnVaultV2` with **one** `ProxyAdmin.upgradeAndCall(proxy, v2Impl, initializeV2(boostKeeper, maxBoostPerBatch))` — use `script/upgrade/UpgradeEarnVaultToV2.s.sol` (pre-checks the admin slot; optional `IMPLEMENTATION` to upgrade to a pre-deployed, explorer-verified implementation), then **run `script/upgrade/VerifyEarnVaultV2Upgrade.s.sol` against the live chain** (the upgrade script's own post-flight only checks the simulation). `initializeV2` only accepts the ProxyAdmin as caller, so it cannot be run any other way; if an upgrade lands without it, boost credit is disabled (no boostKeeper) and `reinitializer(2)` stays unconsumed. Proper fix: repeat `upgradeAndCall` to the same implementation with it. Stopgap: the owner calls `setBoostKeeper` and `setMaxBoostPerBatch` (the cap is 0 too until set), which enables boost credit but leaves the initialized version at 1.
+   - *Fresh deploy instead (no V1 history):* construct the proxy with the base `initialize()`, then `upgradeAndCall` to the same implementation with `initializeV2`. It cannot go in the proxy's constructor calldata: OZ v5 runs that before the ProxyAdmin exists, so it reverts `NotProxyAdmin`. Until the second transaction lands, `boostKeeper` is unset, so the deploy script must treat it as mandatory.
+2. Hand the engine team the event ABI (`BoostCredited(user, amount, cycleId)`, `BoostCreditSkipped(user, amount, cycleId, reason)` and `BoostCycleCredited` for reconciliation) and the cycle rules: **read `latestCycleId` from chain** and use it for the current cycle's batches or `latestCycleId + 1` to open the next one, rather than deriving cycle IDs from dates, and record its own date → cycleId mapping when submitting. Closed cycles cannot be reopened; cycles can be opened back-to-back, so catch up one cycle per missed day. Each batch's credited total is capped by `maxBoostPerBatch`. A skipped entry (vault address, blacklisted, or zero amount) does not consume its `cycleId`, so it can be re-credited under it while that cycle is current; once the next cycle opens, the engine must roll the deferred amount forward. Skipped funding stays as unreserved surplus (recoverable via `sweepSurplusToTreasury`, or reused by a later credit). The trust model, security budget and cap sizing are in the next section.
+
+## `onBoostCredit` trust model, security budget and cap sizing (2026-09-25)
+
+**Trust model — stated, not implied.**
+
+- **Against a buggy rewards engine: the per-batch cap** (`maxBoostPerBatch`). A batch crediting more than the cap reverts whole. It catches a decimals-style bug on the first batch, but not a modest overpayment spread across many batches. That residual is covered by monitoring `BoostCycleCredited` totals against the engine's own expected totals — **TBD: which system performs that comparison, and who gets paged when it disagrees.**
+- **Against a compromised keeper: the funding check plus operational discipline.** A credit can only draw on USDSC held above `claimReserve + boostClaimReserve[USDSC]` (USDSC is also a V1 boost token, so USDSC owed as boost rewards is not surplus either), so the contract does not try to bound a compromised keeper further in state. The **security budget is the keeper wallet's balance plus the vault's accumulated surplus**:
+  - the keeper holds and sends **only each batch's funding, just-in-time** — top it up per cycle, never several cycles' worth;
+  - treat the keeper as a **hot wallet holding funds**, not just a signing key (key storage, rotation and access controls accordingly; see the runbook);
+  - the owner **sweeps surplus regularly** (`sweepSurplusToTreasury`) — funding sent for skipped entries and donations accumulate as surplus;
+  - a compromised keeper is replaced with `setBoostKeeper`.
+
+**Sizing `maxBoostPerBatch`.** The cap must exceed the largest *legitimate* batch total, or it rejects real credits. Size it with headroom over **one day's largest batch**. Because cycles can be opened back-to-back, the engine should catch up day by day rather than rolling deferred days into one cycle (which would multiply per-user amounts and batch totals). That way the cap never needs raising under pressure during an incident.
+
+## JIT deposit lock (Phase 2) (2026-10-01)
+
+**The problem.** `RewardRedistributor.snapshotVaultTVLs()` records `lastEarnTVL = earnVault.totalPrincipal()` (call it `P`). A later `distribute()` sizes the EarnVault share from that snapshot (`toEarn = net × P / S_base`), transfers it, and calls `earnVault.onYield(toEarn)`, which indexes `toEarn` over the **live** `totalPrincipal`. A deposit `d` landing after the snapshot but before `distribute()` makes the live principal `P + d`, so existing depositors receive `toEarn × P / (P + d)` instead of `toEarn`, and the late depositor takes `toEarn × d / (P + d)` of a distribution that was sized without them. This is the residual Quantstamp identified after Phase 1.
+
+**Why not change `onYield` instead.** The earlier plan (Phase 1b in `docs/Quantstamp-response-phase1-residual.md`) was `onYield(amount, snapshotPrincipal)` dividing by `min(snapshotPrincipal, totalPrincipal)`. In an index-based vault that is insolvent: with `delta = toEarn / P`, existing depositors correctly receive `toEarn` between them, but the late depositor's principal is also in the vault and accrues `d × delta` on top. Total owed becomes `toEarn × (P + d) / P > toEarn`, while `claimReserve` only grows by `toEarn`. Changing the divisor cannot fix who receives the index; only stopping new principal from entering during the window does.
+
+**The fix.** `EarnVaultV2._deposit()` (reached by both `deposit()` and `depositWithPermit()`) reverts `DepositsLockedForDistribution(unlocksAt)` as its first statement, before `_settle()` or any state change, while the redistributor's latest snapshot is still usable by `distribute()`. The condition matches `RewardRedistributor._validateSnapShotAge()` exactly by timestamp:
+
+```solidity
+snapTs = rr.lastSnapshotTimestamp(); maxAge = rr.snapshotMaxAge();
+locked = snapTs != 0 && (block.timestamp < snapTs || block.timestamp - snapTs <= maxAge);
+unlocksAt = snapTs + maxAge + 1;   // first second deposits are allowed; saturates instead of overflowing
+```
+
+(`block.timestamp < snapTs` cannot happen with the real redistributor; it is treated as locked only so the subtraction cannot underflow.) `depositsLocked()` exposes `(locked, unlocksAt)` so the frontend and keepers can check before submitting.
+
+Because the lock is keyed to the snapshot's own age rather than to whether `onYield` ran, it also covers a second `distribute()` that reuses the same snapshot, and a `distribute()` with `toEarn == 0` (which skips `onYield`). No change to `onYield`, to `RewardRedistributor` (which is not upgradeable), or to storage.
+
+**The window.** Deposits pause for up to `snapshotMaxAge` after each `snapshotVaultTVLs()`. `RewardRedistributor.setSnapshotMaxAge()` bounds it to `[1 minutes, 7 days]`; the live redistributor (`0xda798684ffD5eb509c2Ab7b8352EC55B31F18201`, read on 2026-10-01) has it at **300 s (5 minutes)**. Keep it short, e.g. 1–2 minutes: it is both the deposit pause and the keeper's deadline to call `distribute()`. An admin setting it to 7 days would pause deposits for up to 7 days after a snapshot. Withdrawals and claims are never paused.
+
+**Fail-open vs fail-closed.**
+
+- **`yieldRedistributor` has no code (an EOA): never locked.** No snapshot exists to respect. This is for tests and local setups; the live vault's redistributor is a contract.
+- **`yieldRedistributor` has code: it must answer both getters, or the deposit reverts.** The getters are ordinary high-level calls, not try/catch. Treating a failed call as "unlocked" would let anyone who can make that call fail (for example by starving it of gas) bypass the lock. The cost is that a contract redistributor without the getters makes every deposit revert, which is loud rather than silent. The upgrade and verify scripts refuse to proceed unless the redistributor is a contract that answers both getters (`EarnVaultV2UpgradeChecks._requireRedistributorSnapshotGetters`).
+
+**Also blocked during the window: `onBoostCredit()`.** It adds principal the same way a deposit does, so a credit landing after the snapshot would share a distribution sized without it. It reverts `DepositsLockedForDistribution(unlocksAt)` in the window; the boost keeper checks `depositsLocked()` before sending and retries from `unlocksAt`.
+
+**Deliberately not blocked during the window.**
+
+- **`withdraw()` and `claim()`** only reduce principal or pay out balances that are already reserved. A depositor who withdraws during the window gives up that cycle's yield to those who stay.
+- **`compound()` / `compoundMany()`** are permissionless but only fold a user's own already-owed yield into their own principal; no new funds enter. The resulting dilution of one distribution is at most `(yield folded during the window) / P`, about one day's yield with daily compounding (~0.01–0.02%). No solvency effect, for the same reason.
+- **`onYield()`** is the redistributor's own call and has to work inside the window.
+
+**Not addressed here (open questions for review).**
+
+1. **JIT deposit before the snapshot.** A deposit made just before a predictable snapshot is legitimately in `lastEarnTVL`; the depositor collects that distribution and can withdraw right after. Quantstamp confirmed this does not reduce other depositors' yield: it reduces the share Startale retains (`toStartaleExtra`). Options: accept and document it; randomise snapshot/distribute timing operationally; add a minimum holding time on withdraw; or time-weighted balances (large redesign).
+2. **`onBoostReward()`** distributes USDSC boost rewards over live `totalPrincipal` with no snapshot. A deposit just before it dilutes other depositors' boost rewards. Same class of issue, separate keeper; not covered by this lock.
+3. **sUSDSC recipient set** (the other half of Phase 2 in the Quantstamp thread) is unchanged; sUSDSC TVL is currently 0.
+
+**Operations.** Keep `snapshotMaxAge` short and call `distribute()` promptly after `snapshotVaultTVLs()`. Schedule boost-credit batches outside the window (a batch inside it reverts and has to be retried). Avoid a fixed, public snapshot schedule. Have the frontend read `depositsLocked()` and show the unlock time. Perform the V1 → V2 upgrade outside a snapshot window: V1 does not lock, so a deposit that lands in a window before the upgrade can still dilute that one distribution.
+
+**Contract size.** The lock pushed `EarnVaultV2` to 24,784 bytes at the repo's `optimizer_runs = 999999`, over the EIP-170 limit (24,576). `foundry.toml` therefore compiles `src/vaults/earn/EarnVaultV2.sol` alone with `optimizer_runs = 10000` (`compilation_restrictions`): 22,285 bytes, ~2.3k headroom; every other contract's bytecode is unchanged. Cost: `deposit` +0.1%, `onBoostCredit` +0.2% (cold) to +1.4% (warm). Explorer verification of the implementation must use runs = 10000. Foundry's test EVM does not enforce EIP-170, so `test_Upgrade_HappyPath_FreshImplementation_InitializesV2AndPreservesV1State` asserts the deployed implementation is within the limit.
+
+**Upgrade.** No new storage and no new initializer: this is part of the V1 → V2 upgrade (`EarnVaultV2` is not deployed yet), and the lock reads only the existing `yieldRedistributor` slot plus the two view calls.
+
+**Gas** (`test_Gas_Deposit_ContractRedistributorOverheadVsEOA`). An unlocked `deposit()` costs ~146.1k gas with a contract redistributor versus ~140.8k with an EOA redistributor: ~5.3k for the two view calls and their storage reads. The `code.length` check itself (~2.6k, a cold account access) is paid in both cases, so the total cost of the lock over a V2 without it is roughly 8k gas per deposit. A locked deposit reverts before any state change.

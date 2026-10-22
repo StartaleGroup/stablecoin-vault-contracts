@@ -1,0 +1,337 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.30;
+
+import {EarnVaultV2UpgradeChecks} from '../../script/upgrade/EarnVaultV2UpgradeChecks.sol';
+import {UpgradeEarnVaultToV2} from '../../script/upgrade/UpgradeEarnVaultToV2.s.sol';
+import {VerifyEarnVaultV2Upgrade} from '../../script/upgrade/VerifyEarnVaultV2Upgrade.s.sol';
+import {EarnVaultUpgradeable} from '../../src/vaults/earn/EarnVaultUpgradeable.sol';
+import {EarnVaultV2} from '../../src/vaults/earn/EarnVaultV2.sol';
+import {
+  MockEmptyReturnRedistributor,
+  MockRevertingSnapshotRedistributor,
+  MockSnapshotRedistributor
+} from '../mocks/MockSnapshotRedistributor.sol';
+import {MockUSDSC} from '../mocks/MockUSDSC.sol';
+import {ERC1967Proxy} from '@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol';
+import {ProxyAdmin} from '@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol';
+import {TransparentUpgradeableProxy} from '@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol';
+import {Test} from 'lib/forge-std/src/Test.sol';
+
+/// @notice Drives the V2 upgrade script and the live-verify script against a real local V1 proxy.
+///         The upgrade script contract itself owns the ProxyAdmin here (in production the broadcaster
+///         key does), so its ProxyAdmin call is authorized.
+contract UpgradeEarnVaultToV2ScriptTest is Test {
+  UpgradeEarnVaultToV2 internal script;
+  VerifyEarnVaultV2Upgrade internal verifier;
+  MockUSDSC internal usdsc;
+  address internal proxy;
+  address internal pa;
+
+  address internal owner = makeAddr('owner');
+  address internal treasury = makeAddr('treasury');
+  /// @dev A real RewardRedistributor deployment is a contract with the JIT-lock snapshot
+  ///      getters; use the mock (not an EOA like the other role addresses) so the happy-path
+  ///      upgrade/verify tests exercise the real _requireRedistributorSnapshotGetters() check.
+  MockSnapshotRedistributor internal redistributor = new MockSnapshotRedistributor(5 minutes);
+  address internal pauser = makeAddr('pauser');
+  address internal operator = makeAddr('operator'); // V1's boostRewardKeeper
+  address internal keeper = makeAddr('boostKeeper');
+  uint256 internal constant CAP = 5000e6;
+  bytes32 internal constant ADMIN_SLOT = bytes32(uint256(keccak256('eip1967.proxy.admin')) - 1);
+  bytes32 internal constant IMPL_SLOT = bytes32(uint256(keccak256('eip1967.proxy.implementation')) - 1);
+
+  function _v1InitData() internal view returns (bytes memory) {
+    return _v1InitDataWithRedistributor(address(redistributor));
+  }
+
+  /// @dev Lets the redistributor-rejection tests stand up an alternate V1 proxy without
+  ///      disturbing setUp()'s own proxy (which already uses the valid mock redistributor).
+  function _v1InitDataWithRedistributor(address rdist) internal view returns (bytes memory) {
+    return abi.encodeWithSelector(
+      EarnVaultUpgradeable.initialize.selector, address(usdsc), owner, rdist, treasury, pauser, operator
+    );
+  }
+
+  /// @dev Deploys a second, independent V1 proxy wired to `rdist` as its yieldRedistributor.
+  function _deployV1ProxyWithRedistributor(address rdist) internal returns (address p, address proxyAdmin) {
+    p = address(
+      new TransparentUpgradeableProxy(
+        address(new EarnVaultUpgradeable()), address(script), _v1InitDataWithRedistributor(rdist)
+      )
+    );
+    proxyAdmin = address(uint160(uint256(vm.load(p, ADMIN_SLOT))));
+  }
+
+  function _params(address impl) internal view returns (UpgradeEarnVaultToV2.Params memory) {
+    return
+      UpgradeEarnVaultToV2.Params({proxy: proxy, expectedAdmin: pa, keeper: keeper, cap: CAP, implementation: impl});
+  }
+
+  function _roles() internal view returns (EarnVaultV2UpgradeChecks.Roles memory) {
+    return EarnVaultV2UpgradeChecks.Roles({
+      owner: owner,
+      treasury: treasury,
+      yieldRedistributor: address(redistributor),
+      pauser: pauser,
+      boostRewardKeeper: operator
+    });
+  }
+
+  function setUp() public {
+    script = new UpgradeEarnVaultToV2();
+    verifier = new VerifyEarnVaultV2Upgrade();
+    usdsc = new MockUSDSC();
+    proxy =
+      address(new TransparentUpgradeableProxy(address(new EarnVaultUpgradeable()), address(script), _v1InitData()));
+    pa = address(uint160(uint256(vm.load(proxy, ADMIN_SLOT))));
+
+    // real V1 state that must survive the upgrade untouched
+    address depositor = makeAddr('depositor');
+    usdsc.mint(depositor, 700e6);
+    vm.startPrank(depositor);
+    usdsc.approve(proxy, 700e6);
+    EarnVaultUpgradeable(payable(proxy)).deposit(700e6);
+    vm.stopPrank();
+  }
+
+  function test_Upgrade_HappyPath_FreshImplementation_InitializesV2AndPreservesV1State() public {
+    uint256 principalBefore = EarnVaultUpgradeable(payable(proxy)).principal(makeAddr('depositor'));
+    address impl = script.upgrade(_params(address(0)), address(script));
+
+    EarnVaultV2 v2 = EarnVaultV2(payable(proxy));
+    assertEq(v2.getVersion(), 'EarnVaultV2');
+    assertEq(v2.boostKeeper(), keeper);
+    assertEq(v2.maxBoostPerBatch(), CAP);
+    assertEq(v2.principal(makeAddr('depositor')), principalBefore);
+    assertEq(address(uint160(uint256(vm.load(proxy, IMPL_SLOT)))), impl);
+    // Foundry's test EVM does not enforce EIP-170, so assert it: the implementation the script
+    // deploys must be deployable on a real chain (EarnVaultV2 sits close to the limit).
+    assertLe(impl.code.length, 24_576, 'EarnVaultV2 runtime exceeds EIP-170 (24,576 bytes)');
+  }
+
+  /// @dev IMPLEMENTATION path: upgrades to the given, pre-deployed (explorer-verified) address
+  ///      rather than deploying new bytecode.
+  function test_Upgrade_UsesPreDeployedImplementation() public {
+    address preDeployed = address(new EarnVaultV2());
+    address impl = script.upgrade(_params(preDeployed), address(script));
+    assertEq(impl, preDeployed);
+    assertEq(address(uint160(uint256(vm.load(proxy, IMPL_SLOT)))), preDeployed);
+  }
+
+  function test_Preflight_RejectsImplementationThatIsNotV2() public {
+    address notV2 = address(new EarnVaultUpgradeable());
+    vm.expectRevert(bytes('IMPLEMENTATION is not EarnVaultV2'));
+    script.upgrade(_params(notV2), address(script));
+    vm.expectRevert(bytes('IMPLEMENTATION has no code'));
+    script.upgrade(_params(makeAddr('eoa')), address(script));
+  }
+
+  function test_Preflight_RevertsOnUnexpectedAdmin() public {
+    UpgradeEarnVaultToV2.Params memory p = _params(address(0));
+    p.expectedAdmin = makeAddr('someOtherProxyAdmin');
+    vm.expectRevert(bytes('ERC-1967 admin slot != EXPECTED_PROXY_ADMIN'));
+    script.upgrade(p, address(script));
+  }
+
+  /// @dev A proxy with no ERC-1967 admin (UUPS shape) is refused before anything is sent.
+  function test_Preflight_RevertsOnProxyWithoutAdmin() public {
+    UpgradeEarnVaultToV2.Params memory p = _params(address(0));
+    p.proxy = address(new ERC1967Proxy(address(new EarnVaultUpgradeable()), _v1InitData()));
+    vm.expectRevert(bytes('ERC-1967 admin slot != EXPECTED_PROXY_ADMIN'));
+    script.upgrade(p, address(script));
+  }
+
+  function test_Preflight_RevertsWhenSenderDoesNotOwnProxyAdmin() public {
+    vm.expectRevert(bytes('sender does not own the ProxyAdmin'));
+    script.upgrade(_params(address(0)), makeAddr('notTheOwner'));
+  }
+
+  function test_Preflight_RevertsOnZeroKeeperOrCap() public {
+    UpgradeEarnVaultToV2.Params memory p = _params(address(0));
+    p.keeper = address(0);
+    vm.expectRevert(bytes('BOOST_KEEPER_ADDRESS not set'));
+    script.upgrade(p, address(script));
+    p = _params(address(0));
+    p.cap = 0;
+    vm.expectRevert(bytes('MAX_BOOST_PER_BATCH must be non-zero'));
+    script.upgrade(p, address(script));
+  }
+
+  function test_Preflight_RevertsWhenAlreadyOnV2() public {
+    script.upgrade(_params(address(0)), address(script));
+    vm.expectRevert(bytes('proxy is not on EarnVaultV1'));
+    script.upgrade(_params(address(0)), address(script));
+  }
+
+  function test_Preflight_DoesNotChangeState_AndSnapshotsRoles() public {
+    UpgradeEarnVaultToV2.V1Snapshot memory snap = script.preflight(_params(address(0)), address(script));
+    assertEq(EarnVaultUpgradeable(payable(proxy)).getVersion(), 'EarnVaultV1');
+    assertEq(ProxyAdmin(pa).owner(), address(script));
+    assertEq(snap.roles.owner, owner);
+    assertEq(snap.roles.treasury, treasury);
+    assertEq(snap.roles.yieldRedistributor, address(redistributor));
+    assertEq(snap.roles.pauser, pauser);
+    assertEq(snap.roles.boostRewardKeeper, operator, 'boostRewardKeeper read from its storage slot');
+  }
+
+  /// @dev The live-verify script passes on a correctly upgraded proxy, and fails on any mismatch in
+  ///      config or roles.
+  function test_Verify_PassesAfterUpgrade_FailsOnMismatch() public {
+    address impl = script.upgrade(_params(address(0)), address(script));
+    verifier.verify(proxy, pa, impl, keeper, CAP, _roles());
+
+    vm.expectRevert(bytes('implementation slot mismatch'));
+    verifier.verify(proxy, pa, makeAddr('wrongImpl'), keeper, CAP, _roles());
+    vm.expectRevert(bytes('maxBoostPerBatch mismatch'));
+    verifier.verify(proxy, pa, impl, keeper, CAP + 1, _roles());
+
+    EarnVaultV2UpgradeChecks.Roles memory wrong = _roles();
+    wrong.pauser = makeAddr('wrongPauser');
+    vm.expectRevert(bytes('pauser mismatch'));
+    verifier.verify(proxy, pa, impl, keeper, CAP, wrong);
+  }
+
+  /// @dev Before the upgrade, verification must fail (the proxy is still V1).
+  function test_Verify_FailsBeforeUpgrade() public {
+    address v1Impl = address(uint160(uint256(vm.load(proxy, IMPL_SLOT))));
+    vm.expectRevert(bytes('version is not EarnVaultV2'));
+    verifier.verify(proxy, pa, v1Impl, keeper, CAP, _roles());
+  }
+
+  /// @dev An EOA yieldRedistributor would make EarnVaultV2's JIT deposit lock permanently
+  ///      fail-open (no snapshot to respect, ever) - preflight refuses to upgrade onto one.
+  function test_Preflight_RevertsOnEOARedistributor() public {
+    (address p, address padm) = _deployV1ProxyWithRedistributor(makeAddr('eoaRedistributor'));
+    UpgradeEarnVaultToV2.Params memory p2 = _params(address(0));
+    p2.proxy = p;
+    p2.expectedAdmin = padm;
+    vm.expectRevert(bytes('yieldRedistributor has no code'));
+    script.upgrade(p2, address(script));
+  }
+
+  /// @dev A contract yieldRedistributor missing the snapshot getters would make EarnVaultV2's
+  ///      JIT deposit lock permanently fail-closed (every deposit reverts) - preflight refuses
+  ///      to upgrade onto one too.
+  function test_Preflight_RevertsOnRedistributorWithoutSnapshotGetters() public {
+    (address p, address padm) = _deployV1ProxyWithRedistributor(address(usdsc));
+    UpgradeEarnVaultToV2.Params memory p2 = _params(address(0));
+    p2.proxy = p;
+    p2.expectedAdmin = padm;
+    vm.expectRevert(bytes('yieldRedistributor missing snapshot getters'));
+    script.upgrade(p2, address(script));
+  }
+
+  /// @dev The remaining failure branches of the getter check: getters that revert, and a
+  ///      contract that answers with empty return data (the length check).
+  function test_Preflight_RevertsOnRedistributorWithRevertingOrEmptyGetters() public {
+    address[2] memory bad =
+      [address(new MockRevertingSnapshotRedistributor()), address(new MockEmptyReturnRedistributor())];
+    for (uint256 i = 0; i < bad.length; i++) {
+      (address p, address padm) = _deployV1ProxyWithRedistributor(bad[i]);
+      UpgradeEarnVaultToV2.Params memory p2 = _params(address(0));
+      p2.proxy = p;
+      p2.expectedAdmin = padm;
+      vm.expectRevert(bytes('yieldRedistributor missing snapshot getters'));
+      script.upgrade(p2, address(script));
+    }
+  }
+
+  /// @dev Mirrors the preflight EOA case, but caught by the live-verify script - e.g. if
+  ///      setYieldRedistributor() swapped in an EOA between broadcast and verification.
+  function test_Verify_FailsOnEOARedistributor() public {
+    address impl = script.upgrade(_params(address(0)), address(script));
+    address eoa = makeAddr('eoaRedistributor');
+    vm.prank(owner);
+    EarnVaultV2(payable(proxy)).setYieldRedistributor(eoa);
+
+    EarnVaultV2UpgradeChecks.Roles memory roles = _roles();
+    roles.yieldRedistributor = eoa;
+    vm.expectRevert(bytes('yieldRedistributor has no code'));
+    verifier.verify(proxy, pa, impl, keeper, CAP, roles);
+  }
+
+  /// @dev Mirrors the preflight getter-less-contract case, caught by the live-verify script.
+  function test_Verify_FailsOnRedistributorWithoutSnapshotGetters() public {
+    address impl = script.upgrade(_params(address(0)), address(script));
+    vm.prank(owner);
+    EarnVaultV2(payable(proxy)).setYieldRedistributor(address(usdsc));
+
+    EarnVaultV2UpgradeChecks.Roles memory roles = _roles();
+    roles.yieldRedistributor = address(usdsc);
+    vm.expectRevert(bytes('yieldRedistributor missing snapshot getters'));
+    verifier.verify(proxy, pa, impl, keeper, CAP, roles);
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Boost tokens: the vault accepts USDSC only, so the upgrade refuses any other registered token
+  // ---------------------------------------------------------------------------------------------
+
+  /// @dev ERC-7201 base of EarnVault's storage; activeBoostTokens is struct field 18 (length slot).
+  bytes32 internal constant EARN_VAULT_STORAGE = 0x4acfb950108afb92cc59b268b946808304d34de46619a1e803aeac06ad89cb00;
+
+  /// @dev The V1 source rejects non-USDSC boost tokens, so write activeBoostTokens directly.
+  function _setActiveBoostTokens(address target, address[] memory tokens) internal {
+    bytes32 lengthSlot = bytes32(uint256(EARN_VAULT_STORAGE) + 18);
+    vm.store(target, lengthSlot, bytes32(tokens.length));
+    bytes32 first = keccak256(abi.encode(lengthSlot));
+    for (uint256 i = 0; i < tokens.length; i++) {
+      vm.store(target, bytes32(uint256(first) + i), bytes32(uint256(uint160(tokens[i]))));
+    }
+  }
+
+  function test_Preflight_PassesWithNoBoostTokens() public view {
+    script.preflight(_params(address(0)), address(script));
+  }
+
+  /// @dev A real, funded USDSC boost on the V1 proxy registers exactly [USDSC]; preflight accepts it.
+  function test_Preflight_PassesWithExactlyUsdscRegistered() public {
+    usdsc.mint(proxy, 100e6);
+    vm.prank(operator);
+    EarnVaultUpgradeable(payable(proxy)).onBoostReward(address(usdsc), 100e6);
+
+    script.preflight(_params(address(0)), address(script));
+    // and the full upgrade + live verify still succeed with the USDSC boost in place
+    address impl = script.upgrade(_params(address(0)), address(script));
+    verifier.verify(proxy, pa, impl, keeper, CAP, _roles());
+  }
+
+  function test_Preflight_RevertsWhenNonUsdscBoostTokenRegistered() public {
+    address[] memory tokens = new address[](1);
+    tokens[0] = makeAddr('someOtherToken');
+    _setActiveBoostTokens(proxy, tokens);
+
+    vm.expectRevert(bytes('a boost token other than USDSC is registered'));
+    script.preflight(_params(address(0)), address(script));
+  }
+
+  function test_Preflight_RevertsWhenMoreThanOneBoostTokenRegistered() public {
+    address[] memory tokens = new address[](2);
+    tokens[0] = address(usdsc);
+    tokens[1] = makeAddr('someOtherToken');
+    _setActiveBoostTokens(proxy, tokens);
+
+    vm.expectRevert(bytes('more than one boost token registered'));
+    script.preflight(_params(address(0)), address(script));
+  }
+
+  function test_Verify_RejectsNonUsdscBoostToken() public {
+    address impl = script.upgrade(_params(address(0)), address(script));
+    address[] memory tokens = new address[](1);
+    tokens[0] = makeAddr('someOtherToken');
+    _setActiveBoostTokens(proxy, tokens);
+
+    vm.expectRevert(bytes('a boost token other than USDSC is registered'));
+    verifier.verify(proxy, pa, impl, keeper, CAP, _roles());
+  }
+
+  function test_Verify_RejectsMoreThanOneBoostToken() public {
+    address impl = script.upgrade(_params(address(0)), address(script));
+    address[] memory tokens = new address[](2);
+    tokens[0] = address(usdsc);
+    tokens[1] = makeAddr('someOtherToken');
+    _setActiveBoostTokens(proxy, tokens);
+
+    vm.expectRevert(bytes('more than one boost token registered'));
+    verifier.verify(proxy, pa, impl, keeper, CAP, _roles());
+  }
+}
