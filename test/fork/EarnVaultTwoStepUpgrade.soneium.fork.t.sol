@@ -8,6 +8,7 @@ import {RewardRedistributor} from '../../src/distributor/RewardRedistributor.sol
 import {IEarnVaultEventsAndErrors} from '../../src/interfaces/vaults/earn/IEarnVaultEventsAndErrors.sol';
 import {EarnVaultUpgradeable} from '../../src/vaults/earn/EarnVaultUpgradeable.sol';
 import {EarnVaultV2} from '../../src/vaults/earn/EarnVaultV2.sol';
+import {PausableUpgradeable} from '@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol';
 import {ProxyAdmin} from '@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol';
 import {ITransparentUpgradeableProxy} from '@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol';
 import {IERC20} from '@openzeppelin/contracts/token/ERC20/IERC20.sol';
@@ -406,6 +407,206 @@ contract EarnVaultTwoStepUpgradeSoneiumFork is Test {
   }
 
   // =============================================================================================
+  // Emergency pause and rollback
+  // =============================================================================================
+
+  /// @dev Upgrade 1 undone: pause, boost reward keeper back to the treasury Safe (the live V1 does
+  ///      not check boost funding), then the live implementation again. Storage is exactly as before
+  ///      and everyone exits in full on the live code
+  function test_Emergency_RollbackUpgrade1ToLiveV1() public {
+    bytes memory original = _rawStorage();
+    _upgradeToFixedV1();
+    vm.prank(OWNER_SAFE);
+    _v().setBoostRewardKeeper(KMS_KEEPER);
+    _fundedBoost(KMS_KEEPER, 50e6);
+    _realRound();
+
+    vm.startPrank(OWNER_SAFE);
+    _v().pause();
+    _v().setBoostRewardKeeper(TREASURY_SAFE); // first: never leave the bot as keeper on the live V1
+    vm.stopPrank();
+    bytes memory storageBefore = _rawStorage();
+    bytes memory valuesBefore = _values();
+    vm.prank(OWNER_SAFE);
+    PROXY_ADMIN.upgradeAndCall(ITransparentUpgradeableProxy(VAULT), liveV1Impl, '');
+
+    assertEq(address(uint160(uint256(vm.load(VAULT, IMPL_SLOT)))), liveV1Impl);
+    assertEq(_rawStorage(), storageBefore, 'rollback changed storage');
+    assertEq(_values(), valuesBefore, 'rollback moved a position');
+    assertTrue(_v().paused(), 'still paused after the rollback');
+    assertEq(_initializedVersion(), 1);
+    (bool hasView,) = VAULT.staticcall(abi.encodeWithSignature('surplusUSDSC()'));
+    assertFalse(hasView, 'live V1 code is back');
+    assertTrue(keccak256(_rawStorage()) != keccak256(original)); // activity happened in between
+
+    vm.prank(OWNER_SAFE);
+    _v().unpause();
+    // the rule the rollback relies on: the bot is no longer the keeper of the live V1 code
+    assertEq(address(uint160(uint256(vm.load(VAULT, bytes32(uint256(VAULT_STORAGE) + 2))))), TREASURY_SAFE, 'keeper');
+    vm.prank(KMS_KEEPER);
+    vm.expectRevert(IEarnVaultEventsAndErrors.NotBoostRewardKeeper.selector);
+    _v().onBoostReward(address(usdsc), 1);
+    _realRound();
+    for (uint256 i = 0; i < users.length; i++) {
+      _exitInFullV1(users[i]);
+    }
+    _assertSolvent();
+  }
+
+  /// @dev At every stage a pause stops user actions and boosts without moving any principal, while
+  ///      the redistributor's real rounds keep paying yield; unpausing restores everything
+  function test_Emergency_PauseAtEveryStage() public {
+    for (uint256 stage = 0; stage < 3; stage++) {
+      if (stage == 1) _upgradeToFixedV1();
+      if (stage == 2) _upgradeToV2();
+      vm.prank(OWNER_SAFE);
+      _v().pause();
+      bytes memory principals = _principals();
+
+      address u = users[0];
+      vm.startPrank(u);
+      vm.expectRevert(PausableUpgradeable.EnforcedPause.selector);
+      _v().deposit(1e6);
+      vm.expectRevert(PausableUpgradeable.EnforcedPause.selector);
+      _v().withdraw(1);
+      vm.expectRevert(PausableUpgradeable.EnforcedPause.selector);
+      _v().claim();
+      vm.stopPrank();
+      address keeper = address(uint160(uint256(vm.load(VAULT, bytes32(uint256(VAULT_STORAGE) + 2)))));
+      vm.prank(keeper);
+      vm.expectRevert(PausableUpgradeable.EnforcedPause.selector);
+      _v().onBoostReward(address(usdsc), 1);
+      if (stage == 2) {
+        vm.expectRevert(PausableUpgradeable.EnforcedPause.selector);
+        EarnVaultV2(payable(VAULT)).compoundMany(users);
+        vm.prank(u);
+        vm.expectRevert(PausableUpgradeable.EnforcedPause.selector);
+        EarnVaultV2(payable(VAULT)).withdrawAll();
+      }
+
+      uint256 gi = _v().globalIndex();
+      _realRound(); // snapshot + distribute through the live redistributor while paused
+      assertGt(_v().globalIndex(), gi, 'yield must keep flowing while paused');
+      assertEq(_principals(), principals, 'pause moved principal');
+      _assertSolvent();
+      vm.prank(OWNER_SAFE);
+      _v().unpause();
+    }
+    for (uint256 i = 0; i < users.length; i++) {
+      _exitInFull(users[i]);
+    }
+    _assertSolvent();
+  }
+
+  /// @dev The pause flag survives upgrades in both directions, so the vault can be paused first and
+  ///      then upgraded or rolled back
+  function test_Emergency_UpgradeAndRollbackWhilePaused() public {
+    vm.prank(OWNER_SAFE);
+    _v().pause();
+    bytes memory valuesBefore = _values();
+    _upgradeToFixedV1();
+    assertTrue(_v().paused());
+    _upgradeToV2();
+    assertTrue(_v().paused());
+    address fixedV1 = address(new EarnVaultUpgradeable());
+    vm.prank(OWNER_SAFE);
+    PROXY_ADMIN.upgradeAndCall(ITransparentUpgradeableProxy(VAULT), fixedV1, '');
+    assertTrue(_v().paused());
+    assertEq(_values(), valuesBefore, 'a position moved while paused');
+    vm.prank(OWNER_SAFE);
+    _v().unpause();
+    _reupgradeToV2();
+    for (uint256 i = 0; i < users.length; i++) {
+      _exitInFull(users[i]);
+    }
+    _assertSolvent();
+  }
+
+  /// @dev Upgrade 2 undone after V2-only activity: boost credits and compounded yield stay as
+  ///      principal, the fixed V1 runs normally (no deposit pause, claims), and a later re-upgrade
+  ///      with empty data carries on with the same config and cycle counter
+  function test_Emergency_RollbackUpgrade2AfterCreditsAndCompounding() public {
+    _upgradeToFixedV1();
+    vm.prank(OWNER_SAFE);
+    _v().setBoostRewardKeeper(KMS_KEEPER);
+    _upgradeToV2();
+    EarnVaultV2 v2 = EarnVaultV2(payable(VAULT));
+    vm.prank(OWNER_SAFE);
+    v2.setMaxBoostPerBatch(100e6);
+    _realRound();
+    _fundedCredit(1, 20e6);
+    v2.compoundMany(users);
+    _fundedBoost(KMS_KEEPER, 50e6);
+
+    bytes memory valuesBefore = _values();
+    address fixedV1 = address(new EarnVaultUpgradeable());
+    vm.prank(OWNER_SAFE);
+    PROXY_ADMIN.upgradeAndCall(ITransparentUpgradeableProxy(VAULT), fixedV1, '');
+    assertEq(_v().getVersion(), 'EarnVaultV1');
+    assertEq(_values(), valuesBefore, 'rollback moved a position');
+    _assertSolvent();
+
+    // fixed V1 runs as before: open deposits right after a snapshot, funded boosts, claims
+    _snapshot();
+    address d = _newDepositor('afterRollback', 400e6);
+    vm.prank(d);
+    _v().deposit(400e6);
+    _distribute();
+    _fundedBoost(KMS_KEEPER, 50e6);
+    vm.prank(users[1]);
+    _v().claim();
+    _assertSolvent();
+
+    bytes memory mid = _values();
+    _reupgradeToV2();
+    assertEq(_values(), mid, 're-upgrade moved a position');
+    assertEq(v2.boostKeeper(), OWNER_SAFE);
+    assertEq(v2.maxBoostPerBatch(), 100e6);
+    assertEq(v2.latestCycleId(), 1);
+    address[] memory one = new address[](1);
+    uint256[] memory amt = new uint256[](1);
+    (one[0], amt[0]) = (users[0], 1e6);
+    vm.prank(OWNER_SAFE);
+    vm.expectRevert(EarnVaultV2.StaleCycle.selector);
+    v2.onBoostCredit(1, one, amt); // a paid cycle cannot be paid twice
+    _fundedCredit(2, 10e6);
+    for (uint256 i = 0; i < users.length; i++) {
+      _exitInFull(users[i]);
+    }
+    _exitInFull(d);
+    _assertSolvent();
+  }
+
+  /// @dev Forward, back, forward: live V1 -> fixed -> live V1 -> fixed -> V2 -> fixed -> V2, with
+  ///      real rounds in between. No switch moves a position; everyone exits in full at the end
+  function test_Emergency_FullCycleForwardBackForward() public {
+    for (uint256 step = 0; step < 6; step++) {
+      _realRound();
+      bytes memory before = _values();
+      if (step == 0 || step == 2) {
+        _upgradeToFixedV1();
+      } else if (step == 1) {
+        vm.prank(OWNER_SAFE);
+        PROXY_ADMIN.upgradeAndCall(ITransparentUpgradeableProxy(VAULT), liveV1Impl, '');
+      } else if (step == 3) {
+        _upgradeToV2();
+      } else if (step == 4) {
+        address fixedV1 = address(new EarnVaultUpgradeable());
+        vm.prank(OWNER_SAFE);
+        PROXY_ADMIN.upgradeAndCall(ITransparentUpgradeableProxy(VAULT), fixedV1, '');
+      } else {
+        _reupgradeToV2();
+      }
+      assertEq(_values(), before, 'an upgrade or rollback moved a position');
+      _assertSolvent();
+    }
+    for (uint256 i = 0; i < users.length; i++) {
+      _exitInFull(users[i]);
+    }
+    _assertSolvent();
+  }
+
+  // =============================================================================================
 
   function _v() internal pure returns (EarnVaultUpgradeable) {
     return EarnVaultUpgradeable(payable(VAULT));
@@ -590,6 +791,34 @@ contract EarnVaultTwoStepUpgradeSoneiumFork is Test {
       )
     );
     return vm.sign(key, keccak256(abi.encodePacked('\x19\x01', t.DOMAIN_SEPARATOR(), structHash)));
+  }
+
+  /// @dev After a rollback the initialized version is already 2: the re-upgrade carries no data
+  function _reupgradeToV2() internal {
+    address impl = address(new EarnVaultV2());
+    vm.prank(OWNER_SAFE);
+    PROXY_ADMIN.upgradeAndCall(ITransparentUpgradeableProxy(VAULT), impl, '');
+    assertEq(_v().getVersion(), 'EarnVaultV2');
+  }
+
+  /// @dev Boost credit from the boost keeper (the owner Safe until loyalty): funded first
+  function _fundedCredit(uint256 cycleId, uint256 each) internal {
+    _unlockIfLocked();
+    address[] memory who = new address[](2);
+    uint256[] memory amt = new uint256[](2);
+    (who[0], who[1], amt[0], amt[1]) = (users[0], users[1], each, each);
+    deal(address(usdsc), OWNER_SAFE, usdsc.balanceOf(OWNER_SAFE) + 2 * each);
+    vm.startPrank(OWNER_SAFE);
+    require(usdsc.transfer(VAULT, 2 * each), 'transfer failed');
+    EarnVaultV2(payable(VAULT)).onBoostCredit(cycleId, who, amt);
+    vm.stopPrank();
+  }
+
+  function _principals() internal view returns (bytes memory s) {
+    for (uint256 i = 0; i < users.length; i++) {
+      s = abi.encode(s, _v().principal(users[i]));
+    }
+    s = abi.encode(s, _v().totalPrincipal());
   }
 
   function _exitInFull(address u) internal {
