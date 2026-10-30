@@ -30,7 +30,8 @@ import {Script, console} from 'forge-std/Script.sol';
  * @dev Every env var is TEST_-prefixed ON PURPOSE: forge auto-loads `.env`, which holds the
  *      PRODUCTION values (owner = the production Safe, USDSC address, deployer key). Unprefixed names
  *      would silently pull those into a test deployment.
- *      Env (required): TEST_DEPLOYER_PRIVATE_KEY, TEST_SALT_TAG (e.g. "20261005").
+ *      Env (required): TEST_SALT_TAG (e.g. "20261005"). The deployer comes from `--account` /
+ *      `--ledger` / `--private-key` on the command line, not from the environment.
  *      Env (optional, default = test deployer): TEST_OWNER_ADDRESS, TEST_TREASURY_ADDRESS,
  *      TEST_PAUSER_ADDRESS, TEST_BOOST_REWARD_KEEPER_ADDRESS, TEST_BOOST_KEEPER_ADDRESS,
  *      TEST_REDISTRIBUTOR_OPERATOR.
@@ -66,8 +67,8 @@ contract DeployEarnVaultV2TestStack is Script, DeployHelpers {
   bytes32 internal constant ADMIN_SLOT = 0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103;
 
   function run() external {
-    uint256 key = vm.envUint('TEST_DEPLOYER_PRIVATE_KEY');
-    address deployer = vm.addr(key);
+    vm.startBroadcast();
+    (, address deployer,) = vm.readCallers();
     Config memory c = Config({
       deployer: deployer,
       tag: vm.envString('TEST_SALT_TAG'),
@@ -85,7 +86,6 @@ contract DeployEarnVaultV2TestStack is Script, DeployHelpers {
       require(vm.envOr('ALLOW_SONEIUM_MAINNET_TEST', false), 'chain 1868: set ALLOW_SONEIUM_MAINNET_TEST=true');
     }
 
-    vm.startBroadcast(key);
     Deployed memory d = deploy(c);
     vm.stopBroadcast();
 

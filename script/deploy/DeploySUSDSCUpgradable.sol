@@ -49,9 +49,12 @@ contract DeploySUSDSCVaultUpgradeable is Script, DeployHelpers {
     console.log('ProxyAdmin Owner:', proxyAdminOwner);
   }
 
+  /// @dev The broadcaster comes from the command line (`--account <keystore>` or `--ledger`), never
+  ///      from the environment: Foundry loads `.env` into every `forge test` run, so a key stored
+  ///      there is readable by any test file.
   function run() public {
-    uint256 deployerPrivateKey = vm.envUint('DEPLOYER_PRIVATE_KEY');
-    address deployer = vm.addr(deployerPrivateKey);
+    vm.startBroadcast();
+    (, address deployer,) = vm.readCallers();
 
     console.log('\n=== Starting Deployment ===');
     console.log('Deployer address:', deployer);
@@ -67,11 +70,9 @@ contract DeploySUSDSCVaultUpgradeable is Script, DeployHelpers {
 
     // Step 1: Deploy implementation using CREATE3
     console.log('\n=== Deploying Implementation ===');
-    vm.startBroadcast(deployerPrivateKey);
     bytes memory implCreationCode = type(SUSDSCVaultUpgradable).creationCode;
     address deployedImplAddress = _deployCreate3(implCreationCode, implSalt);
     implementation = SUSDSCVaultUpgradable(payable(deployedImplAddress));
-    vm.stopBroadcast();
     console.log('SUSDSCVaultUpgradeable Implementation:', address(implementation));
 
     // Step 2: Prepare initialization data
@@ -81,7 +82,6 @@ contract DeploySUSDSCVaultUpgradeable is Script, DeployHelpers {
 
     // Step 3: Deploy proxy using CREATE3
     console.log('\n=== Deploying Proxy ===');
-    vm.startBroadcast(deployerPrivateKey);
     bytes memory proxyCreationCode = abi.encodePacked(
       type(TransparentUpgradeableProxy).creationCode, abi.encode(address(implementation), proxyAdminOwner, initData)
     );

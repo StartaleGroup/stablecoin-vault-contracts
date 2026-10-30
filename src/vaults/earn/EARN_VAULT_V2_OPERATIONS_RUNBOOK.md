@@ -113,7 +113,7 @@ Compounding during the window is allowed by design: it only folds a user's own o
 | Change `maxBoostPerBatch` | Owner, `setMaxBoostPerBatch` | Size with headroom over one day's largest legitimate batch; never raise it under pressure during an incident |
 | Sweep surplus | Owner, `sweepSurplusToTreasury` | Only USDSC above `claimReserve + boostClaimReserve(USDSC)` can leave; schedule it outside boost credit runs |
 | Pause | Pauser, `pause` | Stops deposits, withdrawals, claims, compounding and both boost entry points. `onYield` keeps working |
-| Upgrade | ProxyAdmin owner | `script/upgrade/UpgradeEarnVaultToV2.s.sol`, then `VerifyEarnVaultV2Upgrade.s.sol` against the live chain. Execute away from a snapshot |
+| Upgrade | ProxyAdmin owner (a Safe) | Follow the mainnet upgrade runbook in Notion: the ProxyAdmin is Safe-owned, so the upgrade is a Safe transaction (`cast` path), not `UpgradeEarnVaultToV2.s.sol`, which only broadcasts from an EOA that owns the ProxyAdmin. Then `VerifyEarnVaultV2Upgrade.s.sol` against the live chain. Execute away from a snapshot |
 
 ## Monitoring
 
