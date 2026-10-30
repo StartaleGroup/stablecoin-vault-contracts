@@ -112,7 +112,12 @@ contract EarnVaultV2UpgradeSoneiumFork is Test {
     impl = address(new EarnVaultV2());
     UpgradeEarnVaultToV2 script = new UpgradeEarnVaultToV2();
     UpgradeEarnVaultToV2.Params memory p = UpgradeEarnVaultToV2.Params({
-      proxy: VAULT, expectedAdmin: PROXY_ADMIN, keeper: boostKeeper, cap: CAP, implementation: impl
+      proxy: VAULT,
+      expectedAdmin: PROXY_ADMIN,
+      keeper: boostKeeper,
+      cap: CAP,
+      implementation: impl,
+      expectedCodehash: impl.codehash
     });
 
     v1Snap = script.preflight(p, SAFE);
@@ -148,7 +153,7 @@ contract EarnVaultV2UpgradeSoneiumFork is Test {
 
   function test_VerifyScriptPassesAgainstUpgradedState() public {
     VerifyEarnVaultV2Upgrade verifier = new VerifyEarnVaultV2Upgrade();
-    verifier.verify(VAULT, PROXY_ADMIN, impl, boostKeeper, CAP, v1Snap.roles);
+    verifier.verify(VAULT, PROXY_ADMIN, impl, boostKeeper, CAP, v1Snap.roles, impl.codehash, SAFE);
   }
 
   function test_UpgradeCannotBeReinitialized() public {

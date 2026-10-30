@@ -12,10 +12,15 @@ import {console} from 'forge-std/Script.sol';
  * @notice Upgrades a live EarnVaultUpgradeable (V1) TransparentUpgradeableProxy to EarnVaultV2 in ONE
  *         ProxyAdmin.upgradeAndCall carrying initializeV2(boostKeeper, maxBoostPerBatch).
  * @dev Env: EARN_VAULT_PROXY, EXPECTED_PROXY_ADMIN, BOOST_KEEPER_ADDRESS, MAX_BOOST_PER_BATCH,
- *      DEPLOYER_PRIVATE_KEY (must be the ProxyAdmin owner), and optionally
- *      IMPLEMENTATION - a pre-deployed, explorer-verified EarnVaultV2 to upgrade to (recommended, so
- *      the wired bytecode is exactly the audited, verified bytecode). Without it a fresh
- *      implementation is deployed in the same run.
+ *      DEPLOYER_PRIVATE_KEY (must be the ProxyAdmin owner), IMPLEMENTATION and
+ *      EXPECTED_IMPLEMENTATION_CODEHASH.
+ *      IMPLEMENTATION is the pre-deployed EarnVaultV2 to upgrade to. On Soneium mainnet it is
+ *      required: the production implementation is always an artifact a second person has rebuilt
+ *      and byte-compared, never something this run builds. EXPECTED_IMPLEMENTATION_CODEHASH is the
+ *      keccak256 of that artifact's runtime code (`cast keccak $(cast code $IMPL)`), also required
+ *      on Soneium; the checks refuse any implementation whose codehash differs or whose code does
+ *      not embed the live BoostRewardsLib address. Off Soneium both are optional and, when
+ *      IMPLEMENTATION is unset, a fresh implementation is deployed in the same run (testnets).
  * @dev Pre-flight refuses to send anything unless the proxy's ERC-1967 admin slot is exactly
  *      EXPECTED_PROXY_ADMIN (a UUPS-style or otherwise unexpected proxy fails here), the broadcaster
  *      owns that ProxyAdmin, the proxy is still V1 at initialized version 1, and the current
@@ -41,7 +46,8 @@ contract UpgradeEarnVaultToV2 is EarnVaultV2UpgradeChecks {
     address expectedAdmin;
     address keeper;
     uint256 cap;
-    address implementation; // address(0) => deploy a fresh EarnVaultV2
+    address implementation; // address(0) => deploy a fresh EarnVaultV2 (refused on Soneium mainnet)
+    bytes32 expectedCodehash; // keccak256 of the implementation's runtime code; bytes32(0) => not checked
   }
 
   function run() external {
@@ -50,7 +56,8 @@ contract UpgradeEarnVaultToV2 is EarnVaultV2UpgradeChecks {
       expectedAdmin: vm.envAddress('EXPECTED_PROXY_ADMIN'),
       keeper: vm.envAddress('BOOST_KEEPER_ADDRESS'),
       cap: vm.envUint('MAX_BOOST_PER_BATCH'),
-      implementation: vm.envOr('IMPLEMENTATION', address(0))
+      implementation: vm.envOr('IMPLEMENTATION', address(0)),
+      expectedCodehash: vm.envOr('EXPECTED_IMPLEMENTATION_CODEHASH', bytes32(0))
     });
     uint256 key = vm.envUint('DEPLOYER_PRIVATE_KEY');
 
@@ -65,6 +72,9 @@ contract UpgradeEarnVaultToV2 is EarnVaultV2UpgradeChecks {
     V1Snapshot memory before = preflight(p, sender);
 
     impl = p.implementation == address(0) ? address(new EarnVaultV2()) : p.implementation;
+    // A freshly built implementation is checked the same way as a pre-deployed one (library link on
+    // Soneium, codehash when given), so a fork test or testnet run sees the production checks too.
+    _requireV2Implementation(impl, p.expectedCodehash);
     ProxyAdmin(p.expectedAdmin)
       .upgradeAndCall(
         ITransparentUpgradeableProxy(p.proxy), impl, abi.encodeCall(EarnVaultV2.initializeV2, (p.keeper, p.cap))
@@ -80,7 +90,14 @@ contract UpgradeEarnVaultToV2 is EarnVaultV2UpgradeChecks {
     require(p.cap != 0, 'MAX_BOOST_PER_BATCH must be non-zero');
     require(_admin(p.proxy) == p.expectedAdmin, 'ERC-1967 admin slot != EXPECTED_PROXY_ADMIN');
     require(ProxyAdmin(p.expectedAdmin).owner() == sender, 'sender does not own the ProxyAdmin');
-    if (p.implementation != address(0)) _requireV2Implementation(p.implementation);
+    if (_isProductionScriptRun()) {
+      require(
+        p.implementation != address(0),
+        'IMPLEMENTATION is required on Soneium: upgrade to a pre-deployed, independently rebuilt artifact'
+      );
+      require(p.expectedCodehash != bytes32(0), 'EXPECTED_IMPLEMENTATION_CODEHASH is required on Soneium');
+    }
+    if (p.implementation != address(0)) _requireV2Implementation(p.implementation, p.expectedCodehash);
 
     EarnVaultV2 v = EarnVaultV2(payable(p.proxy));
     require(keccak256(bytes(v.getVersion())) == keccak256('EarnVaultV1'), 'proxy is not on EarnVaultV1');
