@@ -63,7 +63,8 @@ contract EarnVaultV2UsdscReservesSoneiumFork is Test {
         expectedAdmin: address(PROXY_ADMIN),
         keeper: boostKeeper,
         cap: 10_000e6,
-        implementation: impl
+        implementation: impl,
+        expectedCodehash: impl.codehash
       }),
         OWNER_SAFE
       );

@@ -2,7 +2,9 @@
 pragma solidity ^0.8.30;
 
 import {EarnVaultV2} from '../../src/vaults/earn/EarnVaultV2.sol';
+import {ProxyAdmin} from '@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol';
 import {Script} from 'forge-std/Script.sol';
+import {VmSafe} from 'forge-std/Vm.sol';
 
 /**
  * @title EarnVaultV2UpgradeChecks
@@ -18,6 +20,15 @@ abstract contract EarnVaultV2UpgradeChecks is Script {
   // is at offset 2 and has no public getter
   bytes32 internal constant EARN_VAULT_STORAGE_LOCATION =
     0x4acfb950108afb92cc59b268b946808304d34de46619a1e803aeac06ad89cb00;
+
+  /// @dev Soneium mainnet. On this chain the implementation must be a pre-deployed artifact that a
+  ///      second person has rebuilt and byte-compared, linked to the live BoostRewardsLib, and its
+  ///      codehash must match the one the signers approved.
+  uint256 internal constant SONEIUM_CHAIN_ID = 1868;
+  /// @dev Live BoostRewardsLib on Soneium. EarnVaultV2 DELEGATECALLs it from _settle on every deposit,
+  ///      withdraw, claim and compound; the address is embedded in the implementation's runtime code
+  ///      at link time, so a build linked elsewhere is a different contract with the same source.
+  address internal constant SONEIUM_BOOST_REWARDS_LIB = 0x674894C99714bf7E6Acdd9a73d46c6f9EACe66CE;
 
   /// @dev Role/config addresses whose silent change across an upgrade would matter most.
   struct Roles {
@@ -64,13 +75,50 @@ abstract contract EarnVaultV2UpgradeChecks is Script {
     require(actual.boostRewardKeeper == expected.boostRewardKeeper, 'boostRewardKeeper mismatch');
   }
 
-  /// @dev A candidate implementation must have code and report itself as EarnVaultV2.
-  function _requireV2Implementation(address impl) internal view {
+  /// @dev True when this is a `forge script` run (dry run, broadcast or resume) on Soneium mainnet,
+  ///      i.e. the real upgrade path rather than a test driving the same code.
+  function _isProductionScriptRun() internal view returns (bool) {
+    return block.chainid == SONEIUM_CHAIN_ID && vm.isContext(VmSafe.ForgeContext.ScriptGroup);
+  }
+
+  /// @dev A candidate implementation must have code, report itself as EarnVaultV2, on Soneium embed
+  ///      the live BoostRewardsLib address in its runtime code, and when `expectedCodehash` is given
+  ///      hash to exactly that value. The version string alone identifies nothing: any contract can
+  ///      return it. The codehash is what the Safe signers approve, computed from an independent
+  ///      rebuild (`cast keccak $(cast code <impl>)` must equal `forge inspect` of the pinned build).
+  function _requireV2Implementation(address impl, bytes32 expectedCodehash) internal view {
     require(impl.code.length > 0, 'IMPLEMENTATION has no code');
     require(
       keccak256(bytes(EarnVaultV2(payable(impl)).getVersion())) == keccak256('EarnVaultV2'),
       'IMPLEMENTATION is not EarnVaultV2'
     );
+    if (block.chainid == SONEIUM_CHAIN_ID) {
+      require(
+        _codeContainsAddress(impl.code, SONEIUM_BOOST_REWARDS_LIB),
+        'IMPLEMENTATION is not linked to the live BoostRewardsLib'
+      );
+    }
+    if (expectedCodehash != bytes32(0)) {
+      require(impl.codehash == expectedCodehash, 'IMPLEMENTATION codehash mismatch');
+    }
+  }
+
+  /// @dev Whether `code` contains `target` as a contiguous 20-byte sequence (a linked library address).
+  function _codeContainsAddress(bytes memory code, address target) internal pure returns (bool) {
+    bytes20 needle = bytes20(target);
+    for (uint256 i = 0; i + 20 <= code.length; i++) {
+      bytes20 window;
+      assembly {
+        window := mload(add(add(code, 32), i))
+      }
+      if (window == needle) return true;
+    }
+    return false;
+  }
+
+  /// @dev The ProxyAdmin that will (or did) perform the upgrade must be owned by the expected account.
+  function _requireProxyAdminOwner(address admin, address expectedOwner) internal view {
+    require(ProxyAdmin(admin).owner() == expectedOwner, 'ProxyAdmin owner mismatch');
   }
 
   /// @dev Confirms the proxy's `yieldRedistributor()` is a CONTRACT that answers both snapshot

@@ -63,8 +63,18 @@ contract UpgradeEarnVaultToV2ScriptTest is Test {
   }
 
   function _params(address impl) internal view returns (UpgradeEarnVaultToV2.Params memory) {
-    return
-      UpgradeEarnVaultToV2.Params({proxy: proxy, expectedAdmin: pa, keeper: keeper, cap: CAP, implementation: impl});
+    return _params(impl, bytes32(0));
+  }
+
+  function _params(address impl, bytes32 codehash) internal view returns (UpgradeEarnVaultToV2.Params memory) {
+    return UpgradeEarnVaultToV2.Params({
+      proxy: proxy,
+      expectedAdmin: pa,
+      keeper: keeper,
+      cap: CAP,
+      implementation: impl,
+      expectedCodehash: codehash
+    });
   }
 
   function _roles() internal view returns (EarnVaultV2UpgradeChecks.Roles memory) {
@@ -124,6 +134,70 @@ contract UpgradeEarnVaultToV2ScriptTest is Test {
     script.upgrade(_params(notV2), address(script));
     vm.expectRevert(bytes('IMPLEMENTATION has no code'));
     script.upgrade(_params(makeAddr('eoa')), address(script));
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Implementation identity: codehash and linked library, not just the version string
+  // ---------------------------------------------------------------------------------------------
+
+  function test_Upgrade_AcceptsPreDeployedImplementationWithMatchingCodehash() public {
+    address preDeployed = address(new EarnVaultV2());
+    address impl = script.upgrade(_params(preDeployed, preDeployed.codehash), address(script));
+    assertEq(impl, preDeployed);
+  }
+
+  function test_Preflight_RejectsPreDeployedImplementationWithWrongCodehash() public {
+    address preDeployed = address(new EarnVaultV2());
+    vm.expectRevert(bytes('IMPLEMENTATION codehash mismatch'));
+    script.upgrade(_params(preDeployed, keccak256('not the audited build')), address(script));
+  }
+
+  function test_Upgrade_RejectsFreshImplementationWithWrongCodehash() public {
+    // the fresh-deploy path is checked the same way once the implementation exists
+    vm.expectRevert(bytes('IMPLEMENTATION codehash mismatch'));
+    script.upgrade(_params(address(0), keccak256('not the audited build')), address(script));
+  }
+
+  /// @dev A contract that only returns the right version string is not an implementation.
+  function test_Preflight_RejectsLookalikeThatOnlyReportsTheVersion() public {
+    address lookalike = address(new VersionOnlyLookalike());
+    address real = address(new EarnVaultV2());
+    vm.expectRevert(bytes('IMPLEMENTATION codehash mismatch'));
+    script.upgrade(_params(lookalike, real.codehash), address(script));
+  }
+
+  /// @dev On Soneium the implementation must embed the live BoostRewardsLib address. A local build
+  ///      links a locally deployed library, so it must be refused there; the fork suite (run with
+  ///      --libraries ...:0x6748...66CE) covers the accepting side.
+  function test_Preflight_OnSoneium_RejectsImplementationNotLinkedToLiveLibrary() public {
+    address preDeployed = address(new EarnVaultV2());
+    // If this run was itself linked to the live library (--libraries), there is nothing to reject.
+    if (new ChecksHarness().contains(preDeployed.code, 0x674894C99714bf7E6Acdd9a73d46c6f9EACe66CE)) {
+      vm.skip(true);
+      return;
+    }
+    vm.chainId(1868);
+    vm.expectRevert(bytes('IMPLEMENTATION is not linked to the live BoostRewardsLib'));
+    script.upgrade(_params(preDeployed, preDeployed.codehash), address(script));
+  }
+
+  function test_Verify_RejectsWrongCodehashAndWrongProxyAdminOwner() public {
+    address impl = script.upgrade(_params(address(0)), address(script));
+    verifier.verify(proxy, pa, impl, keeper, CAP, _roles(), impl.codehash, address(script));
+
+    vm.expectRevert(bytes('IMPLEMENTATION codehash mismatch'));
+    verifier.verify(proxy, pa, impl, keeper, CAP, _roles(), keccak256('other'), address(script));
+    vm.expectRevert(bytes('ProxyAdmin owner mismatch'));
+    verifier.verify(proxy, pa, impl, keeper, CAP, _roles(), impl.codehash, makeAddr('notTheOwner'));
+  }
+
+  function test_CodeContainsAddress_FindsLinkedLibraryWindow() public {
+    ChecksHarness h = new ChecksHarness();
+    address needle = 0x674894C99714bf7E6Acdd9a73d46c6f9EACe66CE;
+    assertTrue(h.contains(abi.encodePacked(hex'6080', needle, hex'5b'), needle));
+    assertTrue(h.contains(abi.encodePacked(needle), needle));
+    assertFalse(h.contains(abi.encodePacked(hex'6080', bytes19(bytes20(needle))), needle));
+    assertFalse(h.contains(hex'', needle));
   }
 
   function test_Preflight_RevertsOnUnexpectedAdmin() public {
@@ -333,5 +407,18 @@ contract UpgradeEarnVaultToV2ScriptTest is Test {
 
     vm.expectRevert(bytes('more than one boost token registered'));
     verifier.verify(proxy, pa, impl, keeper, CAP, _roles());
+  }
+}
+
+/// @dev Reports the V2 version string and nothing else: what the old identity check accepted.
+contract VersionOnlyLookalike {
+  function getVersion() external pure returns (string memory) {
+    return 'EarnVaultV2';
+  }
+}
+
+contract ChecksHarness is EarnVaultV2UpgradeChecks {
+  function contains(bytes memory code, address target) external pure returns (bool) {
+    return _codeContainsAddress(code, target);
   }
 }
