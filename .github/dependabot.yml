@@ -1,0 +1,8 @@
+version: 2
+updates:
+  # Keeps the SHA-pinned GitHub Actions in the workflows current (the pins are commit SHAs with the
+  # release tag as a trailing comment; Dependabot updates both).
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
