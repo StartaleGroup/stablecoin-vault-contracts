@@ -12,7 +12,7 @@ import {console} from 'forge-std/Script.sol';
  * @notice Upgrades a live EarnVaultUpgradeable (V1) TransparentUpgradeableProxy to EarnVaultV2 in ONE
  *         ProxyAdmin.upgradeAndCall carrying initializeV2(boostKeeper, maxBoostPerBatch).
  * @dev Env: EARN_VAULT_PROXY, EXPECTED_PROXY_ADMIN, BOOST_KEEPER_ADDRESS, MAX_BOOST_PER_BATCH,
- *      DEPLOYER_PRIVATE_KEY (must be the ProxyAdmin owner), and optionally
+ *      and optionally
  *      IMPLEMENTATION - a pre-deployed, explorer-verified EarnVaultV2 to upgrade to (recommended, so
  *      the wired bytecode is exactly the audited, verified bytecode). Without it a fresh
  *      implementation is deployed in the same run.
@@ -52,10 +52,12 @@ contract UpgradeEarnVaultToV2 is EarnVaultV2UpgradeChecks {
       cap: vm.envUint('MAX_BOOST_PER_BATCH'),
       implementation: vm.envOr('IMPLEMENTATION', address(0))
     });
-    uint256 key = vm.envUint('DEPLOYER_PRIVATE_KEY');
-
-    vm.startBroadcast(key);
-    upgrade(p, vm.addr(key));
+    // The broadcaster (must own the ProxyAdmin) comes from `--account <keystore>` or `--ledger` on
+    // the command line, never from the environment: Foundry loads `.env` into every `forge test`
+    // run, so a key stored there is readable by any test file.
+    vm.startBroadcast();
+    (, address sender,) = vm.readCallers();
+    upgrade(p, sender);
     vm.stopBroadcast();
   }
 
