@@ -626,7 +626,12 @@ contract EarnVaultTwoStepUpgradeSoneiumFork is Test {
     new UpgradeEarnVaultToV2()
       .preflight(
         UpgradeEarnVaultToV2.Params({
-        proxy: VAULT, expectedAdmin: address(PROXY_ADMIN), keeper: OWNER_SAFE, cap: BOOST_CAP_V2, implementation: impl
+        proxy: VAULT,
+        expectedAdmin: address(PROXY_ADMIN),
+        keeper: OWNER_SAFE,
+        cap: BOOST_CAP_V2,
+        implementation: impl,
+        expectedCodehash: impl.codehash
       }),
         OWNER_SAFE
       );

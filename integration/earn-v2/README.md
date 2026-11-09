@@ -281,9 +281,10 @@ A batch that runs out of gas reverts whole; split it and resubmit with the same 
 
 ```
 # deploy (any chain with CreateX). Every variable is TEST_-prefixed so the production .env can't leak in.
-TEST_DEPLOYER_PRIVATE_KEY=<test key> TEST_SALT_TAG=<e.g. 20261005> \
+# The signer comes only from the command line (--account <keystore> or --ledger), never from the environment.
+TEST_SALT_TAG=<e.g. 20261005> \
   forge script script/testnet/DeployEarnVaultV2TestStack.s.sol:DeployEarnVaultV2TestStack \
-  --rpc-url <rpc> --broadcast --sender <test deployer address>
+  --rpc-url <rpc> --broadcast --account <test deployer keystore>
 
 # faucet
 cast send <TestUSDSC> "mint(address,uint256)" <you> 1000000000000 --rpc-url <rpc> --private-key <key>
