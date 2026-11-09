@@ -26,7 +26,7 @@ forge script script/deploy/DeploySUSDSCUpgradable.sol:DeploySUSDSCVaultUpgradeab
 ```bash
 forge script script/deploy/DeploySUSDSCUpgradable.sol:DeploySUSDSCVaultUpgradeable \
   --rpc-url $SONEIUM_RPC_URL \
-  --private-key $DEPLOYER_PRIVATE_KEY \
+  --account deployer \
   --broadcast \
   --slow \
   --verify \
@@ -47,7 +47,7 @@ forge script script/deploy/DeployEarnVaultUpgradable.s.sol:DeployEarnVaultUpgrad
 ```bash
 forge script script/deploy/DeployEarnVaultUpgradable.s.sol:DeployEarnVaultUpgradeable \
   --rpc-url $SONEIUM_RPC_URL \
-  --private-key $DEPLOYER_PRIVATE_KEY \
+  --account deployer \
   --broadcast \
   --slow \
   --verify \
@@ -68,7 +68,7 @@ forge script script/deploy/DeployRewardRedistributor.s.sol:DeployRewardRedistrib
 ```bash
 forge script script/deploy/DeployRewardRedistributor.s.sol:DeployRewardRedistributor \
   --rpc-url $SONEIUM_RPC_URL \
-  --private-key $DEPLOYER_PRIVATE_KEY \
+  --account deployer \
   --broadcast \
   --verify \
   -vvvv

@@ -12,8 +12,8 @@ import {console} from 'forge-std/Script.sol';
  * @notice Upgrades a live EarnVaultUpgradeable (V1) TransparentUpgradeableProxy to EarnVaultV2 in ONE
  *         ProxyAdmin.upgradeAndCall carrying initializeV2(boostKeeper, maxBoostPerBatch).
  * @dev Env: EARN_VAULT_PROXY, EXPECTED_PROXY_ADMIN, BOOST_KEEPER_ADDRESS, MAX_BOOST_PER_BATCH,
- *      DEPLOYER_PRIVATE_KEY (must be the ProxyAdmin owner), IMPLEMENTATION and
- *      EXPECTED_IMPLEMENTATION_CODEHASH.
+ *      IMPLEMENTATION and EXPECTED_IMPLEMENTATION_CODEHASH. The broadcaster (the ProxyAdmin owner)
+ *      comes from `--account <keystore>` or `--ledger` on the command line, never from the environment.
  *      IMPLEMENTATION is the pre-deployed EarnVaultV2 to upgrade to. On Soneium mainnet it is
  *      required: the production implementation is always an artifact a second person has rebuilt
  *      and byte-compared, never something this run builds. EXPECTED_IMPLEMENTATION_CODEHASH is the
@@ -59,10 +59,12 @@ contract UpgradeEarnVaultToV2 is EarnVaultV2UpgradeChecks {
       implementation: vm.envOr('IMPLEMENTATION', address(0)),
       expectedCodehash: vm.envOr('EXPECTED_IMPLEMENTATION_CODEHASH', bytes32(0))
     });
-    uint256 key = vm.envUint('DEPLOYER_PRIVATE_KEY');
-
-    vm.startBroadcast(key);
-    upgrade(p, vm.addr(key));
+    // The broadcaster (must own the ProxyAdmin) comes from `--account <keystore>` or `--ledger` on
+    // the command line, never from the environment: Foundry loads `.env` into every `forge test`
+    // run, so a key stored there is readable by any test file.
+    vm.startBroadcast();
+    (, address sender,) = vm.readCallers();
+    upgrade(p, sender);
     vm.stopBroadcast();
   }
 

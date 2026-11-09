@@ -52,9 +52,12 @@ contract DeployRewardRedistributor is Script, DeployHelpers {
     console.log('Keeper Address:', keeperAddress);
   }
 
+  /// @dev The broadcaster comes from the command line (`--account <keystore>` or `--ledger`), never
+  ///      from the environment: Foundry loads `.env` into every `forge test` run, so a key stored
+  ///      there is readable by any test file.
   function run() public {
-    uint256 deployerPrivateKey = vm.envUint('DEPLOYER_PRIVATE_KEY');
-    address deployer = vm.addr(deployerPrivateKey);
+    vm.startBroadcast();
+    (, address deployer,) = vm.readCallers();
 
     console.log('\n=== Starting Deployment ===');
     console.log('Deployer address:', deployer);
@@ -63,8 +66,6 @@ contract DeployRewardRedistributor is Script, DeployHelpers {
     bytes32 salt = _computeSalt(deployer, CONTRACT_NAME);
     console.log('Computed salt:');
     console.logBytes32(salt);
-
-    vm.startBroadcast(deployerPrivateKey);
 
     // Deploy RewardRedistributor using CREATE3
     bytes memory creationCode = abi.encodePacked(

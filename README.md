@@ -238,7 +238,6 @@ Before deploying, ensure your `.env` file contains:
 ```bash
 # Network Configuration
 SEPOLIA_RPC_URL=https://sepolia.infura.io/v3/YOUR_KEY
-DEPLOYER_PRIVATE_KEY=0x...
 
 # Contract Addresses (for RewardRedistributor deployment)
 USDSC_ADDRESS=0x...
@@ -256,6 +255,11 @@ BOOST_REWARD_KEEPER_ADDRESS=0x...
 PROXY_ADMIN_OWNER=0x...  # Optional, defaults to admin/owner
 ```
 
+Do not put the deployer's private key in `.env`: Foundry loads that file into every `forge test` and
+`forge coverage` run, where any test file can read it. Import the key into a Foundry keystore once
+(`cast wallet import deployer --interactive`) and sign with `--account deployer`, or use `--ledger`.
+The scripts take the broadcaster from the command line and never read a key from the environment.
+
 ### Deploy to Sepolia Testnet
 
 #### 1. Deploy SUSDSCVault
@@ -268,7 +272,7 @@ forge script script/deploy/DeploySUSDSCUpgradable.sol:DeploySUSDSCVaultUpgradeab
 # Deploy
 forge script script/deploy/DeploySUSDSCUpgradable.sol:DeploySUSDSCVaultUpgradeable \
   --rpc-url $SEPOLIA_RPC_URL \
-  --private-key $DEPLOYER_PRIVATE_KEY \
+  --account deployer \
   --broadcast \
   --verify \
   -vvvv
@@ -284,7 +288,7 @@ forge script script/deploy/DeployEarnVaultUpgradable.s.sol:DeployEarnVaultUpgrad
 # Deploy (use placeholder for YIELD_REDISTRIBUTOR_ADDRESS)
 forge script script/deploy/DeployEarnVaultUpgradable.s.sol:DeployEarnVaultUpgradeable \
   --rpc-url $SEPOLIA_RPC_URL \
-  --private-key $DEPLOYER_PRIVATE_KEY \
+  --account deployer \
   --broadcast \
   --verify \
   -vvvv
@@ -302,7 +306,7 @@ forge script script/deploy/DeployRewardRedistributor.s.sol:DeployRewardRedistrib
 # Deploy
 forge script script/deploy/DeployRewardRedistributor.s.sol:DeployRewardRedistributor \
   --rpc-url $SEPOLIA_RPC_URL \
-  --private-key $DEPLOYER_PRIVATE_KEY \
+  --account deployer \
   --broadcast \
   --verify \
   -vvvv
