@@ -1,0 +1,14 @@
+version: 2
+updates:
+  # Keeps the SHA-pinned GitHub Actions in the workflows current (the pins are commit SHAs with the
+  # exact release as a trailing comment; Dependabot updates both). One grouped PR per week.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+    groups:
+      github-actions:
+        patterns:
+          - '*'
