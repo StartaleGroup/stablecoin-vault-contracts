@@ -10,7 +10,7 @@
 > - New views `surplusUSDSC()` and `boostClaimReserve(token)`.
 > - `onBoostReward` accepts only USDSC (`BoostTokenNotUSDSC` otherwise); `removeBoostRewardToken` was removed.
 > - New `depositWithAuthorization()`: gasless deposits through USDSC's ERC-3009 `receiveWithAuthorization`, including ERC-1271 smart wallets (section 2a). Use it instead of `depositWithPermit`.
-> - `depositWithPermit` still goes ahead when the permit was already used, if the existing allowance covers the amount. Kept for compatibility only.
+> - `depositWithPermit` still goes ahead when the permit was already used, but only when the token owner calls it and their existing allowance covers the amount; a relayer gets `PermitFailed`. Kept for compatibility only; the App does not use it.
 
 This guide covers what the reward engine, keepers, frontend and indexer need in order to integrate with `EarnVaultV2`. The design rationale is in `src/vaults/earn/base-tier-auto-compounding.md`. The full ABI is in [`EarnVaultV2.abi.json`](EarnVaultV2.abi.json).
 

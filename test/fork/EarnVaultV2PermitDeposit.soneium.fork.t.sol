@@ -11,8 +11,9 @@ import {Test} from 'forge-std/Test.sol';
 
 /// @title depositWithPermit on the live vault, with the live USDSC permit
 /// @notice Forks Soneium, upgrades the live EarnVault to EarnVaultV2 through the owner Safe, and checks
-///         that a relayed depositWithPermit() still succeeds when the same permit was already submitted
-///         to USDSC, and still reverts PermitFailed without a sufficient allowance.
+///         that when the same permit was already submitted to USDSC only the token owner can complete
+///         the deposit (a relayer gets PermitFailed), and that it still reverts PermitFailed without a
+///         sufficient allowance.
 /// @dev Opt-in:
 ///        RUN_SONEIUM_FORK=true forge test --match-path test/fork/EarnVaultV2PermitDeposit.soneium.fork.t.sol \
 ///          --libraries src/vaults/earn/BoostRewardsLib.sol:BoostRewardsLib:0x674894C99714bf7E6Acdd9a73d46c6f9EACe66CE -vv
@@ -49,7 +50,7 @@ contract EarnVaultV2PermitDepositSoneiumFork is Test {
     _unlockDeposits();
   }
 
-  function test_PermitAlreadySubmitted_RelayedDepositStillSucceeds() public {
+  function test_PermitAlreadySubmitted_OnlyOwnerCanDeposit() public {
     uint256 deadline = block.timestamp + 1 hours;
     (uint8 v, bytes32 r, bytes32 s) = _sign(AMOUNT, deadline);
 
@@ -58,7 +59,15 @@ contract EarnVaultV2PermitDepositSoneiumFork is Test {
     IERC20Permit(address(usdsc)).permit(tokenOwner, address(VAULT), AMOUNT, deadline, v, r, s);
 
     uint256 before = VAULT.principal(tokenOwner);
+
+    // a relayer can no longer complete it on the owner's behalf
     vm.prank(relayer);
+    vm.expectRevert(IEarnVaultEventsAndErrors.PermitFailed.selector);
+    VAULT.depositWithPermit(tokenOwner, AMOUNT, deadline, v, r, s);
+    assertEq(VAULT.principal(tokenOwner), before);
+
+    // the owner can
+    vm.prank(tokenOwner);
     VAULT.depositWithPermit(tokenOwner, AMOUNT, deadline, v, r, s);
 
     assertEq(VAULT.principal(tokenOwner), before + AMOUNT, 'credited to the token owner');
