@@ -107,6 +107,12 @@ Superseded (pre-Phase-1): 0xFee1467934428Df54C696B36a4747c5Be86674CC
 
 ## Salt strings and calculated salt
 
+> The three calculated salts below are bound to the sender that deployed the live contracts (their
+> first 20 bytes are that address), so only that key can reproduce these addresses on another chain.
+> That key is retired and is not used for any deployment. The only remaining use these salts may ever
+> have is a one-off deployment of the same four contracts at their canonical addresses on a new chain,
+> if that is explicitly decided; every other deployment uses a fresh deployer and new salts.
+
 EarnVaultUpgradeable proxy salt 0x111d4f7f87754e05e66689be7d672d1299f3a8bb004e1cab70ac2568bcfa48b7
 
 RewardRedistributor salt 0x111d4f7f87754e05e66689be7d672d1299f3a8bb00eb96670b1b53534e05a7b0
