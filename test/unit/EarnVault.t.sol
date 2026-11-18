@@ -854,13 +854,22 @@ contract EarnVaultTest is Test {
     vault.depositWithPermit(alice, 1000e6, block.timestamp + 1 hours, 0, bytes32(0), bytes32(0));
   }
 
-  /// @notice depositWithPermit still deposits when permit() fails but the allowance already covers it
-  function test_DepositWithPermit_FailedPermitButAllowanceInPlace_Deposits() public {
-    // setUp approved the vault for alice; permit() fails (no permit support), the deposit goes ahead
+  /// @notice depositWithPermit still deposits when permit() fails but the owner calls and the allowance covers it
+  function test_DepositWithPermit_FailedPermitButAllowanceInPlace_OwnerDeposits() public {
+    // setUp approved the vault for alice; permit() fails (no permit support), alice's own call goes ahead
     uint256 before = vault.principal(alice);
-    vm.prank(makeAddr('relayer'));
+    vm.prank(alice);
     vault.depositWithPermit(alice, 1000e6, block.timestamp + 1 hours, 0, bytes32(0), bytes32(0));
     assertEq(vault.principal(alice), before + 1000e6, 'credited to alice');
+  }
+
+  /// @notice A third party cannot complete a failed permit against the owner's standing allowance
+  function test_DepositWithPermit_FailedPermitButAllowanceInPlace_RelayerReverts() public {
+    uint256 before = vault.principal(alice);
+    vm.prank(makeAddr('relayer'));
+    vm.expectRevert(IEarnVaultEventsAndErrors.PermitFailed.selector);
+    vault.depositWithPermit(alice, 1000e6, block.timestamp + 1 hours, 0, bytes32(0), bytes32(0));
+    assertEq(vault.principal(alice), before, 'nothing deposited');
   }
 
   /// @notice Test depositWithPermit triggers _settle when user has existing principal

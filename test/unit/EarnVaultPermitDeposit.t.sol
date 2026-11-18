@@ -14,10 +14,10 @@ import {IERC20Permit} from '@openzeppelin/contracts/token/ERC20/extensions/IERC2
 import {Test} from 'lib/forge-std/src/Test.sol';
 
 /// @title depositWithPermit when the permit has already been used
-/// @notice A relayed depositWithPermit() must not fail just because someone submitted the same permit
-///         to the token first (consuming its nonce): if the allowance the permit grants is in place,
-///         the deposit goes ahead and is credited to the token owner. It still reverts PermitFailed
-///         when no sufficient allowance exists.
+/// @notice If someone submitted the same permit to the token first (consuming its nonce), only the
+///         token owner may fall back on the allowance the permit left in place. A relayer or any
+///         other third party gets PermitFailed: nobody can deposit an owner's standing allowance on
+///         the owner's behalf. A failed permit with no sufficient allowance always reverts.
 contract EarnVaultPermitDepositTest is Test {
   EarnVaultV2 vault;
   MockERC20Permit usdsc;
@@ -68,7 +68,7 @@ contract EarnVaultPermitDepositTest is Test {
   // The scenario from the review: the permit is submitted to the token first
   // ---------------------------------------------------------------------------------------------
 
-  function test_PermitAlreadySubmitted_RelayedDepositStillSucceeds() public {
+  function test_PermitAlreadySubmitted_RelayedDepositReverts() public {
     uint256 deadline = block.timestamp + 1 hours;
     (uint8 v, bytes32 r, bytes32 s) = _sign(address(vault), AMOUNT, deadline);
 
@@ -77,11 +77,27 @@ contract EarnVaultPermitDepositTest is Test {
     usdsc.permit(tokenOwner, address(vault), AMOUNT, deadline, v, r, s);
     assertEq(usdsc.allowance(tokenOwner, address(vault)), AMOUNT);
 
+    // a relayer can no longer complete the deposit on the owner's behalf
     vm.prank(relayer);
+    vm.expectRevert(IEarnVaultEventsAndErrors.PermitFailed.selector);
+    vault.depositWithPermit(tokenOwner, AMOUNT, deadline, v, r, s);
+
+    assertEq(vault.principal(tokenOwner), 0);
+    assertEq(usdsc.allowance(tokenOwner, address(vault)), AMOUNT, 'allowance untouched');
+  }
+
+  function test_PermitAlreadySubmitted_OwnerDepositStillSucceeds() public {
+    uint256 deadline = block.timestamp + 1 hours;
+    (uint8 v, bytes32 r, bytes32 s) = _sign(address(vault), AMOUNT, deadline);
+
+    vm.prank(observer);
+    usdsc.permit(tokenOwner, address(vault), AMOUNT, deadline, v, r, s);
+
+    // the owner can still use the allowance the front-run permit left behind
+    vm.prank(tokenOwner);
     vault.depositWithPermit(tokenOwner, AMOUNT, deadline, v, r, s);
 
     assertEq(vault.principal(tokenOwner), AMOUNT, 'credited to the token owner');
-    assertEq(vault.principal(relayer), 0);
     assertEq(vault.principal(observer), 0);
     assertEq(usdsc.balanceOf(observer), 0, 'the observer gains nothing');
     assertEq(usdsc.allowance(tokenOwner, address(vault)), 0, 'allowance used exactly once');
@@ -131,50 +147,52 @@ contract EarnVaultPermitDepositTest is Test {
   }
 
   /// @dev An existing allowance exactly covering the amount: the deposit goes ahead
-  function test_FailedPermitAllowanceExact_Deposits() public {
+  function test_FailedPermitAllowanceExact_OwnerDeposits() public {
+    vm.prank(tokenOwner);
+    usdsc.approve(address(vault), AMOUNT);
+    vm.prank(tokenOwner);
+    vault.depositWithPermit(tokenOwner, AMOUNT, block.timestamp + 1 hours, 0, bytes32(0), bytes32(0));
+    assertEq(vault.principal(tokenOwner), AMOUNT);
+  }
+
+  function test_FailedPermitAllowanceExact_RelayerReverts() public {
     vm.prank(tokenOwner);
     usdsc.approve(address(vault), AMOUNT);
     vm.prank(relayer);
+    vm.expectRevert(IEarnVaultEventsAndErrors.PermitFailed.selector);
     vault.depositWithPermit(tokenOwner, AMOUNT, block.timestamp + 1 hours, 0, bytes32(0), bytes32(0));
-    assertEq(vault.principal(tokenOwner), AMOUNT);
-    assertEq(vault.principal(relayer), 0);
+    assertEq(vault.principal(tokenOwner), 0);
   }
 
-  /// @dev With an infinite approval, a third party can trigger a deposit of the owner's approved
-  ///      USDSC, but only ever into the owner's own position: no value moves to anyone else
-  function test_InfiniteApproval_ThirdPartyDepositIsCreditedOnlyToOwner() public {
+  /// @dev With an infinite approval in place, a third party cannot force the owner's USDSC into
+  ///      the vault with a garbage signature
+  function test_InfiniteApproval_ThirdPartyCannotForceDeposit() public {
     vm.prank(tokenOwner);
     usdsc.approve(address(vault), type(uint256).max);
     uint256 ownerBalance = usdsc.balanceOf(tokenOwner);
 
     vm.prank(observer);
+    vm.expectRevert(IEarnVaultEventsAndErrors.PermitFailed.selector);
     vault.depositWithPermit(tokenOwner, ownerBalance, block.timestamp + 1 hours, 0, bytes32(0), bytes32(0));
 
-    assertEq(vault.principal(tokenOwner), ownerBalance, 'all of it credited to the owner');
-    assertEq(vault.principal(observer), 0);
-    assertEq(vault.totalPrincipal(), ownerBalance, 'nobody else was credited');
-    assertEq(usdsc.balanceOf(observer), 0);
-
-    // and the owner can take it straight back out
-    vm.prank(tokenOwner);
-    vault.withdraw(ownerBalance);
-    assertEq(usdsc.balanceOf(tokenOwner), ownerBalance);
+    assertEq(vault.principal(tokenOwner), 0);
+    assertEq(vault.totalPrincipal(), 0);
+    assertEq(usdsc.balanceOf(tokenOwner), ownerBalance, 'owner funds untouched');
   }
 
-  /// @dev A contract relayer gets no credit and holds no tokens afterwards
-  function test_ContractRelayer_CannotRedirectCredit() public {
+  /// @dev A contract relayer is a third party too: it cannot complete a front-run permit
+  function test_ContractRelayer_CannotUseFrontRunPermit() public {
     PermitRelayer relayerContract = new PermitRelayer();
     uint256 deadline = block.timestamp + 1 hours;
     (uint8 v, bytes32 r, bytes32 s) = _sign(address(vault), AMOUNT, deadline);
     vm.prank(observer);
     usdsc.permit(tokenOwner, address(vault), AMOUNT, deadline, v, r, s);
 
+    vm.expectRevert(IEarnVaultEventsAndErrors.PermitFailed.selector);
     relayerContract.relay(vault, tokenOwner, AMOUNT, deadline, v, r, s);
 
-    assertEq(vault.principal(tokenOwner), AMOUNT);
-    assertEq(vault.principal(address(relayerContract)), 0);
-    assertEq(vault.totalPrincipal(), AMOUNT, 'only the owner was credited');
-    assertEq(usdsc.balanceOf(address(relayerContract)), 0);
+    assertEq(vault.principal(tokenOwner), 0);
+    assertEq(vault.totalPrincipal(), 0);
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -203,7 +221,8 @@ contract EarnVaultPermitDepositTest is Test {
     vm.prank(tokenOwner);
     usdsc.approve(address(vault), AMOUNT);
     redistributor.setSnapshot(block.timestamp, 5 minutes);
-    vm.prank(relayer);
+    // the owner passes the fallback check, so the deposit lock is what rejects the deposit
+    vm.prank(tokenOwner);
     vm.expectRevert(
       abi.encodeWithSelector(EarnVaultV2.DepositsLockedForDistribution.selector, block.timestamp + 5 minutes + 1)
     );
@@ -214,7 +233,7 @@ contract EarnVaultPermitDepositTest is Test {
   // Non-upgradeable twin
   // ---------------------------------------------------------------------------------------------
 
-  function test_Twin_PermitAlreadySubmitted_RelayedDepositStillSucceeds() public {
+  function test_Twin_PermitAlreadySubmitted_OnlyOwnerCanDeposit() public {
     EarnVault twin = new EarnVault(address(usdsc), owner, makeAddr('r'), treasury, pauser, makeAddr('k'));
     uint256 deadline = block.timestamp + 1 hours;
     (uint8 v, bytes32 r, bytes32 s) = _sign(address(twin), AMOUNT, deadline);
@@ -222,10 +241,14 @@ contract EarnVaultPermitDepositTest is Test {
     usdsc.permit(tokenOwner, address(twin), AMOUNT, deadline, v, r, s);
 
     vm.prank(relayer);
+    vm.expectRevert(IEarnVaultEventsAndErrors.PermitFailed.selector);
+    twin.depositWithPermit(tokenOwner, AMOUNT, deadline, v, r, s);
+
+    vm.prank(tokenOwner);
     twin.depositWithPermit(tokenOwner, AMOUNT, deadline, v, r, s);
     assertEq(twin.principal(tokenOwner), AMOUNT);
 
-    vm.prank(relayer);
+    vm.prank(tokenOwner);
     vm.expectRevert(IEarnVaultEventsAndErrors.PermitFailed.selector);
     twin.depositWithPermit(tokenOwner, AMOUNT, deadline, v, r, s);
   }

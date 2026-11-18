@@ -210,16 +210,20 @@ contract EarnVaultUpgradeable is
     _deposit(msg.sender, amount);
   }
 
-  /// @notice Deposit USDSC tokens using permit (gasless approval)
-  /// @dev Allows token owner to deposit via permit signature, with optional relayer execution
-  /// @dev Token owner signs permit, relayer (msg.sender) pays gas and executes
-  /// @dev Safely handles tokens that may not implement IERC20Permit
-  /// @dev If permit() fails but tokenOwner's allowance to this vault already covers `amount` (e.g.
-  ///      someone submitted the same permit first, using its nonce), the deposit still goes ahead.
-  ///      This also means anyone can trigger a deposit of an amount tokenOwner has already approved;
-  ///      it is always credited to tokenOwner's own position, which they can withdraw.
-  /// @dev Kept for compatibility. On EarnVaultV2, depositWithAuthorization() is the gasless path to
-  ///      use: its USDSC authorization can only be executed by the vault, exactly as signed.
+  /// @notice Deposit USDSC tokens on behalf of `tokenOwner` using an ERC-2612 permit
+  /// @dev Expected behaviour:
+  ///      - permit() succeeds: the deposit goes ahead and is credited to tokenOwner. msg.sender may be
+  ///        tokenOwner or a relayer paying gas; the permit is what authorises the pull.
+  ///      - permit() fails and msg.sender == tokenOwner: the deposit goes ahead only if tokenOwner's
+  ///        existing allowance to this vault covers `amount` (e.g. the same permit was submitted to the
+  ///        token first, consuming its nonce but leaving the allowance in place). Otherwise PermitFailed.
+  ///      - permit() fails and msg.sender != tokenOwner: always PermitFailed. A third party cannot
+  ///        deposit an owner's standing allowance on their behalf.
+  /// @dev Tolerates tokens that do not implement IERC20Permit (permit() reverts, see above).
+  /// @dev Kept for compatibility; the App does not call this function. New gasless deposit
+  ///      integrations for EOAs should use depositWithAuthorization() (ERC-3009; the authorisation is
+  ///      bound to this vault as payee and executes exactly as signed, so it cannot be front-run).
+  ///      Smart-account users deposit through ERC-4337 with a paymaster.
   /// @param tokenOwner Address of token owner (who signs permit and receives deposit credit)
   /// @param amount Amount of USDSC tokens to deposit
   /// @param deadline Permit deadline timestamp
@@ -245,7 +249,10 @@ contract EarnVaultUpgradeable is
     }
     catch {
       // The permit may already have been used (its nonce consumed by someone submitting it first).
-      // Continue if the allowance it grants is in place; otherwise the permit genuinely failed.
+      // Only the token owner may fall back on an allowance that is already in place; otherwise a
+      // third party could deposit an owner's standing allowance for them. Relayers must use a
+      // valid permit (or depositWithAuthorization).
+      if (msg.sender != tokenOwner) revert IEarnVaultEventsAndErrors.PermitFailed();
       if ($.USDSC.allowance(tokenOwner, address(this)) < amount) revert IEarnVaultEventsAndErrors.PermitFailed();
     }
 
